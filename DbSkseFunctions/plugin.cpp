@@ -93,8 +93,7 @@ std::string GetClipBoardText(RE::StaticFunctionTag *) {
     return text;
 }
 
-bool SetClipBoardText(RE::StaticFunctionTag *,
-                      std::string sText) {
+bool SetClipBoardText(RE::StaticFunctionTag *, std::string sText) {
     if (sText.length() == 0) {
         return false;
     }
@@ -150,8 +149,7 @@ bool IsMapMarker(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMarker) {
     return true;
 }
 
-bool SetMapMarkerName(RE::StaticFunctionTag *,
-                      RE::TESObjectREFR *mapMarker, std::string name) {
+bool SetMapMarkerName(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMarker, std::string name) {
 
     LogAndMessage("Renaming map marker");
     auto *mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
@@ -178,8 +176,7 @@ bool SetMapMarkerName(RE::StaticFunctionTag *,
     return true;
 }
 
-std::string GetMapMarkerName(RE::StaticFunctionTag *,
-                      RE::TESObjectREFR *mapMarker) {
+std::string GetMapMarkerName(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMarker) {
     LogAndMessage("Getting Marker Name");
 
     auto *mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
@@ -219,8 +216,6 @@ bool SetMapMarkerIconType(RE::BSScript::Internal::VirtualMachine*, const RE::VMS
         return false;
     }
 
-    //mapMarkerData->mapData->type.set<RE::MARKER_TYPE, iconType>();
-    //mapMarkerData->mapData->type.set(static_cast<RE::MARKER_TYPE>(std::uint32_t(iconType)));
     mapMarkerData->mapData->type = static_cast<RE::MARKER_TYPE>(iconType);
     
     return true;
