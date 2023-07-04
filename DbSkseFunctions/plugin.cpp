@@ -2,7 +2,6 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <winbase.h>
 #include <iostream>
-//#include "RE/M/MemoryManager.h"
 
 namespace logger = SKSE::log;
 
