@@ -2,7 +2,8 @@
 
 # What does it do?
 
-Adds native functions to papyrus.
+Adds native functions to papyrus. Get this and papyrus only functions here: 
+[Dylbill's Papyrus Functions](https://www.nexusmods.com/skyrimspecialedition/mods/65410)
 
 # CommonLibSSE NG
 
