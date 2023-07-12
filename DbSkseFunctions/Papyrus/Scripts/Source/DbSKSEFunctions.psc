@@ -12,7 +12,35 @@ Bool Function SetClipBoardText(String s) Global Native
 Bool Function IsWhiteSpace(String c) Global Native 
 
 int Function CountWhiteSpaces(String s) Global Native
+   
+;differs from consoleUtil.ExecuteCommand in that you can execute a targeted command on a passed in ref.
+;if ref == none and command is targeted command, runs command on console selected ref like normal. 
+;If no console selected ref, or is not a targeted command, executes command like normal.
+Function ExecuteConsoleCommand(String command, ObjectReference ref = none) Global Native 
 
+;does the ref have collision?
+bool Function HasCollision(ObjectReference ref) Global Native 
+
+;toggle collision on ref using tcl console command
+;requires powerofthree's Tweaks to work.
+;https://www.nexusmods.com/skyrimspecialedition/mods/51073?tab=description
+function ToggleCollision(ObjectReference ref) Global
+    if ref 
+        ExecuteConsoleCommand("tcl", ref) 
+    endif
+EndFunction 
+
+;enable or disable collision on ref using tcl console command
+;requires powerofthree's Tweaks to work.
+Function SetCollision(ObjectReference ref, bool enabled) Global 
+    if ref
+        if enabled != HasCollision(ref)
+            ExecuteConsoleCommand("tcl", ref)
+        Endif 
+    Endif
+EndFunction
+
+ 
 ;/map marker icon types:
 kNone = 0,
 kCity = 1,
@@ -95,6 +123,3 @@ bool function SetMapMarkerName(ObjectReference MapMarker, String Name) Global Na
 
 ;returns true if Ref has map data.
 bool function IsMapMarker(ObjectReference Ref) Global Native 
-
-
-
