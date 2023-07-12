@@ -1,6 +1,8 @@
 #include <Windows.h>
 #include <spdlog/sinks/basic_file_sink.h>
+#include <stdarg.h>
 #include <winbase.h>
+
 #include <iostream>
 
 namespace logger = SKSE::log;
@@ -18,7 +20,7 @@ void SetupLog() {
 }
 
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine *, const RE::VMStackID, RE::StaticFunctionTag *) {
-    return float(4.6);
+    return float(4.7);
 }
 
 enum logLevel { trace, debug, info, warn, error, critical };
@@ -51,8 +53,8 @@ void LogAndMessage(std::string message, int logLevel = info, int debugLevel = no
             break;
     }
 
-    /*switch (debugLevel) { 
-        case notification: 
+    /*switch (debugLevel) {
+        case notification:
             RE::DebugNotification(message.data());
             break;
         case messageBox:
@@ -122,9 +124,7 @@ bool SetClipBoardText(RE::StaticFunctionTag *, std::string sText) {
     return true;
 }
 
-bool IsWhiteSpace(RE::StaticFunctionTag *, std::string c) {
-    return isspace(int(c.at(0)));
-}
+bool IsWhiteSpace(RE::StaticFunctionTag *, std::string c) { return isspace(int(c.at(0))); }
 
 int CountWhiteSpaces(RE::StaticFunctionTag *, std::string s) {
     int spaces = std::count_if(s.begin(), s.end(), [](unsigned char c) { return std::isspace(c); });
@@ -132,8 +132,12 @@ int CountWhiteSpaces(RE::StaticFunctionTag *, std::string s) {
 }
 
 bool IsMapMarker(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMarker) {
-    
     LogAndMessage("IsMapMarker function called");
+    if (!mapMarker) {
+        LogAndMessage("IsMapMarker: mapMarker doesn't exist");
+        return false;
+    }
+
     auto *mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
@@ -150,8 +154,12 @@ bool IsMapMarker(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMarker) {
 }
 
 bool SetMapMarkerName(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMarker, std::string name) {
-
     LogAndMessage("Renaming map marker");
+    if (!mapMarker) {
+        LogAndMessage("SetMapMarkerName: mapMarker doesn't exist", error);
+        return false;
+    }
+
     auto *mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
@@ -172,12 +180,16 @@ bool SetMapMarkerName(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMarker, std
     const char *cName = name.data();
     mapMarkerData->mapData->locationName.fullName = cName;
     LogAndMessage(std::format("New map marker name = {}", mapMarkerData->mapData->locationName.GetFullName()));
-    
+
     return true;
 }
 
 std::string GetMapMarkerName(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMarker) {
     LogAndMessage("Getting Marker Name");
+    if (!mapMarker) {
+        LogAndMessage("GetMapMarkerName: mapMarker doesn't exist", error);
+        return "";
+    }
 
     auto *mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
@@ -199,11 +211,15 @@ std::string GetMapMarkerName(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMark
     return std::string(mapMarkerData->mapData->locationName.GetFullName());
 }
 
-bool SetMapMarkerIconType(RE::BSScript::Internal::VirtualMachine*, const RE::VMStackID, RE::StaticFunctionTag*,
-    RE::TESObjectREFR* mapMarker, int iconType) {
+bool SetMapMarkerIconType(RE::BSScript::Internal::VirtualMachine *, const RE::VMStackID, RE::StaticFunctionTag *,
+                          RE::TESObjectREFR *mapMarker, int iconType) {
+    if (!mapMarker) {
+        LogAndMessage("SetMapMarkerIconType: mapMarker doesn't exist", error);
+        return false;
+    }
 
     LogAndMessage(std::format("Setting Map Marker Type to {}", iconType));
-    
+
     auto *mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
@@ -217,12 +233,17 @@ bool SetMapMarkerIconType(RE::BSScript::Internal::VirtualMachine*, const RE::VMS
     }
 
     mapMarkerData->mapData->type = static_cast<RE::MARKER_TYPE>(iconType);
-    
+
     return true;
 }
 
-int GetMapMarkerIconType(RE::StaticFunctionTag *, RE::TESObjectREFR* mapMarker) {
+int GetMapMarkerIconType(RE::StaticFunctionTag *, RE::TESObjectREFR *mapMarker) {
     LogAndMessage("Getting Map Marker Type");
+    if (!mapMarker) {
+        LogAndMessage("GetMapMarkerIconType: mapMarker doesn't exist", error);
+        return false;
+    }
+
     auto *mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
@@ -238,6 +259,35 @@ int GetMapMarkerIconType(RE::StaticFunctionTag *, RE::TESObjectREFR* mapMarker) 
     return static_cast<int>(mapMarkerData->mapData->type.get());
 }
 
+static inline void ExecuteConsoleCommand(RE::StaticFunctionTag *, std::string a_command,
+                                              RE::TESObjectREFR *objRef) {
+    LogAndMessage(std::format("{} called. Command = {}", __func__, a_command));
+
+    const auto scriptFactory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::Script>();
+    const auto script = scriptFactory ? scriptFactory->Create() : nullptr;
+    if (script) {
+        // const auto selectedRef = RE::Console::GetSelectedRef();
+        script->SetCommand(a_command);
+
+        if (objRef) {
+            script->CompileAndRun(objRef);
+        } else {
+            script->CompileAndRun(RE::Console::GetSelectedRef().get());
+        }
+        delete script;
+    }
+}
+
+bool HasCollision(RE::StaticFunctionTag *, RE::TESObjectREFR *objRef) {
+    LogAndMessage(std::format("{} called", __func__));
+
+    if (!objRef) {
+        LogAndMessage(std::format("{}: objRef doesn't exist", __func__), warn);
+        return false;
+    }
+    return objRef->HasCollision();
+}
+
 bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine *vm) {
     // vm->RegisterFunction("MyNativeFunction", "DbSkseFunctions", MyNativeFunction);
     LogAndMessage("Binding Papyrus Functions");
@@ -251,6 +301,8 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine *vm) {
     vm->RegisterFunction("SetMapMarkerIconType", "DbSkseFunctions", SetMapMarkerIconType);
     vm->RegisterFunction("GetMapMarkerIconType", "DbSkseFunctions", GetMapMarkerIconType);
     vm->RegisterFunction("IsMapMarker", "DbSkseFunctions", IsMapMarker);
+    vm->RegisterFunction("ExecuteConsoleCommand", "DbSkseFunctions", ExecuteConsoleCommand);
+    vm->RegisterFunction("HasCollision", "DbSkseFunctions", HasCollision);
     
     return true;
 }
@@ -260,8 +312,7 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
 
     SetupLog();
     SKSE::GetPapyrusInterface()->Register(BindPapyrusFunctions);
-
-    //SetUpEventSink();
+    // SetUpEventSink();
 
     return true;
 }
