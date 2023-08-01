@@ -1,6 +1,7 @@
 Scriptname DbSkseFunctions Hidden 
 ;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
 
+;returns 4.8
 Float Function GetVersion() Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
@@ -10,7 +11,6 @@ Bool Function SetClipBoardText(String s) Global Native
 ;string functions
 ;is the string c char whitespace? Uses c++ isspace function
 Bool Function IsWhiteSpace(String c) Global Native 
-
 int Function CountWhiteSpaces(String s) Global Native
    
 ;differs from consoleUtil.ExecuteCommand in that you can execute a targeted command on a passed in ref.
@@ -40,6 +40,42 @@ Function SetCollision(ObjectReference ref, bool enabled) Global
     Endif
 EndFunction
 
+;get MusicType that's currently playing
+MusicType Function GetCurrentMusicType() Global Native 
+
+int Function GetNumberOfTracksInMusicType(MusicType akMusicType) Global Native 
+
+;get the current track index queued in akMusicType
+int Function GetMusicTypeTrackIndex(MusicType akMusicType) Global Native 
+
+;if the akMusicType is currently playing, it will jump to the track index passed in.
+Function SetMusicTypeTrackIndex(MusicType akMusicType, int index) Global Native 
+    
+int Function GetMusicTypePriority(MusicType akMusicType) Global Native 
+
+Function SetMusicTypePriority(MusicType akMusicType, int priority) Global Native 
+
+;status is as follows
+;kInactive = 0
+;kPlaying = 1
+;kPaused = 2
+;kFinishing = 3
+;kFinished = 4
+int Function GetMusicTypeStatus(MusicType akMusicType) Global Native 
+
+
+String Function GetKeywordString(keyword akKeyword) Global Native
+
+;doesn't carry over between saves. Use load game event for maintenace
+function SetKeywordString(keyword akKeyword, string keywordString) Global Native
+
+;create new forms of these types at runtime.
+;carefull with these. Using these functions are like using PlaceAtMe to create permanent references. 
+;Making too many of these may cause save game bloat, so use sparingly.
+Formlist Function CreateFormList(formlist fillerList = none) Global Native 
+ColorForm Function CreateColorForm(int color = 0xf) Global Native 
+Keyword Function CreateKeyword() Global Native 
+ConstructibleObject Function CreateConstructibleObject() Global Native 
  
 ;/map marker icon types:
 kNone = 0,
@@ -112,7 +148,11 @@ player flashing arrow = 66
 Big circle = any other value
 /;
 
+;returns true if Ref has map data.
+bool function IsMapMarker(ObjectReference Ref) Global Native 
+
 ;For these functions the MapMarker ObjectReference must be a map marker with map marker data.
+;In other words, IsMapMarker must return true;
 int function GetMapMarkerIconType(ObjectReference MapMarker) Global Native
 
 bool function SetMapMarkerIconType(ObjectReference MapMarker, int iconType) Global Native
@@ -121,5 +161,3 @@ string function GetMapMarkerName(ObjectReference MapMarker) Global Native
 
 bool function SetMapMarkerName(ObjectReference MapMarker, String Name) Global Native
 
-;returns true if Ref has map data.
-bool function IsMapMarker(ObjectReference Ref) Global Native 
