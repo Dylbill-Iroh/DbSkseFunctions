@@ -180,5 +180,3 @@ bool function SetMapMarkerIconType(ObjectReference MapMarker, int iconType) Glob
 string function GetMapMarkerName(ObjectReference MapMarker) Global Native
 
 bool function SetMapMarkerName(ObjectReference MapMarker, String Name) Global Native
-
-bool function CreateMapMarker(ObjectReference ref, String Name, int iconType) Global Native
