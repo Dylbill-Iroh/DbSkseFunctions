@@ -412,7 +412,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(4.8);
+    return float(4.9);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -613,6 +613,57 @@ int GetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     return static_cast<int>(mapMarkerData->mapData->type.get());
 }
 
+//RE::ExtraMapMarker newMapMarker;
+bool CreateMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef, std::string name, int iconType) {
+    logger::info("Creating Map Marker");
+    // function to create copied from BSExtraData
+
+    if (!objRef) {
+        logger::error("{}: error, objRef doesn't exists", __func__);
+        return false;
+    }
+
+    if (IsMapMarker(nullptr, objRef)) {
+        return false;
+    }
+    else {
+        RE::ExtraMapMarker* newMapMarker = RE::BSExtraData::Create<RE::ExtraMapMarker>();
+
+        if (!newMapMarker) {
+            logger::error("{}: error, newMapMarker doesn't exists", __func__);
+            return false;
+        }
+
+        logger::info("{}: error, newMapMarker doesn't exists", __func__);
+
+        if (!newMapMarker->mapData) {
+            logger::error("{}: error, mapData doesn't exists", __func__);
+            return false;
+        }
+
+        if (newMapMarker->mapData->locationName.fullName == NULL) {
+            LogAndMessage("Warning, LocationName not found.", warn);
+            //RE::MapMarkerData data;
+            //RE::MapMarkerData* newData = &data; /*= RE::IFormFactory::GetConcreteFormFactoryByType<RE::MapMarkerData>()->Create();*/
+
+            //newMapMarker->mapData = newData;
+            return false;
+        }
+
+        const char* cName = name.data();
+        newMapMarker->mapData->locationName.fullName = cName;
+        newMapMarker->mapData->type = static_cast<RE::MARKER_TYPE>(iconType);
+
+        std::string name = newMapMarker->mapData->locationName.GetFullName(); 
+        int type = static_cast<int>(newMapMarker->mapData->type.get());
+
+        logger::info("New map marker name = {} iconType = {}", name, type);
+        objRef->extraList.Add(newMapMarker);
+    }
+    return false;
+}
+
+
 //edited form ConsoleUtil NG
 static inline void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_command, RE::TESObjectREFR* objRef) {
     LogAndMessage(std::format("{} called. Command = {}", __func__, a_command));
@@ -729,6 +780,324 @@ int GetMusicTypeStatus(RE::StaticFunctionTag*, RE::BGSMusicType* musicType) {
     return musicType->typeStatus.underlying();
 }
 
+std::vector<RE::EnchantmentItem*> GetKnownEnchantments(RE::StaticFunctionTag*) {
+    std::vector<RE::EnchantmentItem*> returnValues;
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+
+    RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
+    RE::BSTArray<RE::TESForm*>::iterator itrEndType = enchantmentArray->end();
+
+    logger::info("{} enchantmentArray size[{}]", __func__, enchantmentArray->size());
+
+    for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != itrEndType; it++) {
+        RE::TESForm* baseForm = *it;
+        
+        if (baseForm) {
+            RE::EnchantmentItem* enchantment = baseForm->As<RE::EnchantmentItem>();
+            if (enchantment) {
+                RE::EnchantmentItem* baseEnchantment = enchantment->data.baseEnchantment;
+                if (baseEnchantment) {
+                    if (baseEnchantment->GetKnown()) {
+                        if (std::find(returnValues.begin(), returnValues.end(), baseEnchantment) == returnValues.end()) {
+                            // baseEnchantment not in returnValues, add it
+                            returnValues.push_back(baseEnchantment);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return returnValues;
+}
+
+void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akList) {
+    if (!akList) {
+        logger::error("{} akList doesn't exist", __func__);
+    }
+
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+
+    RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
+    RE::BSTArray<RE::TESForm*>::iterator itrEndType = enchantmentArray->end();
+
+    logger::info("{} enchantmentArray size[{}]", __func__, enchantmentArray->size());
+
+    for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != itrEndType; it++) {
+        RE::TESForm* baseForm = *it;
+
+        if (baseForm) {
+            RE::EnchantmentItem* enchantment = baseForm->As<RE::EnchantmentItem>();
+            if (enchantment) {
+                RE::EnchantmentItem* baseEnchantment = enchantment->data.baseEnchantment;
+                if (baseEnchantment) {
+                    if (baseEnchantment->GetKnown()) {
+                        //if (!akList->HasForm(baseEnchantment)) {
+                            akList->AddForm(baseEnchantment);
+                        //}
+                    }
+                }
+            }
+        }
+    }
+}
+
+RE::TESCondition* condition_isPowerAttacking;
+bool IsActorPowerAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_isPowerAttacking) {
+        logger::info("creating condition_isPowerAttacking condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsPowerAttacking;
+
+        condition_isPowerAttacking = new RE::TESCondition;
+        condition_isPowerAttacking->head = conditionItem;
+    }
+
+    return condition_isPowerAttacking->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsAttacking;
+bool IsActorAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsAttacking) {
+        logger::info("creating condition_IsAttacking condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsAttacking;
+        
+        condition_IsAttacking = new RE::TESCondition;
+        condition_IsAttacking->head = conditionItem;
+    }
+
+    return condition_IsAttacking->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_isActorSpeaking;
+bool IsActorSpeaking(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_isActorSpeaking) {
+        logger::info("creating condition_isActorSpeaking condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsTalking;
+
+        condition_isActorSpeaking = new RE::TESCondition;
+        condition_isActorSpeaking->head = conditionItem;
+    }
+
+    return condition_isActorSpeaking->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsBlocking;
+bool IsActorBlocking(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsBlocking) {
+        logger::info("creating condition_IsBlocking condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsBlocking;
+
+        condition_IsBlocking = new RE::TESCondition;
+        condition_IsBlocking->head = conditionItem;
+    }
+
+    return condition_IsBlocking->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsCasting;
+bool IsActorCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsCasting) {
+        logger::info("creating condition_IsCasting condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsCasting;
+
+        condition_IsCasting = new RE::TESCondition;
+        condition_IsCasting->head = conditionItem;
+    }
+
+    return condition_IsCasting->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsDualCasting;
+bool IsActorDualCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsDualCasting) {
+        logger::info("creating condition_IsDualCasting condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsDualCasting;
+
+        condition_IsDualCasting = new RE::TESCondition;
+        condition_IsDualCasting->head = conditionItem;
+    }
+
+    return condition_IsDualCasting->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsStaggered;
+bool IsActorStaggered(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsStaggered) {
+        logger::info("creating condition_IsStaggered condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsStaggered;
+
+        condition_IsStaggered = new RE::TESCondition;
+        condition_IsStaggered->head = conditionItem;
+    }
+
+    return condition_IsStaggered->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsRecoiling;
+bool IsActorRecoiling(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsRecoiling) {
+        logger::info("creating condition_IsRecoiling condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsRecoiling;
+
+        condition_IsRecoiling = new RE::TESCondition;
+        condition_IsRecoiling->head = conditionItem;
+    }
+
+    return condition_IsRecoiling->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsIgnoringCombat;
+bool IsActorIgnoringCombat(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsIgnoringCombat) {
+        logger::info("creating condition_IsIgnoringCombat condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsIgnoringCombat;
+
+        condition_IsIgnoringCombat = new RE::TESCondition;
+        condition_IsIgnoringCombat->head = conditionItem;
+    }
+
+    return condition_IsIgnoringCombat->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsUndead;
+bool IsActorUndead(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsUndead) {
+        logger::info("creating condition_IsUndead condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsUndead;
+
+        condition_IsUndead = new RE::TESCondition;
+        condition_IsUndead->head = conditionItem;
+    }
+
+    return condition_IsUndead->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsOnFlyingMount;
+bool IsActorOnFlyingMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsOnFlyingMount) {
+        logger::info("creating condition_IsOnFlyingMount condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsOnFlyingMount;
+
+        condition_IsOnFlyingMount = new RE::TESCondition;
+        condition_IsOnFlyingMount->head = conditionItem;
+    }
+
+    return condition_IsOnFlyingMount->IsTrue(akActor, nullptr);
+}
+
+bool IsActorAMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+    return akActor->IsAMount();
+}
+
+bool IsActorInMidAir(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+    return akActor->IsInMidair();
+}
+
+bool IsActorInRagdollState(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+    return akActor->IsInRagdollState();
+}
+
+int GetDetectionLevel(RE::StaticFunctionTag*, RE::Actor* akActor, RE::Actor* akTarget) {
+    if (!akActor) {
+        logger::error("{}: error, akActor doesn't exist", __func__);
+        return -1;
+    }
+
+    if (!akTarget) {
+        logger::error("{}: error, akTarget doesn't exist", __func__);
+        return -1;
+    }
+    return akActor->RequestDetectionLevel(akTarget);
+}
+
 std::string GetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword) {
     logger::info("{}", __func__);
     if (!akKeyword) {
@@ -805,6 +1174,21 @@ RE::BGSConstructibleObject* CreateConstructibleObject(RE::StaticFunctionTag*) {
 
     //RE::BGSConstructibleObject
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSConstructibleObject>()->Create();
+    if (!newForm) {
+        logger::error("{} failed", __func__);
+    }
+    else {
+        logger::info("{} success", __func__);
+    }
+
+    return newForm;
+}
+
+RE::BGSTextureSet* CreateTextureSet(RE::StaticFunctionTag*) {
+    logger::info("{} called", __func__);
+
+    //RE::BGSConstructibleObject
+    auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSTextureSet>()->Create();
     if (!newForm) {
         logger::error("{} failed", __func__);
     }
@@ -1377,6 +1761,29 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
     }
 };
 
+struct TestEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESActivateEvent* event, RE::BSTEventSource<RE::TESActivateEvent>*/*source*/) {
+
+        //logger::info("music Event");
+
+        //event.
+
+        /*std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
+
+        CombineEventHandles(handles, akActorRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
+        CombineEventHandles(handles, baseObject, eventDataPtrs[eventIndex]->eventParamMaps[1]);
+        CombineEventHandles(handles, ref, eventDataPtrs[eventIndex]->eventParamMaps[2]);
+
+        RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((RE::Actor*)akActorRef, (RE::TESForm*)baseObject, (RE::TESObjectREFR*)ref);
+        SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);*/
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+TestEventSink* testEventSink;
 
 HitEventSink* hitEventSink;
 CombatEventSink* combatEventSink;
@@ -1893,6 +2300,12 @@ void CreateEventSinks() {
     if (!hitEventSink) { hitEventSink = new HitEventSink(); }
     if (!deathEventSink) { deathEventSink = new DeathEventSink(); }
     if (!equipEventSink) { equipEventSink = new EquipEventSink(); }
+    if (!testEventSink) { testEventSink = new TestEventSink(); }
+    //eventSourceholder->AddEventSink(testEventSink);
+
+    //RE::ScriptEventSourceHolder
+
+    //eventSourceholder->AddEventSink(updateEventSink);
 }
 
 bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
@@ -1913,6 +2326,8 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("SetMapMarkerIconType", "DbSkseFunctions", SetMapMarkerIconType);
     vm->RegisterFunction("GetMapMarkerIconType", "DbSkseFunctions", GetMapMarkerIconType);
     vm->RegisterFunction("IsMapMarker", "DbSkseFunctions", IsMapMarker);
+    vm->RegisterFunction("CreateMapMarker", "DbSkseFunctions", CreateMapMarker);
+
     vm->RegisterFunction("ExecuteConsoleCommand", "DbSkseFunctions", ExecuteConsoleCommand);
     vm->RegisterFunction("HasCollision", "DbSkseFunctions", HasCollision);
     vm->RegisterFunction("GetCurrentMusicType", "DbSkseFunctions", GetCurrentMusicType);
@@ -1922,6 +2337,23 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetMusicTypePriority", "DbSkseFunctions", GetMusicTypePriority);
     vm->RegisterFunction("SetMusicTypePriority", "DbSkseFunctions", SetMusicTypePriority);
     vm->RegisterFunction("GetMusicTypeStatus", "DbSkseFunctions", GetMusicTypeStatus);
+    vm->RegisterFunction("GetKnownEnchantments", "DbSkseFunctions", GetKnownEnchantments);
+    vm->RegisterFunction("AddKnownEnchantmentsToFormList", "DbSkseFunctions", AddKnownEnchantmentsToFormList);
+    vm->RegisterFunction("IsActorAttacking", "DbSkseFunctions", IsActorAttacking);
+    vm->RegisterFunction("IsActorPowerAttacking", "DbSkseFunctions", IsActorPowerAttacking);
+    vm->RegisterFunction("IsActorSpeaking", "DbSkseFunctions", IsActorSpeaking);
+    vm->RegisterFunction("IsActorBlocking", "DbSkseFunctions", IsActorBlocking);
+    vm->RegisterFunction("IsActorCasting", "DbSkseFunctions", IsActorCasting);
+    vm->RegisterFunction("IsActorDualCasting", "DbSkseFunctions", IsActorDualCasting);
+    vm->RegisterFunction("IsActorStaggered", "DbSkseFunctions", IsActorStaggered);
+    vm->RegisterFunction("IsActorRecoiling", "DbSkseFunctions", IsActorRecoiling);
+    vm->RegisterFunction("IsActorIgnoringCombat", "DbSkseFunctions", IsActorIgnoringCombat);
+    vm->RegisterFunction("IsActorUndead", "DbSkseFunctions", IsActorUndead);
+    vm->RegisterFunction("IsActorOnFlyingMount", "DbSkseFunctions", IsActorOnFlyingMount);
+    vm->RegisterFunction("IsActorAMount", "DbSkseFunctions", IsActorAMount);
+    vm->RegisterFunction("IsActorInMidAir", "DbSkseFunctions", IsActorInMidAir);
+    vm->RegisterFunction("IsActorInRagdollState", "DbSkseFunctions", IsActorInRagdollState);
+    vm->RegisterFunction("GetDetectionLevel", "DbSkseFunctions", GetDetectionLevel);
 
     vm->RegisterFunction("GetKeywordString", "DbSkseFunctions", GetKeywordString);
     vm->RegisterFunction("SetKeywordString", "DbSkseFunctions", SetKeywordString);
@@ -1930,9 +2362,9 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("CreateFormList", "DbSkseFunctions", CreateFormList);
     vm->RegisterFunction("CreateColorForm", "DbSkseFunctions", CreateColorForm);
     vm->RegisterFunction("CreateConstructibleObject", "DbSkseFunctions", CreateConstructibleObject);
+    vm->RegisterFunction("CreateTextureSet", "DbSkseFunctions", CreateTextureSet);
 
     //global events ====================================================================================================
-
     //form
     vm->RegisterFunction("IsFormRegisteredForGlobalEvent", "DbSkseEvents", IsFormRegisteredForGlobalEvent);
     vm->RegisterFunction("RegisterFormForGlobalEvent", "DbSkseEvents", RegisterFormForGlobalEvent);
@@ -2093,6 +2525,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     serialization->SetUniqueID('DbSF');
     serialization->SetSaveCallback(SaveCallback);
     serialization->SetLoadCallback(LoadCallback);
-    
+   
+
     return true;
 }
