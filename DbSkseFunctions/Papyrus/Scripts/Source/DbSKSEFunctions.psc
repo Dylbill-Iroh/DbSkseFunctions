@@ -1,7 +1,7 @@
 Scriptname DbSkseFunctions Hidden 
 ;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
 
-;returns 4.8
+;returns 4.9
 Float Function GetVersion() Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
@@ -63,6 +63,24 @@ Function SetMusicTypePriority(MusicType akMusicType, int priority) Global Native
 ;kFinished = 4
 int Function GetMusicTypeStatus(MusicType akMusicType) Global Native 
 
+Enchantment[] Function GetKnownEnchantments() Global Native 
+Function AddKnownEnchantmentsToFormList(Formlist akList) Global Native 
+
+Bool Function IsActorAttacking(actor akActor) Global Native
+Bool Function IsActorPowerAttacking(actor akActor) Global Native
+Bool Function IsActorSpeaking(actor akActor) Global Native
+Bool Function IsActorBlocking(actor akActor) Global Native
+Bool Function IsActorCasting(actor akActor) Global Native
+Bool Function IsActorDualCasting(actor akActor) Global Native
+Bool Function IsActorStaggered(actor akActor) Global Native
+Bool Function IsActorRecoiling(actor akActor) Global Native
+Bool Function IsActorIgnoringCombat(actor akActor) Global Native
+Bool Function IsActorUndead(actor akActor) Global Native
+Bool Function IsActorOnFlyingMount(actor akActor) Global Native
+Bool Function IsActorAMount(actor akActor) Global Native
+Bool Function IsActorInMidAir(actor akActor) Global Native
+Bool Function IsActorInRagdollState(actor akActor) Global Native
+int Function GetDetectionLevel(actor akActor, actor akTarget) Global Native
 
 String Function GetKeywordString(keyword akKeyword) Global Native
 
@@ -76,6 +94,7 @@ Formlist Function CreateFormList(formlist fillerList = none) Global Native
 ColorForm Function CreateColorForm(int color = 0xf) Global Native 
 Keyword Function CreateKeyword() Global Native 
 ConstructibleObject Function CreateConstructibleObject() Global Native 
+TextureSet Function CreateTextureSet() Global Native 
  
 ;/map marker icon types:
 kNone = 0,
@@ -148,6 +167,7 @@ player flashing arrow = 66
 Big circle = any other value
 /;
 
+
 ;returns true if Ref has map data.
 bool function IsMapMarker(ObjectReference Ref) Global Native 
 
@@ -161,3 +181,4 @@ string function GetMapMarkerName(ObjectReference MapMarker) Global Native
 
 bool function SetMapMarkerName(ObjectReference MapMarker, String Name) Global Native
 
+bool function CreateMapMarker(ObjectReference ref, String Name, int iconType) Global Native
