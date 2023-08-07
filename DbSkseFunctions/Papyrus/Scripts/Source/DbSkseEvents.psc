@@ -58,7 +58,7 @@ function UnregisterFormForGlobalEvent(String asEvent, Form eventReceiver, Form p
 function UnregisterFormForGlobalEvent_All(String asEvent, Form eventReceiver) global Native
 
 ;returns true if registering, or false if unregistering.
-bool function ToggleGlobalEventOnForm(String sEvent, form eventReceiver, form paramFilter, int paramFilterIndex) global
+bool function ToggleGlobalEventOnForm(String sEvent, form eventReceiver, form paramFilter = none, int paramFilterIndex = 0) global
 	if IsFormRegisteredForGlobalEvent(sEvent, eventReceiver, paramFilter, paramFilterIndex)
 		UnregisterFormForGlobalEvent(sEvent, eventReceiver, paramFilter, paramFilterIndex)
 		return false 
@@ -76,7 +76,7 @@ function UnregisterAliasForGlobalEvent(String asEvent, Alias eventReceiver, Form
 function UnregisterAliasForGlobalEvent_All(String asEvent, Alias eventReceiver) global Native
 
 ;returns true if registering, or false if unregistering.
-bool function ToggleGlobalEventOnAlias(String sEvent, Alias eventReceiver, form paramFilter, int paramFilterIndex) global
+bool function ToggleGlobalEventOnAlias(String sEvent, Alias eventReceiver, form paramFilter = none, int paramFilterIndex = 0) global
 	if IsAliasregisteredforglobalevent(sEvent, eventReceiver, paramFilter, paramFilterIndex)
 		UnregisterAliasforglobalevent(sEvent, eventReceiver, paramFilter, paramFilterIndex)
 		return false 
@@ -94,7 +94,7 @@ function UnregisterActiveMagicEffectForGlobalEvent(String asEvent, ActiveMagicEf
 function UnregisterActiveMagicEffectForGlobalEvent_All(String asEvent, ActiveMagicEffect eventReceiver) global Native
 
 ;returns true if registering, or false if unregistering.
-bool function ToggleGlobalEventOnActiveMagicEffect(String sEvent, ActiveMagicEffect eventReceiver, form paramFilter, int paramFilterIndex) global
+bool function ToggleGlobalEventOnActiveMagicEffect(String sEvent, ActiveMagicEffect eventReceiver, form paramFilter = none, int paramFilterIndex = 0) global
 	if IsActiveMagicEffectRegisteredForGlobalEvent(sEvent, eventReceiver, paramFilter, paramFilterIndex)
 		UnregisterActiveMagicEffectforglobalevent(sEvent, eventReceiver, paramFilter, paramFilterIndex)
 		return false 
@@ -106,9 +106,15 @@ EndFunction
 
 
 ;events ===========================================================================================================================================================================
-;put these in in a script that's on the registered eventReceiver
+;put these in a script that's attached to the registered eventReceiver
 Event OnLoadGameGlobal()
 EndEvent 
+
+Event OnWaitStartGlobal()
+EndEvent 
+
+Event OnWaitStopGlobal(bool interrupted)
+EndEvent
 
 Event OnFurnitureEnterGlobal(Actor akActor, ObjectReference furnitureRef)
 EndEvent 
@@ -119,11 +125,29 @@ EndEvent
 Event OnActivateGlobal(ObjectReference ActivatorRef, ObjectReference ActivatedRef)
 EndEvent
 
-;note that OnHitGlobal sends Ammo as well as projectile. 
+;event sent when a reference is locked or unlocked
+Event OnLockChangedGlobal(ObjectReference akReference, bool Locked)
+EndEvent
+
+;Open and close events are for animated doors / gates, use OnActivateGlobal for more general purposes.
+Event OnOpenGlobal(ObjectReference ActivatorRef, ObjectReference akActionRef)
+EndEvent
+
+Event OnCloseGlobal(ObjectReference ActivatorRef, ObjectReference akActionRef)
+EndEvent
+
+;note that OnHitGlobal sends Ammo as well as projectile.  
 ;This is because the projectile in this event is bugged, it doesn't detect reliably. 
 ;This sends the Ammo the attacker has equipped if the Source is a bow or crossbow.
 Event OnHitGlobal(ObjectReference Attacker, ObjectReference Target, Form Source, Ammo akAmmo, Projectile akProjectile, bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)
 EndEvent
+
+Event OnMagicEffectAppliedGlobal(ObjectReference Caster, ObjectReference Target, MagicEffect akEffect)
+Endevent
+
+;Event sent when an ObjectReference casts a spell. Source could be a spell, enchantment, potion or ingredient.
+Event OnSpellCastGlobal(ObjectReference Caster, Form Source)
+Endevent
 
 Event OnDeathGlobal(Actor Victim, Actor Killer)
 EndEvent
