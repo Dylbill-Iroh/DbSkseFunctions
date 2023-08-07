@@ -1,7 +1,7 @@
 Scriptname DbSkseFunctions Hidden 
 ;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
 
-;returns 4.9
+;returns 5.0
 Float Function GetVersion() Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
@@ -65,6 +65,17 @@ int Function GetMusicTypeStatus(MusicType akMusicType) Global Native
 
 Enchantment[] Function GetKnownEnchantments() Global Native 
 Function AddKnownEnchantmentsToFormList(Formlist akList) Global Native 
+
+;get source that the ActiveMagicEffect came from
+;Could be a spell, enchantment, potion, or ingredient. Use GetType() to find out which.
+Form Function GetActiveEffectSource(ActiveMagicEffect akEffect) Global Native
+
+;Get casting source that the ActiveMagicEffect came from
+;kLeftHand = 0,
+;kRightHand = 1,
+;kOther = 2, (most likely shout) 
+;kInstant = 3
+int Function GetActiveEffectCastingSource(ActiveMagicEffect akEffect) Global Native
 
 Bool Function IsActorAttacking(actor akActor) Global Native
 Bool Function IsActorPowerAttacking(actor akActor) Global Native
