@@ -412,7 +412,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(4.9);
+    return float(5.0);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -613,57 +613,6 @@ int GetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     return static_cast<int>(mapMarkerData->mapData->type.get());
 }
 
-//RE::ExtraMapMarker newMapMarker;
-bool CreateMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef, std::string name, int iconType) {
-    logger::info("Creating Map Marker");
-    // function to create copied from BSExtraData
-
-    if (!objRef) {
-        logger::error("{}: error, objRef doesn't exists", __func__);
-        return false;
-    }
-
-    if (IsMapMarker(nullptr, objRef)) {
-        return false;
-    }
-    else {
-        RE::ExtraMapMarker* newMapMarker = RE::BSExtraData::Create<RE::ExtraMapMarker>();
-
-        if (!newMapMarker) {
-            logger::error("{}: error, newMapMarker doesn't exists", __func__);
-            return false;
-        }
-
-        logger::info("{}: error, newMapMarker doesn't exists", __func__);
-
-        if (!newMapMarker->mapData) {
-            logger::error("{}: error, mapData doesn't exists", __func__);
-            return false;
-        }
-
-        if (newMapMarker->mapData->locationName.fullName == NULL) {
-            LogAndMessage("Warning, LocationName not found.", warn);
-            //RE::MapMarkerData data;
-            //RE::MapMarkerData* newData = &data; /*= RE::IFormFactory::GetConcreteFormFactoryByType<RE::MapMarkerData>()->Create();*/
-
-            //newMapMarker->mapData = newData;
-            return false;
-        }
-
-        const char* cName = name.data();
-        newMapMarker->mapData->locationName.fullName = cName;
-        newMapMarker->mapData->type = static_cast<RE::MARKER_TYPE>(iconType);
-
-        std::string name = newMapMarker->mapData->locationName.GetFullName(); 
-        int type = static_cast<int>(newMapMarker->mapData->type.get());
-
-        logger::info("New map marker name = {} iconType = {}", name, type);
-        objRef->extraList.Add(newMapMarker);
-    }
-    return false;
-}
-
-
 //edited form ConsoleUtil NG
 static inline void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_command, RE::TESObjectREFR* objRef) {
     LogAndMessage(std::format("{} called. Command = {}", __func__, a_command));
@@ -839,6 +788,24 @@ void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akL
             }
         }
     }
+}
+
+RE::TESForm* GetActiveEffectSource(RE::StaticFunctionTag*, RE::ActiveEffect* akEffect) {
+    if (!akEffect) {
+        logger::error("{} akEffect doesn't exist", __func__);
+        return nullptr;
+    }
+
+    return akEffect->spell;
+}
+
+int GetActiveEffectCastingSource(RE::StaticFunctionTag*, RE::ActiveEffect* akEffect) {
+    if (!akEffect) {
+        logger::error("{} akEffect doesn't exist", __func__);
+        return -1;
+    }
+
+    return static_cast<int>(akEffect->castingSource);
 }
 
 RE::TESCondition* condition_isPowerAttacking;
@@ -1212,8 +1179,15 @@ enum EventsEnum {
     EventEnum_DyingEvent,
     EventEnum_OnObjectEquipped,
     EventEnum_OnObjectUnequipped,
+    EventEnum_OnWaitStart,
+    EventEnum_OnWaitStop,
+    EventEnum_OnMagicEffectApply,
+    EventEnum_OnSpellCast,
+    EventEnum_LockChanged,
+    EventEnum_OnOpen,
+    EventEnum_OnClose,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnObjectUnequipped
+    EventEnum_Last = EventEnum_OnClose
 };
 
 
@@ -1761,29 +1735,141 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
     }
 };
 
-struct TestEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
-    RE::BSEventNotifyControl ProcessEvent(const RE::TESActivateEvent* event, RE::BSTEventSource<RE::TESActivateEvent>*/*source*/) {
+struct WaitStartEventSink : public RE::BSTEventSink<RE::TESWaitStartEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESWaitStartEvent* event, RE::BSTEventSource<RE::TESWaitStartEvent>*/*source*/) {
 
-        //logger::info("music Event");
+        logger::info("Wait Start Event");
 
-        //event.
-
-        /*std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
-
-        CombineEventHandles(handles, akActorRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
-        CombineEventHandles(handles, baseObject, eventDataPtrs[eventIndex]->eventParamMaps[1]);
-        CombineEventHandles(handles, ref, eventDataPtrs[eventIndex]->eventParamMaps[2]);
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStart]->globalHandles;
 
         RemoveDuplicates(handles);
 
-        auto* args = RE::MakeFunctionArguments((RE::Actor*)akActorRef, (RE::TESForm*)baseObject, (RE::TESObjectREFR*)ref);
-        SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);*/
+        auto* args = RE::MakeFunctionArguments();
+        SendEvents(handles, eventDataPtrs[EventEnum_OnWaitStart]->sEvent, args);
 
         return RE::BSEventNotifyControl::kContinue;
     }
 };
 
-TestEventSink* testEventSink;
+struct WaitStopEventSink : public RE::BSTEventSink<RE::TESWaitStopEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESWaitStopEvent* event, RE::BSTEventSource<RE::TESWaitStopEvent>*/*source*/) {
+
+        logger::info("Wait Stop Event");
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStop]->globalHandles;
+
+        RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((bool)event->interrupted);
+        SendEvents(handles, eventDataPtrs[EventEnum_OnWaitStop]->sEvent, args);
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+struct MagicEffectApplyEventSink : public RE::BSTEventSink<RE::TESMagicEffectApplyEvent> { //
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESMagicEffectApplyEvent* event, RE::BSTEventSource<RE::TESMagicEffectApplyEvent>*/*source*/) {
+        
+        logger::info("MagicEffectApply Event");
+
+        RE::TESObjectREFR* caster = event->caster.get();
+        RE::TESObjectREFR* target = event->target.get();
+        RE::EffectSetting* magicEffect = RE::TESForm::LookupByID<RE::EffectSetting>(event->magicEffect); 
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnMagicEffectApply]->globalHandles;
+
+        CombineEventHandles(handles, caster, eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[0]);
+        CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[1]);
+        CombineEventHandles(handles, magicEffect, eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[2]);
+
+        RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)caster, (RE::TESObjectREFR*)target, (RE::EffectSetting*)magicEffect);
+        SendEvents(handles, eventDataPtrs[EventEnum_OnMagicEffectApply]->sEvent, args);
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESLockChangedEvent* event, RE::BSTEventSource<RE::TESLockChangedEvent>*/*source*/) {
+
+        logger::info("Lock Changed Event");
+
+        RE::TESObjectREFR* lockedObject = event->lockedObject.get();
+
+        if (!lockedObject) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        bool Locked = lockedObject->IsLocked();
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_LockChanged]->globalHandles;
+        CombineEventHandles(handles, lockedObject, eventDataPtrs[EventEnum_LockChanged]->eventParamMaps[0]);
+
+        RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)lockedObject, (bool)Locked);
+        SendEvents(handles, eventDataPtrs[EventEnum_LockChanged]->sEvent, args);
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+struct OpenCloseEventSink : public RE::BSTEventSink<RE::TESOpenCloseEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESOpenCloseEvent* event, RE::BSTEventSource<RE::TESOpenCloseEvent>*/*source*/) {
+
+        logger::info("Open Close Event");
+
+
+        RE::TESObjectREFR* activatorRef = event->activeRef.get();
+        RE::TESObjectREFR* akActionRef = event->ref.get();
+        int eventIndex;
+
+        if (event->opened) {
+            eventIndex = EventEnum_OnOpen;
+        }
+        else {
+            eventIndex = EventEnum_OnClose;
+        }
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
+
+        CombineEventHandles(handles, activatorRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
+        CombineEventHandles(handles, akActionRef, eventDataPtrs[eventIndex]->eventParamMaps[1]);
+
+        RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatorRef, (RE::TESObjectREFR*)akActionRef);
+        SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESSpellCastEvent* event, RE::BSTEventSource<RE::TESSpellCastEvent>*/*source*/) {
+
+        logger::info("spell cast Event");
+
+        RE::TESObjectREFR* caster = event->object;
+        RE::TESForm* spell = RE::TESForm::LookupByID(event->spell);
+
+        //logger::info("spell cast: [{}] obj [{}]", GetFormName(spell), GetFormName(caster));
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnSpellCast]->globalHandles;
+
+        CombineEventHandles(handles, caster, eventDataPtrs[EventEnum_OnSpellCast]->eventParamMaps[0]);
+        CombineEventHandles(handles, spell, eventDataPtrs[EventEnum_OnSpellCast]->eventParamMaps[1]);
+
+        RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)caster, (RE::TESForm*)spell);
+        SendEvents(handles, eventDataPtrs[EventEnum_OnSpellCast]->sEvent, args);
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
 
 HitEventSink* hitEventSink;
 CombatEventSink* combatEventSink;
@@ -1791,6 +1877,12 @@ FurnitureEventSink* furnitureEventSink;
 ActivateEventSink* activateEventSink;
 DeathEventSink* deathEventSink;
 EquipEventSink* equipEventSink;
+WaitStartEventSink* waitStartEventSink;
+WaitStopEventSink* waitStopEventSink;
+MagicEffectApplyEventSink* magicEffectApplyEventSink;
+LockChangedEventSink* lockChangedEventSink;
+OpenCloseEventSink* openCloseEventSink;
+SpellCastEventSink* spellCastEventSink;
 
 void AddSink(int index) {
 
@@ -1829,7 +1921,7 @@ void AddSink(int index) {
             eventSourceholder->AddEventSink(hitEventSink);
         }
         break;
-
+    
     case EventEnum_DeathEvent:
 
     case EventEnum_DyingEvent:
@@ -1851,6 +1943,56 @@ void AddSink(int index) {
             eventSourceholder->AddEventSink(equipEventSink);
         }
         break;
+
+    case EventEnum_OnWaitStart:
+        if (!eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded && !eventDataPtrs[EventEnum_OnWaitStart]->isEmpty()) {
+            logger::info("{}, EventEnum_OnWaitStart sink added", __func__);
+            eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded = true;
+            eventSourceholder->AddEventSink(waitStartEventSink);
+        }
+        break;
+
+    case EventEnum_OnWaitStop:
+        if (!eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded && !eventDataPtrs[EventEnum_OnWaitStop]->isEmpty()) {
+            logger::info("{}, EventEnum_OnWaitStop sink added", __func__);
+            eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded = true;
+            eventSourceholder->AddEventSink(waitStopEventSink);
+        }
+        break;
+    case EventEnum_OnMagicEffectApply:
+        if (!eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded && !eventDataPtrs[EventEnum_OnMagicEffectApply]->isEmpty()) {
+            logger::info("{}, EventEnum_OnMagicEffectApply sink added", __func__);
+            eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded = true;
+            eventSourceholder->AddEventSink(magicEffectApplyEventSink);
+        }
+        break;
+
+    case EventEnum_OnSpellCast:
+        if (!eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded && !eventDataPtrs[EventEnum_OnSpellCast]->isEmpty()) {
+            logger::info("{}, EventEnum_OnSpellCast sink added", __func__);
+            eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = true;
+            eventSourceholder->AddEventSink(spellCastEventSink);
+        }
+        break;
+
+    case EventEnum_LockChanged:
+        if (!eventDataPtrs[EventEnum_LockChanged]->sinkAdded && !eventDataPtrs[EventEnum_LockChanged]->isEmpty()) {
+            logger::info("{}, EventEnum_LockChanged sink added", __func__);
+            eventDataPtrs[EventEnum_LockChanged]->sinkAdded = true;
+            eventSourceholder->AddEventSink(lockChangedEventSink);
+        }
+        break;
+
+    case EventEnum_OnOpen: 
+
+    case EventEnum_OnClose: 
+        if (!eventDataPtrs[EventEnum_OnOpen]->sinkAdded && !eventDataPtrs[EventEnum_OnClose]->sinkAdded && (!eventDataPtrs[EventEnum_OnOpen]->isEmpty() || !eventDataPtrs[EventEnum_OnClose]->isEmpty())) {
+            logger::info("{}, EventEnum_OnClose sink added", __func__);
+            eventDataPtrs[EventEnum_OnClose]->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnOpen]->sinkAdded = true;
+            eventSourceholder->AddEventSink(openCloseEventSink);
+        }
+        break;
     }
 }
 
@@ -1859,7 +2001,7 @@ void RemoveSink(int index) {
 
     switch (index) {
     case EventEnum_OnCombatStateChanged:
-        if (!eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded && !eventDataPtrs[EventEnum_OnCombatStateChanged]->isEmpty()) {
+        if (!eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded && eventDataPtrs[EventEnum_OnCombatStateChanged]->isEmpty()) {
             logger::info("{}, EventEnum_OnCombatStateChanged sink removed", __func__);
             eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(combatEventSink);
@@ -1878,7 +2020,7 @@ void RemoveSink(int index) {
         break;
 
     case EventEnum_OnActivate:
-        if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded) {
+        if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded && eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
             logger::info("{}, EventEnum_OnActivate sink removed", __func__);
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(activateEventSink);
@@ -1886,7 +2028,7 @@ void RemoveSink(int index) {
         break;
 
     case EventEnum_HitEvent:
-        if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
+        if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
             logger::info("{}, EventEnum_hitEvent sink removed", __func__);
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(hitEventSink);
@@ -1911,7 +2053,58 @@ void RemoveSink(int index) {
             logger::info("{}, EventEnum_OnObjectEquipped sink removed", __func__);
             eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = false;
             eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(deathEventSink);
+            eventSourceholder->RemoveEventSink(equipEventSink);
+        }
+        break;
+
+    case EventEnum_OnWaitStart:
+        if (!eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded && eventDataPtrs[EventEnum_OnWaitStart]->isEmpty()) {
+            logger::info("{}, EventEnum_OnWaitStart sink removed", __func__);
+            eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(waitStartEventSink);
+        }
+        break;
+
+    case EventEnum_OnWaitStop:
+        if (!eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded && eventDataPtrs[EventEnum_OnWaitStop]->isEmpty()) {
+            logger::info("{}, EventEnum_OnWaitStop sink removed", __func__);
+            eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(waitStopEventSink);
+        }
+        break;
+
+    case EventEnum_OnMagicEffectApply:
+        if (!eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded && eventDataPtrs[EventEnum_OnMagicEffectApply]->isEmpty()) {
+            logger::info("{}, EventEnum_OnMagicEffectApply sink removed", __func__);
+            eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(magicEffectApplyEventSink);
+        }
+        break;
+
+    case EventEnum_OnSpellCast:
+        if (!eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded && eventDataPtrs[EventEnum_OnSpellCast]->isEmpty()) {
+            logger::info("{}, EventEnum_OnSpellCast sink removed", __func__);
+            eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(spellCastEventSink);
+        }
+        break;
+
+    case EventEnum_LockChanged:
+        if (!eventDataPtrs[EventEnum_LockChanged]->sinkAdded && eventDataPtrs[EventEnum_LockChanged]->isEmpty()) {
+            logger::info("{}, EventEnum_LockChanged sink removed", __func__);
+            eventDataPtrs[EventEnum_LockChanged]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(lockChangedEventSink);
+        }
+        break;
+
+    case EventEnum_OnOpen: 
+
+    case EventEnum_OnClose:
+        if (eventDataPtrs[EventEnum_OnOpen]->isEmpty() && eventDataPtrs[EventEnum_OnClose]->isEmpty()) {
+            logger::info("{}, EventEnum_OnOpen sink removed", __func__);
+            eventDataPtrs[EventEnum_OnOpen]->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnClose]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(openCloseEventSink);
         }
         break;
     }
@@ -2117,7 +2310,7 @@ void UnregisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEv
         return;
     }
 
-    logger::info("{} adding handle for: {}", __func__, GetFormName(eventReceiver));
+    logger::info("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
 
     RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiver->GetFormType());
     RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
@@ -2199,7 +2392,7 @@ void UnregisterFormForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString 
         return;
     }
 
-    logger::info("{} adding handle for: {}", __func__, GetFormName(eventReceiver));
+    logger::info("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
 
     RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiver->GetFormType());
     RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
@@ -2274,8 +2467,6 @@ void UnregisterActiveMagicEffectForGlobalEvent_All(RE::StaticFunctionTag*, RE::B
 
 // plugin load / maintenance==================================================================================================================================================
 void CreateEventSinks() {
-    logger::info("creating event sinks");
-
     if (!player) { player = RE::PlayerCharacter::GetSingleton(); }
     if (!playerRef) { playerRef = RE::TESForm::LookupByID<RE::TESForm>(20)->As<RE::Actor>(); }
     if (!eventSourceholder) { eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton(); }
@@ -2292,6 +2483,13 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_DyingEvent] = new EventData("OnDyingGlobal", EventEnum_HitEvent, 2, 'EDd1');
         eventDataPtrs[EventEnum_OnObjectEquipped] = new EventData("OnObjectEquippedGlobal", EventEnum_OnObjectEquipped, 3, 'EDe0');
         eventDataPtrs[EventEnum_OnObjectUnequipped] = new EventData("OnObjectUnequippedGlobal", EventEnum_OnObjectUnequipped, 3, 'EDe1');
+        eventDataPtrs[EventEnum_OnWaitStart] = new EventData("OnWaitStartGlobal", EventEnum_OnWaitStart, 0, 'EDw0');
+        eventDataPtrs[EventEnum_OnWaitStop] = new EventData("OnWaitStopGlobal", EventEnum_OnWaitStop, 0, 'EDw1');
+        eventDataPtrs[EventEnum_OnMagicEffectApply] = new EventData("OnMagicEffectAppliedGlobal", EventEnum_OnMagicEffectApply, 3, 'EDm2');
+        eventDataPtrs[EventEnum_OnSpellCast] = new EventData("OnSpellCastGlobal", EventEnum_OnSpellCast, 2, 'EDs0');
+        eventDataPtrs[EventEnum_LockChanged] = new EventData("OnLockChangedGlobal", EventEnum_LockChanged, 1, 'EDlc');
+        eventDataPtrs[EventEnum_OnOpen] = new EventData("OnOpenGlobal", EventEnum_OnOpen, 2, 'EDo0');
+        eventDataPtrs[EventEnum_OnClose] = new EventData("OnCloseGlobal", EventEnum_OnClose, 2, 'EDo1');
     }
 
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -2300,12 +2498,16 @@ void CreateEventSinks() {
     if (!hitEventSink) { hitEventSink = new HitEventSink(); }
     if (!deathEventSink) { deathEventSink = new DeathEventSink(); }
     if (!equipEventSink) { equipEventSink = new EquipEventSink(); }
-    if (!testEventSink) { testEventSink = new TestEventSink(); }
-    //eventSourceholder->AddEventSink(testEventSink);
+    if (!waitStartEventSink) { waitStartEventSink = new WaitStartEventSink(); }
+    if (!waitStopEventSink) { waitStopEventSink = new WaitStopEventSink(); }
+    if (!magicEffectApplyEventSink) { magicEffectApplyEventSink = new MagicEffectApplyEventSink(); }
+    if (!spellCastEventSink) { spellCastEventSink = new SpellCastEventSink(); }
+    if (!lockChangedEventSink) { lockChangedEventSink = new LockChangedEventSink(); }
+    if (!openCloseEventSink) { openCloseEventSink = new OpenCloseEventSink(); }
+    
+    //eventSourceholder->AddEventSink(openCloseEventSink);
 
-    //RE::ScriptEventSourceHolder
-
-    //eventSourceholder->AddEventSink(updateEventSink);
+    logger::info("Event Sinks Created");
 }
 
 bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
@@ -2326,8 +2528,6 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("SetMapMarkerIconType", "DbSkseFunctions", SetMapMarkerIconType);
     vm->RegisterFunction("GetMapMarkerIconType", "DbSkseFunctions", GetMapMarkerIconType);
     vm->RegisterFunction("IsMapMarker", "DbSkseFunctions", IsMapMarker);
-    vm->RegisterFunction("CreateMapMarker", "DbSkseFunctions", CreateMapMarker);
-
     vm->RegisterFunction("ExecuteConsoleCommand", "DbSkseFunctions", ExecuteConsoleCommand);
     vm->RegisterFunction("HasCollision", "DbSkseFunctions", HasCollision);
     vm->RegisterFunction("GetCurrentMusicType", "DbSkseFunctions", GetCurrentMusicType);
@@ -2339,6 +2539,8 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetMusicTypeStatus", "DbSkseFunctions", GetMusicTypeStatus);
     vm->RegisterFunction("GetKnownEnchantments", "DbSkseFunctions", GetKnownEnchantments);
     vm->RegisterFunction("AddKnownEnchantmentsToFormList", "DbSkseFunctions", AddKnownEnchantmentsToFormList);
+    vm->RegisterFunction("GetActiveEffectSource", "DbSkseFunctions", GetActiveEffectSource);
+    vm->RegisterFunction("GetActiveEffectCastingSource", "DbSkseFunctions", GetActiveEffectCastingSource);
     vm->RegisterFunction("IsActorAttacking", "DbSkseFunctions", IsActorAttacking);
     vm->RegisterFunction("IsActorPowerAttacking", "DbSkseFunctions", IsActorPowerAttacking);
     vm->RegisterFunction("IsActorSpeaking", "DbSkseFunctions", IsActorSpeaking);
@@ -2354,10 +2556,8 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("IsActorInMidAir", "DbSkseFunctions", IsActorInMidAir);
     vm->RegisterFunction("IsActorInRagdollState", "DbSkseFunctions", IsActorInRagdollState);
     vm->RegisterFunction("GetDetectionLevel", "DbSkseFunctions", GetDetectionLevel);
-
     vm->RegisterFunction("GetKeywordString", "DbSkseFunctions", GetKeywordString);
     vm->RegisterFunction("SetKeywordString", "DbSkseFunctions", SetKeywordString);
-
     vm->RegisterFunction("CreateKeyword", "DbSkseFunctions", CreateKeyword);
     vm->RegisterFunction("CreateFormList", "DbSkseFunctions", CreateFormList);
     vm->RegisterFunction("CreateColorForm", "DbSkseFunctions", CreateColorForm);
@@ -2365,6 +2565,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("CreateTextureSet", "DbSkseFunctions", CreateTextureSet);
 
     //global events ====================================================================================================
+    
     //form
     vm->RegisterFunction("IsFormRegisteredForGlobalEvent", "DbSkseEvents", IsFormRegisteredForGlobalEvent);
     vm->RegisterFunction("RegisterFormForGlobalEvent", "DbSkseEvents", RegisterFormForGlobalEvent);
@@ -2451,43 +2652,23 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 
 void LoadCallback(SKSE::SerializationInterface* a_intfc) {
 
+    int max = EventEnum_Last + 1;
     std::uint32_t type, version, length;
 
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
-        if (type == eventDataPtrs[EventEnum_OnLoadGame]->record) {
-            eventDataPtrs[EventEnum_OnLoadGame]->Load(a_intfc);
-        }
-        else if (type == eventDataPtrs[EventEnum_FurnitureEnter]->record) {
-            eventDataPtrs[EventEnum_FurnitureEnter]->Load(a_intfc);
-        }
-        else if (type == eventDataPtrs[EventEnum_FurnitureExit]->record) {
-            eventDataPtrs[EventEnum_FurnitureExit]->Load(a_intfc);
-        }
-        else if (type == eventDataPtrs[EventEnum_OnActivate]->record) {
-            eventDataPtrs[EventEnum_OnActivate]->Load(a_intfc);
-        }
-        else if (type == eventDataPtrs[EventEnum_HitEvent]->record) {
-            eventDataPtrs[EventEnum_HitEvent]->Load(a_intfc);
-        }
-        else if (type == eventDataPtrs[EventEnum_DeathEvent]->record) {
-            eventDataPtrs[EventEnum_DeathEvent]->Load(a_intfc);
-        }
-        else if (type == eventDataPtrs[EventEnum_DyingEvent]->record) {
-            eventDataPtrs[EventEnum_DyingEvent]->Load(a_intfc);
-        }
-        else if (type == eventDataPtrs[EventEnum_OnObjectEquipped]->record) {
-            eventDataPtrs[EventEnum_OnObjectEquipped]->Load(a_intfc);
-        }
-        else if (type == eventDataPtrs[EventEnum_OnObjectUnequipped]->record) {
-            eventDataPtrs[EventEnum_OnObjectUnequipped]->Load(a_intfc);
+        for (int i = EventEnum_First; i < max; i++) {
+            if (type == eventDataPtrs[i]->record) {
+                eventDataPtrs[i]->Load(a_intfc);
+                break;
+            }
         }
     }
 
     if (!player) { player = RE::PlayerCharacter::GetSingleton(); }
     bPlayerIsInCombat = player->IsInCombat();
 
-    //EventEnum_OnLoadGame doesn't have an events sink, hence EventEnum_First + 1
-    for (int i = EventEnum_First + 1; i <= EventEnum_Last; i++) {
+    //EventEnum_OnLoadGame doesn't have an event sink, hence EventEnum_First + 1
+    for (int i = EventEnum_First + 1; i < max; i++) {
         AddSink(i);
     }
 
@@ -2500,15 +2681,10 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
 }
 
 void SaveCallback(SKSE::SerializationInterface* a_intfc) {
-    eventDataPtrs[EventEnum_OnLoadGame]->Save(a_intfc);
-    eventDataPtrs[EventEnum_FurnitureEnter]->Save(a_intfc);
-    eventDataPtrs[EventEnum_FurnitureExit]->Save(a_intfc);
-    eventDataPtrs[EventEnum_OnActivate]->Save(a_intfc);
-    eventDataPtrs[EventEnum_HitEvent]->Save(a_intfc);
-    eventDataPtrs[EventEnum_DeathEvent]->Save(a_intfc);
-    eventDataPtrs[EventEnum_DyingEvent]->Save(a_intfc);
-    eventDataPtrs[EventEnum_OnObjectEquipped]->Save(a_intfc);
-    eventDataPtrs[EventEnum_OnObjectUnequipped]->Save(a_intfc);
+    int max = EventEnum_Last + 1;
+    for (int i = EventEnum_First; i < max; i++) {
+        eventDataPtrs[i]->Save(a_intfc);
+    }
 }
 
 //init================================================================================================================================================================
