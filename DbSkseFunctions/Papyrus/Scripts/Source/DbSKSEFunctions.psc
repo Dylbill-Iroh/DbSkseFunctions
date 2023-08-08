@@ -1,7 +1,7 @@
 Scriptname DbSkseFunctions Hidden 
 ;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
 
-;returns 5.0
+;returns 5.1
 Float Function GetVersion() Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
@@ -66,6 +66,11 @@ int Function GetMusicTypeStatus(MusicType akMusicType) Global Native
 Enchantment[] Function GetKnownEnchantments() Global Native 
 Function AddKnownEnchantmentsToFormList(Formlist akList) Global Native 
 
+;get activeMagicEffects affecting the akActor, with optional filters.
+;if MatchAll is true (default) all passed in filters must match. None filters are discounted from the equation.
+;Otherwise, only one passed in filter must match. 
+ActiveMagicEffect[] Function GetActiveEffectsOnActor(Actor akActor, Actor casterFilter = none, spell SpellFilter = none, MagicEffect effectFilter = none, bool MatchAll = true) Global Native
+
 ;get source that the ActiveMagicEffect came from
 ;Could be a spell, enchantment, potion, or ingredient. Use GetType() to find out which.
 Form Function GetActiveEffectSource(ActiveMagicEffect akEffect) Global Native
@@ -106,7 +111,22 @@ ColorForm Function CreateColorForm(int color = 0xf) Global Native
 Keyword Function CreateKeyword() Global Native 
 ConstructibleObject Function CreateConstructibleObject() Global Native 
 TextureSet Function CreateTextureSet() Global Native 
- 
+
+;Create new sound. to set the sound, use Papyrus Extender, 'Po3_SkseFunctions.SetSoundDescriptor(newSound, akSoundDescriptor)'
+Sound Function CreateSoundMarker() Global Native 
+
+;PlaySound returns instanceID like Sound.play(), but you can pass in a form, alias or activeMagicEffect to receive the OnSoundFinish Event.
+;Example, if your script extends form: 
+;DbSkseFunctions.PlaySound(akSound, Game.GetPlayer(), 1.0, self) ;play sound and receive the OnSoundFinish event when sound finishes playing.
+;You can also set a start volume.
+int Function PlaySound(Sound akSound, ObjectReference akSource, float volume = 1.0, Form eventReceiverForm = none, Alias eventReceiverAlias = none, activeMagicEffect eventReceiverActiveEffect = none) Global Native 
+
+Event OnSoundFinish(Sound akSound, int instanceID)
+EndEvent
+
+;int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* ref, float volume,
+    ;RE::TESForm* eventReceiverForm, RE::BGSBaseAlias* eventReceiverAlias, RE::ActiveEffect* eventReceiverActiveEffect) {
+
 ;/map marker icon types:
 kNone = 0,
 kCity = 1,
