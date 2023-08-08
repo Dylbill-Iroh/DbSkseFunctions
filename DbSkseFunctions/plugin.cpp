@@ -80,6 +80,26 @@ int GetIndexInVector(std::vector<RE::TESForm*>& v, RE::TESForm* element) {
     return -1;
 }
 
+int GetIndexInVector(std::vector<RE::BSSoundHandle*>& v, RE::BSSoundHandle* element) {
+    if (!element) {
+        return -1;
+    }
+
+    if (v.size() == 0) {
+        return -1;
+    }
+
+    int m = v.size();
+    for (int i = 0; i < m; i++) {
+        if (v[i] == element) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+
 int GetIndexInVector(std::vector<RE::VMHandle> v, RE::VMHandle element) {
     if (element == NULL) {
         return -1;
@@ -175,6 +195,42 @@ void LogAndMessage(std::string message, int logLevel = info, int debugLevel = no
         break;
     }*/
 }
+
+void SendEvents(std::vector<RE::VMHandle> handles, RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args) {
+    int max = handles.size();
+
+    if (max == 0) {
+        return;
+    }
+
+    for (int i = 0; i < max; i++) {
+        svm->SendAndRelayEvent(handles[i], &sEvent, args, nullptr);
+    }
+
+    delete args; //args is created using makeFunctionArguments. Delete as it's no longer needed.
+}
+
+void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& formHandles) {
+    if (formHandles.size() == 0) {
+        return;
+    }
+
+    if (!akForm) {
+        return;
+    }
+
+    auto it = formHandles.find(akForm);
+
+    if (it != formHandles.end()) {
+        logger::info("{}: events for form: [{}] ID[{:x}] found", __func__, GetFormName(akForm), akForm->GetFormID());
+        handles.reserve(handles.size() + it->second.size());
+        handles.insert(handles.end(), it->second.begin(), it->second.end());
+    }
+    else {
+        logger::info("{}: events for form: [{}] ID[{:x}] not found", __func__, GetFormName(akForm), akForm->GetFormID());
+    }
+}
+
 
 //serialization============================================================================================================================================================
 
@@ -412,7 +468,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(5.0);
+    return float(5.1);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -649,8 +705,7 @@ RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
     RE::BGSMusicType* currentPriorityType = nullptr;
 
-    if (dataHandler)
-    {
+    if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* musicTypeArray = &(dataHandler->GetFormArray(RE::FormType::MusicType));
 
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = musicTypeArray->end();
@@ -659,21 +714,17 @@ RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
         std::int8_t currentPriority = 127;
 
         //loop through all music types to check which one is running and what the current track is for said type
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = musicTypeArray->begin(); itr != itrEndType; itr++)
-        {
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = musicTypeArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm)
-            {
+            if (baseForm) {
                 RE::BGSMusicType* musicType = static_cast<RE::BGSMusicType*>(baseForm);
                 RE::BSIMusicType::MUSIC_STATUS musicStatus = musicType->typeStatus.get();
 
-                if (musicStatus == RE::BSIMusicType::MUSIC_STATUS::kPlaying)
-                {
+                if (musicStatus == RE::BSIMusicType::MUSIC_STATUS::kPlaying) {
                     uint32_t currentTrackIndex = musicType->currentTrackIndex;
 
-                    if (musicType->tracks.size() > currentTrackIndex)
-                    {
+                    if (musicType->tracks.size() > currentTrackIndex) {
                         RE::BSIMusicTrack* currentTrack = musicType->tracks[currentTrackIndex];
 
                         //if the track takes priority of the current priority track we found
@@ -684,7 +735,6 @@ RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
                         }
                     }
                 }
-
             }
         }
     }
@@ -1154,7 +1204,6 @@ RE::BGSConstructibleObject* CreateConstructibleObject(RE::StaticFunctionTag*) {
 RE::BGSTextureSet* CreateTextureSet(RE::StaticFunctionTag*) {
     logger::info("{} called", __func__);
 
-    //RE::BGSConstructibleObject
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSTextureSet>()->Create();
     if (!newForm) {
         logger::error("{} failed", __func__);
@@ -1164,6 +1213,84 @@ RE::BGSTextureSet* CreateTextureSet(RE::StaticFunctionTag*) {
     }
 
     return newForm;
+}
+
+RE::TESSound* CreateSoundMarker(RE::StaticFunctionTag*) {
+    logger::info("{} called", __func__);
+
+    auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::TESSound>()->Create();
+    if (!newForm) {
+        logger::error("{} failed", __func__);
+    }
+    else {
+        logger::info("{} success", __func__);
+    }
+
+    return newForm;
+}
+
+RE::BSFixedString soundFinishEvent = "OnSoundFinish";
+void CreateSoundEvent(RE::TESSound* akSound, RE::BSSoundHandle& soundHandle, std::vector<RE::VMHandle> vmHandles, int intervalCheck) {
+    std::thread t([=]() {
+        //wait for sound to finish playing, then send events for handles.
+        while (soundHandle.state.underlying() != 2 && soundHandle.IsValid()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(intervalCheck));
+        }
+        auto* args = RE::MakeFunctionArguments((RE::TESSound*)akSound, (int)soundHandle.soundID);
+        
+        SendEvents(vmHandles, soundFinishEvent, args);
+        });
+    t.detach();
+}
+
+int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* akSource, float volume,
+    RE::TESForm* eventReceiverForm, RE::BGSBaseAlias* eventReceiverAlias, RE::ActiveEffect* eventReceiverActiveEffect) {
+
+    logger::info("{} called", __func__);
+
+    if (!akSound) {
+        logger::error("{}: error, akSound doesn't exist", __func__);
+        return -1;
+    }
+
+    if (!akSource) {
+        logger::error("{}: error, akSource doesn't exist", __func__);
+        return -1;
+    }
+
+    auto* audiomanager = RE::BSAudioManager::GetSingleton();
+    RE::BSSoundHandle soundHandle;
+   
+    audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor);
+    
+    soundHandle.SetObjectToFollow(akSource->Get3D());
+    soundHandle.SetVolume(volume);
+    soundHandle.Play();
+
+    std::vector<RE::VMHandle> vmHandles;
+
+    if (eventReceiverForm) {
+        RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiverForm->GetFormType());
+        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverForm);
+        vmHandles.push_back(vmHandle);
+    }
+
+    if (eventReceiverAlias) {
+        RE::VMTypeID id = eventReceiverAlias->GetVMTypeID();
+        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverAlias);
+        vmHandles.push_back(vmHandle);
+    }
+
+    if (eventReceiverActiveEffect) {
+        RE::VMTypeID id = eventReceiverActiveEffect->VMTYPEID;
+        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverActiveEffect);
+        vmHandles.push_back(vmHandle);
+    }
+
+    if (vmHandles.size() > 0) {
+        CreateSoundEvent(akSound ,soundHandle, vmHandles, 1000);
+    }
+    return soundHandle.soundID;
 }
 
 //Papyrus Events =============================================================================================================================
@@ -1189,42 +1316,6 @@ enum EventsEnum {
     EventEnum_First = EventEnum_OnLoadGame,
     EventEnum_Last = EventEnum_OnClose
 };
-
-
-void SendEvents(std::vector<RE::VMHandle> handles, RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args) {
-    int max = handles.size();
-
-    if (max == 0) {
-        return;
-    }
-
-    for (int i = 0; i < max; i++) {
-        svm->SendAndRelayEvent(handles[i], &sEvent, args, nullptr);
-    }
-
-    delete args; //args is created using makeFunctionArguments. Delete as it's no longer needed.
-}
-
-void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& formHandles) {
-    if (formHandles.size() == 0) {
-        return;
-    }
-
-    if (!akForm) {
-        return;
-    }
-
-    auto it = formHandles.find(akForm);
-
-    if (it != formHandles.end()) {
-        logger::info("{}: events for form: [{}] ID[{:x}] found", __func__, GetFormName(akForm), akForm->GetFormID());
-        handles.reserve(handles.size() + it->second.size());
-        handles.insert(handles.end(), it->second.begin(), it->second.end());
-    }
-    else {
-        logger::info("{}: events for form: [{}] ID[{:x}] not found", __func__, GetFormName(akForm), akForm->GetFormID());
-    }
-}
 
 struct EventData {
     int eventSinkIndex;
@@ -2537,7 +2628,9 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetMusicTypePriority", "DbSkseFunctions", GetMusicTypePriority);
     vm->RegisterFunction("SetMusicTypePriority", "DbSkseFunctions", SetMusicTypePriority);
     vm->RegisterFunction("GetMusicTypeStatus", "DbSkseFunctions", GetMusicTypeStatus);
+
     vm->RegisterFunction("GetKnownEnchantments", "DbSkseFunctions", GetKnownEnchantments);
+
     vm->RegisterFunction("AddKnownEnchantmentsToFormList", "DbSkseFunctions", AddKnownEnchantmentsToFormList);
     vm->RegisterFunction("GetActiveEffectSource", "DbSkseFunctions", GetActiveEffectSource);
     vm->RegisterFunction("GetActiveEffectCastingSource", "DbSkseFunctions", GetActiveEffectCastingSource);
@@ -2563,6 +2656,8 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("CreateColorForm", "DbSkseFunctions", CreateColorForm);
     vm->RegisterFunction("CreateConstructibleObject", "DbSkseFunctions", CreateConstructibleObject);
     vm->RegisterFunction("CreateTextureSet", "DbSkseFunctions", CreateTextureSet);
+    vm->RegisterFunction("CreateSoundMarker", "DbSkseFunctions", CreateSoundMarker);
+    vm->RegisterFunction("PlaySound", "DbSkseFunctions", PlaySound);
 
     //global events ====================================================================================================
     
