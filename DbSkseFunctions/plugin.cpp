@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <winbase.h>
 #include <iostream>
+#include "mini/ini.h"
 
 namespace logger = SKSE::log;
 bool bPlayerIsInCombat = false;
@@ -145,6 +146,18 @@ void RemoveDuplicates(std::vector<RE::VMHandle>& vec)
 }
 
 void SetupLog() {
+    // first, create a file instance
+    mINI::INIFile file("Data/SKSE/Plugins/DbSkseFunctions.ini");
+
+    // next, create a structure that will hold data
+    mINI::INIStructure ini;
+
+    // now we can read the file
+    file.read(ini);
+
+    std::string akLevel = ini["LOG"]["iMinLevel"];
+    spdlog::level::level_enum iLevel = static_cast<spdlog::level::level_enum>(std::stoi(akLevel));
+
     auto logsFolder = SKSE::log::log_directory();
     if (!logsFolder) SKSE::stl::report_and_fail("SKSE log_directory not provided, logs disabled.");
     auto pluginName = SKSE::PluginDeclaration::GetSingleton()->GetName();
@@ -152,8 +165,9 @@ void SetupLog() {
     auto fileLoggerPtr = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logFilePath.string(), true);
     auto loggerPtr = std::make_shared<spdlog::logger>("log", std::move(fileLoggerPtr));
     spdlog::set_default_logger(std::move(loggerPtr));
-    spdlog::set_level(spdlog::level::warn);
+    spdlog::set_level(iLevel);
     spdlog::flush_on(spdlog::level::trace);
+    logger::info("{} level set to {}", __func__, akLevel);
 }
 
 enum logLevel { trace, debug, info, warn, error, critical };
@@ -468,7 +482,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(5.1);
+    return float(5.2);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -858,6 +872,56 @@ int GetActiveEffectCastingSource(RE::StaticFunctionTag*, RE::ActiveEffect* akEff
     return static_cast<int>(akEffect->castingSource);
 }
 
+//kNone = 0,
+//kPetty = 1,
+//kLesser = 2,
+//kCommon = 3,
+//kGreater = 4,
+//kGrand = 5
+void SetSoulGemSize(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, int level) {
+    logger::info("{} called", __func__);
+
+    if (!akGem) {
+        logger::error("{}: error akGem doesn't exist", __func__);
+        return;
+    }
+
+    if (level < 0) {
+        level = 0;
+    }
+    else if (level > 5) {
+        level = 5;
+    }
+
+    akGem->soulCapacity = static_cast<RE::SOUL_LEVEL>(level);
+}
+
+void SetSoulGemCanHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, bool canCarry) {
+    logger::info("{} called", __func__);
+
+    if (!akGem) {
+        logger::error("{}: error akGem doesn't exist", __func__);
+        return;
+    }
+
+    if (canCarry) {
+        akGem->formFlags |= RE::TESSoulGem::RecordFlags::kCanHoldNPCSoul;
+    }
+    else {
+        akGem->formFlags &= ~RE::TESSoulGem::RecordFlags::kCanHoldNPCSoul;
+    }
+}
+
+bool CanSoulGemHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem) {
+    logger::info("{} called", __func__);
+
+    if (!akGem) {
+        logger::error("{}: error akGem doesn't exist", __func__);
+        return false;
+    }
+    return akGem->CanHoldNPCSoul();
+}
+
 RE::TESCondition* condition_isPowerAttacking;
 bool IsActorPowerAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
@@ -1230,14 +1294,14 @@ RE::TESSound* CreateSoundMarker(RE::StaticFunctionTag*) {
 }
 
 RE::BSFixedString soundFinishEvent = "OnSoundFinish";
-void CreateSoundEvent(RE::TESSound* akSound, RE::BSSoundHandle& soundHandle, std::vector<RE::VMHandle> vmHandles, int intervalCheck) {
+void CreateSoundEvent(RE::TESForm* soundOrDescriptor, RE::BSSoundHandle& soundHandle, std::vector<RE::VMHandle> vmHandles, int intervalCheck) {
     std::thread t([=]() {
         //wait for sound to finish playing, then send events for handles.
         while (soundHandle.state.underlying() != 2 && soundHandle.IsValid()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(intervalCheck));
         }
-        auto* args = RE::MakeFunctionArguments((RE::TESSound*)akSound, (int)soundHandle.soundID);
-        
+        auto* args = RE::MakeFunctionArguments((RE::TESForm*)soundOrDescriptor, (int)soundHandle.soundID);
+
         SendEvents(vmHandles, soundFinishEvent, args);
         });
     t.detach();
@@ -1292,6 +1356,117 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
     }
     return soundHandle.soundID;
 }
+
+int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSoundDescriptor, RE::TESObjectREFR* akSource, float volume,
+    RE::TESForm* eventReceiverForm, RE::BGSBaseAlias* eventReceiverAlias, RE::ActiveEffect* eventReceiverActiveEffect) {
+
+    logger::info("{} called", __func__);
+
+    if (!akSoundDescriptor) {
+        logger::error("{}: error, akSoundDescriptor doesn't exist", __func__);
+        return -1;
+    }
+
+    if (!akSource) {
+        logger::error("{}: error, akSource doesn't exist", __func__);
+        return -1;
+    }
+
+    auto* audiomanager = RE::BSAudioManager::GetSingleton();
+    RE::BSSoundHandle soundHandle;
+
+    audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSoundDescriptor->soundDescriptor);
+
+    soundHandle.SetObjectToFollow(akSource->Get3D());
+    soundHandle.SetVolume(volume);
+    soundHandle.Play();
+
+    std::vector<RE::VMHandle> vmHandles;
+
+    if (eventReceiverForm) {
+        RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiverForm->GetFormType());
+        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverForm);
+        vmHandles.push_back(vmHandle);
+    }
+
+    if (eventReceiverAlias) {
+        RE::VMTypeID id = eventReceiverAlias->GetVMTypeID();
+        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverAlias);
+        vmHandles.push_back(vmHandle);
+    }
+
+    if (eventReceiverActiveEffect) {
+        RE::VMTypeID id = eventReceiverActiveEffect->VMTYPEID;
+        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverActiveEffect);
+        vmHandles.push_back(vmHandle);
+    }
+
+    if (vmHandles.size() > 0) {
+        CreateSoundEvent(akSoundDescriptor, soundHandle, vmHandles, 1000);
+    }
+    return soundHandle.soundID;
+}
+
+RE::BGSSoundCategory* GetParentSoundCategory(RE::StaticFunctionTag*, RE::BGSSoundCategory* akSoundCategory) {
+    if (!akSoundCategory) {
+        logger::error("{}: error, akSoundCategory doesn't exist", __func__);
+        return nullptr;
+    }
+
+    return akSoundCategory->parentCategory;
+}
+
+RE::BGSSoundCategory* GetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSoundDescriptor) {
+    if (!akSoundDescriptor) {
+        logger::error("{}: error, akSoundDescriptor doesn't exist", __func__);
+        return nullptr;
+    }
+
+    if (!akSoundDescriptor->soundDescriptor) {
+        logger::error("{}: error, akSoundDescriptor->soundDescriptor doesn't exist", __func__);
+        return nullptr;
+    }
+
+    return akSoundDescriptor->soundDescriptor->category;
+}
+
+void SetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSoundDescriptor, RE::BGSSoundCategory* akSoundCategory) {
+    if (!akSoundCategory) {
+        logger::error("{}: error, akSoundCategory doesn't exist", __func__);
+        return;
+    }
+    
+    if (!akSoundDescriptor) {
+        logger::error("{}: error, akSoundDescriptor doesn't exist", __func__);
+        return;
+    }
+
+    if (!akSoundDescriptor->soundDescriptor) {
+        logger::error("{}: error, akSoundDescriptor->soundDescriptor doesn't exist", __func__);
+        return;
+    }
+
+    akSoundDescriptor->soundDescriptor->category = akSoundCategory;
+}
+
+float GetSoundCategoryVolume(RE::StaticFunctionTag*, RE::BGSSoundCategory* akCategory) {
+    if (!akCategory) {
+        logger::error("{}: error, akCategory doesn't exist", __func__);
+        return -1.0;
+    }
+
+    return akCategory->GetCategoryVolume();
+}
+
+float GetSoundCategoryFrequency(RE::StaticFunctionTag*, RE::BGSSoundCategory* akCategory) {
+    if (!akCategory) {
+        logger::error("{}: error, akCategory doesn't exist", __func__);
+        return -1.0;
+    }
+
+    return akCategory->GetCategoryFrequency();
+}
+
 
 //Papyrus Events =============================================================================================================================
 
@@ -2634,6 +2809,11 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("AddKnownEnchantmentsToFormList", "DbSkseFunctions", AddKnownEnchantmentsToFormList);
     vm->RegisterFunction("GetActiveEffectSource", "DbSkseFunctions", GetActiveEffectSource);
     vm->RegisterFunction("GetActiveEffectCastingSource", "DbSkseFunctions", GetActiveEffectCastingSource);
+
+    vm->RegisterFunction("SetSoulGemSize", "DbSkseFunctions", SetSoulGemSize);
+    vm->RegisterFunction("CanSoulGemHoldNPCSoul", "DbSkseFunctions", CanSoulGemHoldNPCSoul);
+    vm->RegisterFunction("SetSoulGemCanHoldNPCSoul", "DbSkseFunctions", SetSoulGemCanHoldNPCSoul);
+
     vm->RegisterFunction("IsActorAttacking", "DbSkseFunctions", IsActorAttacking);
     vm->RegisterFunction("IsActorPowerAttacking", "DbSkseFunctions", IsActorPowerAttacking);
     vm->RegisterFunction("IsActorSpeaking", "DbSkseFunctions", IsActorSpeaking);
@@ -2658,6 +2838,13 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("CreateTextureSet", "DbSkseFunctions", CreateTextureSet);
     vm->RegisterFunction("CreateSoundMarker", "DbSkseFunctions", CreateSoundMarker);
     vm->RegisterFunction("PlaySound", "DbSkseFunctions", PlaySound);
+
+    vm->RegisterFunction("PlaySoundDescriptor", "DbSkseFunctions", PlaySoundDescriptor);
+    vm->RegisterFunction("GetParentSoundCategory", "DbSkseFunctions", GetParentSoundCategory);
+    vm->RegisterFunction("GetSoundCategoryForSoundDescriptor", "DbSkseFunctions", GetSoundCategoryForSoundDescriptor);
+    vm->RegisterFunction("SetSoundCategoryForSoundDescriptor", "DbSkseFunctions", SetSoundCategoryForSoundDescriptor);
+    vm->RegisterFunction("GetSoundCategoryVolume", "DbSkseFunctions", GetSoundCategoryVolume);
+    vm->RegisterFunction("GetSoundCategoryFrequency", "DbSkseFunctions", GetSoundCategoryFrequency);
 
     //global events ====================================================================================================
     
@@ -2736,6 +2923,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 
     case SKSE::MessagingInterface::kDataLoaded:
         CreateEventSinks();
+        //ExecuteConsoleCommand(nullptr, "coc riverwood", nullptr);
         logger::info("kDataLoaded: sent after the data handler has loaded all its forms");
         break;
 
@@ -2796,7 +2984,6 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     serialization->SetUniqueID('DbSF');
     serialization->SetSaveCallback(SaveCallback);
     serialization->SetLoadCallback(LoadCallback);
-   
 
     return true;
 }
