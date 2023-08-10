@@ -1,7 +1,7 @@
 Scriptname DbSkseFunctions Hidden 
 ;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
 
-;returns 5.1
+;returns 5.2
 Float Function GetVersion() Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
@@ -39,6 +39,17 @@ Function SetCollision(ObjectReference ref, bool enabled) Global
         Endif 
     Endif
 EndFunction
+
+
+;set the max Soul size the soulGem can hold 0 = no soul to 5 = grand.
+Function SetSoulGemSize(SoulGem akSoulGem, int level) Global Native 
+
+;can the soulGem hold an NPC soul? I.E is it a black soul gem?
+bool Function CanSoulGemHoldNPCSoul(SoulGem akSoulGem) Global Native 
+
+;set soul gem can hold npc soul, I.E make it a black soul gem or not.
+Function SetSoulGemCanHoldNPCSoul(SoulGem akSoulGem, bool canHold) Global Native 
+
 
 ;get MusicType that's currently playing
 MusicType Function GetCurrentMusicType() Global Native 
@@ -112,17 +123,25 @@ Keyword Function CreateKeyword() Global Native
 ConstructibleObject Function CreateConstructibleObject() Global Native 
 TextureSet Function CreateTextureSet() Global Native 
 
-;Create new sound. to set the sound, use Papyrus Extender, 'Po3_SkseFunctions.SetSoundDescriptor(newSound, akSoundDescriptor)'
+;Create new sound. to set the sound, use Papyrus Extender, 'Po3_SkseFunctions.SetSoundDescriptor(newSoundMarker, akSoundDescriptor)'
 Sound Function CreateSoundMarker() Global Native 
 
-;PlaySound returns instanceID like Sound.play(), but you can pass in a form, alias or activeMagicEffect to receive the OnSoundFinish Event.
+;PlaySound / PlaySoundDescriptor returns instanceID like Sound.play(), but you can pass in a form, alias or activeMagicEffect to receive the OnSoundFinish Event.
 ;Example, if your script extends form: 
 ;DbSkseFunctions.PlaySound(akSound, Game.GetPlayer(), 1.0, self) ;play sound and receive the OnSoundFinish event when sound finishes playing.
 ;You can also set a start volume.
 int Function PlaySound(Sound akSound, ObjectReference akSource, float volume = 1.0, Form eventReceiverForm = none, Alias eventReceiverAlias = none, activeMagicEffect eventReceiverActiveEffect = none) Global Native 
+int Function PlaySoundDescriptor(SoundDescriptor akSoundDescriptor, ObjectReference akSource, float volume = 1.0, Form eventReceiverForm = none, Alias eventReceiverAlias = none, activeMagicEffect eventReceiverActiveEffect = none) Global Native 
 
-Event OnSoundFinish(Sound akSound, int instanceID)
+;sends the sound or soundDescriptor played and the instanceID
+Event OnSoundFinish(Form SoundOrDescriptor, int instanceID)
 EndEvent
+
+SoundCategory Function GetParentSoundCategory(SoundCategory akSoundCategory) Global Native 
+SoundCategory Function GetSoundCategoryForSoundDescriptor(SoundDescriptor akSoundDescriptor) Global Native 
+Function SetSoundCategoryForSoundDescriptor(SoundDescriptor akSoundDescriptor, SoundCategory akSoundCategory) Global Native 
+Float Function GetSoundCategoryVolume(SoundCategory akSoundCategory) Global Native 
+Float Function GetSoundCategoryFrequency(SoundCategory akSoundCategory) Global Native 
 
 ;int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* ref, float volume,
     ;RE::TESForm* eventReceiverForm, RE::BGSBaseAlias* eventReceiverAlias, RE::ActiveEffect* eventReceiverActiveEffect) {
