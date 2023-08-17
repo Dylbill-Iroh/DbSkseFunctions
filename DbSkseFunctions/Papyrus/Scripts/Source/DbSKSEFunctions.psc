@@ -1,18 +1,28 @@
 Scriptname DbSkseFunctions Hidden 
 ;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
 
-;returns 5.2
+;returns 5.3
 Float Function GetVersion() Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
 String Function GetClipBoardText() Global Native
 Bool Function SetClipBoardText(String s) Global Native
 
-;string functions
 ;is the string c char whitespace? Uses c++ isspace function
 Bool Function IsWhiteSpace(String c) Global Native 
 int Function CountWhiteSpaces(String s) Global Native
    
+;Calculate how many real time seconds it will take for gameHours to pass based on current time scale.
+;Example - with default time scale (20), GameHoursToRealTimeSeconds(1) returns 180.0
+float Function GameHoursToRealTimeSeconds(float gameHours) Global Native
+
+bool Function IsGamePaused() Global Native
+
+;returns true if a menu is open, (other than the hud menu which is always open), regardless if the game is paused or not.
+bool Function IsInMenu() Global Native
+
+string Function GetLastMenuOpened() Global Native
+
 ;differs from consoleUtil.ExecuteCommand in that you can execute a targeted command on a passed in ref.
 ;if ref == none and command is targeted command, runs command on console selected ref like normal. 
 ;If no console selected ref, or is not a targeted command, executes command like normal.
@@ -66,7 +76,7 @@ int Function GetMusicTypePriority(MusicType akMusicType) Global Native
 
 Function SetMusicTypePriority(MusicType akMusicType, int priority) Global Native 
 
-;status is as follows
+;MusicTypeStatus is as follows
 ;kInactive = 0
 ;kPlaying = 1
 ;kPaused = 2
@@ -77,9 +87,16 @@ int Function GetMusicTypeStatus(MusicType akMusicType) Global Native
 Enchantment[] Function GetKnownEnchantments() Global Native 
 Function AddKnownEnchantmentsToFormList(Formlist akList) Global Native 
 
-;get activeMagicEffects affecting the akActor, with optional filters.
-;if MatchAll is true (default) all passed in filters must match. None filters are discounted from the equation.
-;Otherwise, only one passed in filter must match. 
+String function GetWordOfPowerTranslation(WordOfPower akWord) Global Native 
+
+;add shout to player if necessary and unlock all of its Words
+function UnlockShout(shout akShout) Global Native 
+
+;add and unlock all shouts to the player that match the param filters.
+;default is adding and unlocking ALL shouts found in game to player
+function AddAndUnlockAllShouts(int minNumberOfWordsWithTranslations = 0, bool onlyShoutsWithNames = false, bool onlyShoutsWithDescriptions = false) Global Native 
+
+;not working currently, don't use. Will fix later.
 ActiveMagicEffect[] Function GetActiveEffectsOnActor(Actor akActor, Actor casterFilter = none, spell SpellFilter = none, MagicEffect effectFilter = none, bool MatchAll = true) Global Native
 
 ;get source that the ActiveMagicEffect came from
@@ -143,8 +160,7 @@ Function SetSoundCategoryForSoundDescriptor(SoundDescriptor akSoundDescriptor, S
 Float Function GetSoundCategoryVolume(SoundCategory akSoundCategory) Global Native 
 Float Function GetSoundCategoryFrequency(SoundCategory akSoundCategory) Global Native 
 
-;int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* ref, float volume,
-    ;RE::TESForm* eventReceiverForm, RE::BGSBaseAlias* eventReceiverAlias, RE::ActiveEffect* eventReceiverActiveEffect) {
+
 
 ;/map marker icon types:
 kNone = 0,

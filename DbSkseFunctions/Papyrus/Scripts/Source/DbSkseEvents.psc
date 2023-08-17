@@ -149,6 +149,44 @@ Endevent
 Event OnSpellCastGlobal(ObjectReference Caster, Form Source)
 Endevent
 
+;Actor Action events. Source is the weapon / spell / shout.
+;Slots are 0 = left hand, 1 = right hand, 2 = voice / power.
+Event OnActorSpellCastGlobal(Actor Caster, Form Source, int slot)
+Endevent 
+
+Event OnActorSpellFireGlobal(Actor Caster, Form Source, int slot)
+Endevent 
+
+Event OnVoiceCastGlobal(Actor Caster, Form Source, int slot)
+Endevent 
+
+Event OnVoiceFireGlobal(Actor Caster, Form Source, int slot)
+Endevent 
+
+Event OnBowDrawGlobal(Actor akActor, Form Source, int slot)
+Endevent 
+
+Event OnBowReleaseGlobal(Actor akActor, Form Source, int slot)
+Endevent 
+
+;for draw / sheathe events, they are always sent for the right hand.
+;Left hand events are only sent if there's something in the left hand, i.e spell / weapon / shield ect.
+Event OnBeginDrawGlobal(Actor akActor, Form Source, int slot)
+Endevent 
+
+Event OnEndDrawGlobal(Actor akActor, Form Source, int slot)
+Endevent 
+
+Event OnBeginSheatheGlobal(Actor akActor, Form Source, int slot)
+Endevent 
+
+Event OnEndSheatheGlobal(Actor akActor, Form Source, int slot)
+Endevent 
+
+Event OnWeaponSwingGlobal(Actor akActor, Form Source, int slot)
+Endevent 
+;========================================================================================================
+
 Event OnDeathGlobal(Actor Victim, Actor Killer)
 EndEvent
 
@@ -166,9 +204,3 @@ EndEvent
 ;and sends the event if the player combat status has changed, if the player is registered for akActor.
 Event OnCombatStateChangedGlobal(Actor akActor, Actor akTarget, int aeCombatState)
 EndEvent
-
-
-
-    
-    
-    
