@@ -3,15 +3,30 @@
 #include <stdarg.h>
 #include <winbase.h>
 #include <iostream>
+#include <stdio.h>
+#include <chrono>
+#include <ctime>
 #include "mini/ini.h"
+#include "STLThunk.h"
 
 namespace logger = SKSE::log;
 bool bPlayerIsInCombat = false;
 bool bRegisteredForPlayerCombatChange = false;
+bool inMenuMode = false;
+bool gamePaused = false;
+std::string lastMenuOpened;
+std::vector<RE::BSFixedString> menusCurrentlyOpen;
+std::chrono::system_clock::time_point lastTimeMenuWasOpened;
+std::chrono::system_clock::time_point lastTimeGameWasPaused;
+int gameTimerPollingInterval = 1500; //in milliseconds
+float secondsPassedGameNotPaused = 0.0;
+float lastFrameDelta = 0.1;
 RE::PlayerCharacter* player;
 RE::Actor* playerRef;
 RE::BSScript::IVirtualMachine* gvm;
 RE::SkyrimVM* svm;
+RE::UI* ui;
+RE::Calendar* calendar;
 RE::ScriptEventSourceHolder* eventSourceholder;
 
 //forward dec
@@ -29,6 +44,67 @@ void DelayedFunction(auto function, int delay) {
     t.detach();
 }
 
+template< typename T >
+std::string IntToHex(T i)
+{
+    std::stringstream stream;
+    stream << ""
+        << std::setfill('0') << std::setw(sizeof(T) * 2)
+        << std::hex << i;
+    return stream.str();
+}
+
+float timePointDiffToFloat(std::chrono::system_clock::time_point end, std::chrono::system_clock::time_point start) {
+    std::chrono::duration<float> timeElapsed = end - start;
+    return timeElapsed.count();
+}
+
+RE::VMHandle GetHandle(RE::TESForm* akForm) {
+    if (!akForm) {
+        logger::warn("{}: akForm doesn't exist", __func__);
+        return NULL;
+    }
+
+    RE::VMTypeID id = static_cast<RE::VMTypeID>(akForm->GetFormType());
+    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, akForm);
+
+    if (handle == NULL) {
+        return NULL;
+    }
+
+    return handle;
+}
+
+RE::VMHandle GetHandle(RE::BGSBaseAlias* akAlias) {
+    if (!akAlias) {
+        logger::warn("{}: akAlias doesn't exist", __func__);
+        return NULL;
+    }
+
+    RE::VMTypeID id = akAlias->GetVMTypeID();
+    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, akAlias);
+
+    if (handle == NULL) {
+        return NULL;
+    }
+    return handle;
+}
+
+RE::VMHandle GetHandle(RE::ActiveEffect* akEffect) {
+    if (!akEffect) {
+        logger::warn("{}: akEffect doesn't exist", __func__);
+        return NULL;
+    }
+
+    RE::VMTypeID id = akEffect->VMTYPEID;
+    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, akEffect);
+
+    if (handle == NULL) {
+        return NULL;
+    }
+    return handle;
+}
+
 RE::BSFixedString GetFormName(RE::TESForm* akForm) {
     if (!akForm) {
         return "null";
@@ -41,6 +117,32 @@ RE::BSFixedString GetFormName(RE::TESForm* akForm) {
     else {
         return akForm->GetName();
     }
+}
+
+std::string GetDescription(RE::TESForm* akForm) {
+    logger::info("{} called", __func__);
+
+    if (!akForm) {
+        logger::warn("{}: akForm doesn't exist", __func__);
+        return "";
+    }
+
+    auto* description = akForm->As<RE::TESDescription>();
+
+    if (!description) {
+        logger::error("{}: couldn't get description for form [{}] ID [{:x}]", __func__, GetFormName(akForm), akForm->GetFormID());
+        return "";
+    }
+
+    RE::BSString descriptionString;
+    description->GetDescription(descriptionString, akForm);
+
+    return static_cast<std::string>(descriptionString);
+}
+
+template <class T>
+void RemoveFromVectorByValue(std::vector<T>& v, T value) {
+    v.erase(std::remove(v.begin(), v.end(), value), v.end());
 }
 
 int GetIndexInVector(std::vector<RE::FormID>& v, RE::FormID element) {
@@ -100,7 +202,6 @@ int GetIndexInVector(std::vector<RE::BSSoundHandle*>& v, RE::BSSoundHandle* elem
     return -1;
 }
 
-
 int GetIndexInVector(std::vector<RE::VMHandle> v, RE::VMHandle element) {
     if (element == NULL) {
         return -1;
@@ -143,6 +244,24 @@ void RemoveDuplicates(std::vector<RE::VMHandle>& vec)
 {
     std::sort(vec.begin(), vec.end());
     vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
+}
+
+void SetSettingsFromIniFile() {
+    // first, create a file instance
+    mINI::INIFile file("Data/SKSE/Plugins/DbSkseFunctions.ini");
+
+    // next, create a structure that will hold data
+    mINI::INIStructure ini;
+
+    // now we can read the file
+    file.read(ini);
+
+    std::string intervalString = ini["Main"]["gameTimerPollingInterval"];
+    gameTimerPollingInterval = std::stof(intervalString) * 1000; //convert float value from seconds to int milliseconds
+    if (gameTimerPollingInterval <= 0) {
+        gameTimerPollingInterval = 100;
+    }
+    logger::debug("{} gameTimerPollingInterval set to {}", __func__, gameTimerPollingInterval);
 }
 
 void SetupLog() {
@@ -244,7 +363,6 @@ void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm
         logger::info("{}: events for form: [{}] ID[{:x}] not found", __func__, GetFormName(akForm), akForm->GetFormID());
     }
 }
-
 
 //serialization============================================================================================================================================================
 
@@ -482,7 +600,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(5.2);
+    return float(5.3);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -554,6 +672,25 @@ bool IsWhiteSpace(RE::StaticFunctionTag*, std::string s) {
 int CountWhiteSpaces(RE::StaticFunctionTag*, std::string s) {
     int spaces = std::count_if(s.begin(), s.end(), [](unsigned char c) { return std::isspace(c); });
     return spaces;
+}
+
+float GameHoursToRealTimeSeconds(RE::StaticFunctionTag*, float gameHours) {
+    float timeScale = calendar->GetTimescale(); //timeScale is minutes ratio
+    float gameMinutes = gameHours * 60.0;
+    float realMinutes = gameMinutes / timeScale;
+    return (realMinutes * 60.0);
+}
+
+bool IsGamePaused(RE::StaticFunctionTag*) {
+    return ui->GameIsPaused();
+}
+
+bool IsInMenu(RE::StaticFunctionTag*) {
+    return inMenuMode;
+}
+
+std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
+    return lastMenuOpened;
 }
 
 bool IsMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
@@ -804,7 +941,7 @@ std::vector<RE::EnchantmentItem*> GetKnownEnchantments(RE::StaticFunctionTag*) {
 
     for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != itrEndType; it++) {
         RE::TESForm* baseForm = *it;
-        
+
         if (baseForm) {
             RE::EnchantmentItem* enchantment = baseForm->As<RE::EnchantmentItem>();
             if (enchantment) {
@@ -845,9 +982,96 @@ void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akL
                 if (baseEnchantment) {
                     if (baseEnchantment->GetKnown()) {
                         //if (!akList->HasForm(baseEnchantment)) {
-                            akList->AddForm(baseEnchantment);
+                        akList->AddForm(baseEnchantment);
                         //}
                     }
+                }
+            }
+        }
+    }
+}
+
+std::string GetWordOfPowerTranslation(RE::StaticFunctionTag*, RE::TESWordOfPower* akWord) {
+    if (!akWord) {
+        logger::warn("{} akWord doesn't exist.", __func__);
+        return "";
+    }
+
+    return static_cast<std::string>(akWord->translation);
+}
+
+void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
+    if (!akShout) {
+        logger::warn("{} akShout doesn't exist.", __func__);
+        return;
+    }
+
+    player->AddShout(akShout);
+
+    logger::info("{} {} ID {:x}", __func__, akShout->GetName(), akShout->GetFormID());
+
+    RE::TESWordOfPower* word = akShout->variations[0].word;
+    if (word) {
+        //playerRef->UnlockWord(word);
+        logger::info("{} unlock word 1 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
+        std::string command = "player.teachword " + IntToHex(int(word->GetFormID())); //didn't find a teachword function in NG, so using console command as workaround. 
+        ExecuteConsoleCommand(nullptr, command, nullptr);
+        player->UnlockWord(word);
+    }
+
+    word = akShout->variations[1].word;
+    if (word) {
+        //playerRef->UnlockWord(word);
+        logger::info("{} unlock word 2 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
+        std::string command = "player.teachword " + IntToHex(int(word->GetFormID()));
+        ExecuteConsoleCommand(nullptr, command, nullptr);
+        player->UnlockWord(word);
+    }
+
+    word = akShout->variations[2].word;
+    if (word) {
+        //playerRef->UnlockWord(word);
+        logger::info("{} unlock word 3 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
+        std::string command = "player.teachword " + IntToHex(int(word->GetFormID()));
+        ExecuteConsoleCommand(nullptr, command, nullptr);
+        player->UnlockWord(word);
+    }
+}
+
+void AddAndUnlockAllShouts(RE::StaticFunctionTag*, int minNumberOfWordsWithTranslations, bool onlyShoutsWithNames, bool onlyShoutsWithDescriptions) {
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    bool minNumberOfWordsCheck = (minNumberOfWordsWithTranslations > 0 && minNumberOfWordsWithTranslations <= 3);
+
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Shout));
+
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        //loop through all shouts
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+            if (baseForm) {
+                RE::TESShout* akShout = baseForm->As<RE::TESShout>();
+                if (akShout) {
+                    if (onlyShoutsWithNames) {
+                        if (akShout->GetName() == "") {
+                            continue;
+                        }
+                    }
+
+                    if (onlyShoutsWithDescriptions) {
+                        if (GetDescription(akShout) == "") {
+                            continue;
+                        }
+                    }
+
+                    if (minNumberOfWordsCheck) {
+                        RE::TESWordOfPower* word = akShout->variations[minNumberOfWordsWithTranslations - 1].word;
+                        if (GetWordOfPowerTranslation(nullptr, word) == "") {
+                            continue;
+                        }
+                    }
+                    UnlockShout(nullptr, akShout);
                 }
             }
         }
@@ -954,7 +1178,7 @@ bool IsActorAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsAttacking;
-        
+
         condition_IsAttacking = new RE::TESCondition;
         condition_IsAttacking->head = conditionItem;
     }
@@ -1324,9 +1548,9 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
 
     auto* audiomanager = RE::BSAudioManager::GetSingleton();
     RE::BSSoundHandle soundHandle;
-   
+
     audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor);
-    
+
     soundHandle.SetObjectToFollow(akSource->Get3D());
     soundHandle.SetVolume(volume);
     soundHandle.Play();
@@ -1334,25 +1558,28 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
     std::vector<RE::VMHandle> vmHandles;
 
     if (eventReceiverForm) {
-        RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiverForm->GetFormType());
-        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverForm);
-        vmHandles.push_back(vmHandle);
+        RE::VMHandle vmHandle = GetHandle(eventReceiverForm);
+        if (vmHandle != NULL) {
+            vmHandles.push_back(vmHandle);
+        }
     }
 
     if (eventReceiverAlias) {
-        RE::VMTypeID id = eventReceiverAlias->GetVMTypeID();
-        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverAlias);
-        vmHandles.push_back(vmHandle);
+        RE::VMHandle vmHandle = GetHandle(eventReceiverAlias);
+        if (vmHandle != NULL) {
+            vmHandles.push_back(vmHandle);
+        }
     }
 
     if (eventReceiverActiveEffect) {
-        RE::VMTypeID id = eventReceiverActiveEffect->VMTYPEID;
-        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverActiveEffect);
-        vmHandles.push_back(vmHandle);
+        RE::VMHandle vmHandle = GetHandle(eventReceiverActiveEffect);
+        if (vmHandle != NULL) {
+            vmHandles.push_back(vmHandle);
+        }
     }
 
     if (vmHandles.size() > 0) {
-        CreateSoundEvent(akSound ,soundHandle, vmHandles, 1000);
+        CreateSoundEvent(akSound, soundHandle, vmHandles, 1000);
     }
     return soundHandle.soundID;
 }
@@ -1384,21 +1611,24 @@ int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSo
     std::vector<RE::VMHandle> vmHandles;
 
     if (eventReceiverForm) {
-        RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiverForm->GetFormType());
-        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverForm);
-        vmHandles.push_back(vmHandle);
+        RE::VMHandle vmHandle = GetHandle(eventReceiverForm);
+        if (vmHandle != NULL) {
+            vmHandles.push_back(vmHandle);
+        }
     }
 
     if (eventReceiverAlias) {
-        RE::VMTypeID id = eventReceiverAlias->GetVMTypeID();
-        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverAlias);
-        vmHandles.push_back(vmHandle);
+        RE::VMHandle vmHandle = GetHandle(eventReceiverAlias);
+        if (vmHandle != NULL) {
+            vmHandles.push_back(vmHandle);
+        }
     }
 
     if (eventReceiverActiveEffect) {
-        RE::VMTypeID id = eventReceiverActiveEffect->VMTYPEID;
-        RE::VMHandle vmHandle = svm->handlePolicy.GetHandleForObject(id, eventReceiverActiveEffect);
-        vmHandles.push_back(vmHandle);
+        RE::VMHandle vmHandle = GetHandle(eventReceiverActiveEffect);
+        if (vmHandle != NULL) {
+            vmHandles.push_back(vmHandle);
+        }
     }
 
     if (vmHandles.size() > 0) {
@@ -1435,7 +1665,7 @@ void SetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDesc
         logger::error("{}: error, akSoundCategory doesn't exist", __func__);
         return;
     }
-    
+
     if (!akSoundDescriptor) {
         logger::error("{}: error, akSoundDescriptor doesn't exist", __func__);
         return;
@@ -1467,6 +1697,2587 @@ float GetSoundCategoryFrequency(RE::StaticFunctionTag*, RE::BGSSoundCategory* ak
     return akCategory->GetCategoryFrequency();
 }
 
+//menu mode timer ===================================================================================================================================
+
+void EraseFinishedMenuModeTimers();
+bool erasingMenuModeTimers = false;
+RE::BSFixedString sMenuModeTimerEvent = "OnTimerMenuMode";
+
+struct MenuModeTimer {
+    std::chrono::system_clock::time_point startTime;
+    RE::VMHandle handle;
+    int timerID;
+    float interval;
+    float savedTimeElapsed = 0.0;
+    bool cancelled = false;
+    bool finished = false;
+
+    MenuModeTimer(RE::VMHandle akHandle, float afInterval, int aiTimerID, float afSavedTimeElapsed = 0.0) {
+        handle = akHandle;
+        timerID = aiTimerID;
+        interval = afInterval;
+        savedTimeElapsed = afSavedTimeElapsed;
+
+        std::thread t([=]() {
+            startTime = std::chrono::system_clock::now();
+
+            int milliSecondInterval = (interval * 1000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
+
+            if (!cancelled) {
+                float elapsedTime = (savedTimeElapsed + timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
+                auto* args = RE::MakeFunctionArguments((int)timerID);
+                svm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
+                delete args;
+                logger::debug("menu mode timer event sent. ID[{}], interval[{}], elapsed time[{}]", timerID, interval, elapsedTime);
+            }
+
+            //while (erasingMenuModeTimers) { //only 1 thread should call EraseFinishedMenuModeTimers at a time.
+            //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            //}
+
+            finished = true;
+            EraseFinishedMenuModeTimers();
+            });
+        t.detach();
+    }
+
+    float GetElapsedTime() {
+        return (savedTimeElapsed + timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
+    }
+
+    float GetCurrentElapsedTime() { //for current - after loading a save startTime and interval are reset.
+        return timePointDiffToFloat(std::chrono::system_clock::now(), startTime);
+    }
+
+    float GetTimeLeft() {
+        float timeLeft = (interval - GetCurrentElapsedTime());
+        if (timeLeft < 0.0) {
+            timeLeft = 0.0;
+        }
+        return (timeLeft);
+    }
+};
+
+std::vector<MenuModeTimer*> currentMenuModeTimers;
+
+void EraseFinishedMenuModeTimers_B() {
+    if (currentMenuModeTimers.size() == 0) {
+        return;
+    }
+
+    erasingMenuModeTimers = true;
+
+    for (auto it = currentMenuModeTimers.begin(); it != currentMenuModeTimers.end(); ) {
+        auto* timer = *it;
+        if (timer) {
+            if (timer->finished) {
+                delete timer;
+                timer = nullptr;
+                it = currentMenuModeTimers.erase(it);
+                logger::debug("erased menuModeTimer, Timers left = {}", currentMenuModeTimers.size());
+            }
+            else {
+                ++it;
+            }
+        }
+        else { //safety, this shouldn't occure.
+            it = currentMenuModeTimers.erase(it);
+        }
+    }
+    erasingMenuModeTimers = false;
+}
+
+void EraseFinishedMenuModeTimers() {
+    if (currentMenuModeTimers.size() == 0) {
+        return;
+    }
+
+    erasingMenuModeTimers = true;
+
+    for (auto* timer : currentMenuModeTimers) {
+        if (timer) {
+            if (timer->finished) {
+                RemoveFromVectorByValue(currentMenuModeTimers, timer);
+                delete timer;
+                timer = nullptr;
+                logger::info("erased menuModeTimer, Timers left = {}", currentMenuModeTimers.size());
+            }
+        }
+        else {
+            RemoveFromVectorByValue(currentMenuModeTimers, timer);
+        }
+    }
+    erasingMenuModeTimers = false;
+}
+
+MenuModeTimer* GetTimer(std::vector<MenuModeTimer*>& v, RE::VMHandle akHandle, int aiTimerID) {
+    if (v.size() == 0) {
+        return nullptr;
+    }
+
+    for (auto* timer : v) {
+        if (timer) {
+            if (!timer->cancelled && !timer->finished) {
+                if (timer->handle == akHandle && timer->timerID == aiTimerID) {
+                    return timer;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+bool SaveTimers(std::vector<MenuModeTimer*> &v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    if (!a_intfc->OpenRecord(record, 1)) {
+        logger::error("{}: MenuModeTimers Failed to open record[{}]", __func__, record);
+        return false;
+    }
+
+    const std::size_t size = v.size();
+
+    if (!a_intfc->WriteRecordData(size)) {
+        logger::error("{}: record[{}] Failed to write size of MenuModeTimers!", __func__, record);
+        return false;
+    }
+
+    for (auto* timer : v) {
+        if (timer) {
+            float timeLeft = timer->GetTimeLeft();
+            float timeElapsed = timer->GetElapsedTime();
+
+            if (!a_intfc->WriteRecordData(timeLeft)) {
+                logger::error("{}: record[{}] Failed to write time left", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timeElapsed)) {
+                logger::error("{}: record[{}] Failed to write time elapsed", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->handle)) {
+                logger::error("{}: record[{}] Failed to write handle[{}]", __func__, record, timer->handle);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->timerID)) {
+                logger::error("{}: record[{}] Failed to write timerID[{}]", __func__, record, timer->timerID);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->cancelled)) {
+                logger::error("{}: record[{}] Failed to write cancelled[{}]", __func__, record, timer->cancelled);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->finished)) {
+                logger::error("{}: record[{}] Failed to write finished[{}]", __func__, record, timer->finished);
+                return false;
+            }
+
+            logger::debug("MenuModeTimer saved : timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+                timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+        }
+        else {
+            float noTimerTimeLeft = -1.0;
+            float noTimerTimeElapsed = 0.0;
+            RE::VMHandle handle;
+            int ID = -1;
+            bool cancelled = true;
+            bool finished = true;
+
+            if (!a_intfc->WriteRecordData(noTimerTimeLeft)) {
+                logger::error("{}: record[{}] Failed to write no Timer Time Left", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(noTimerTimeElapsed)) {
+                logger::error("{}: record[{}] Failed to write no Timer Time Elapsed", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(handle)) {
+                logger::error("{}: record[{}] Failed to write no timer handle", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(ID)) {
+                logger::error("{}: record[{}] Failed to write no timer Id", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(cancelled)) {
+                logger::error("{}: record[{}] Failed to write no timer cancelled[{}]", __func__, record, cancelled);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(finished)) {
+                logger::error("{}: record[{}] Failed to write no timer finished[{}]", __func__, record, finished);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool loadTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::size_t size;
+    if (!a_intfc->ReadRecordData(size)) {
+        logger::error("{}: record[{}] Failed to load size of MenuModeTimers!", __func__, record);
+        return false;
+    }
+
+    if (v.size() > 0) { //cancel current timers
+        for (auto* timer : v) {
+            if (timer) {
+                timer->cancelled = true;
+            }
+        }
+    }
+
+    for (std::size_t i = 0; i < size; i++) {
+        float timeLeft = -1.0;
+        float timeElapsed = 0.0;
+        RE::VMHandle handle;
+        int ID = -1;
+        bool cancelled = false;
+        bool finished = false;
+
+        if (!a_intfc->ReadRecordData(timeLeft)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load timeLeft!", __func__, i);
+            return false;
+        }
+        
+        if (!a_intfc->ReadRecordData(timeElapsed)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load timeElapsed!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(handle)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load handle!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(ID)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load ID!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(cancelled)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load cancelled!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(finished)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load finished!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ResolveHandle(handle, handle)) {
+            logger::warn("{}: {}: MenuModeTimer warning, failed to resolve handle[{}]", __func__, i, handle);
+            continue;
+        }
+
+        if (cancelled || finished) {
+            continue;
+        }
+
+        MenuModeTimer* timer = new MenuModeTimer(handle, timeLeft, ID, timeElapsed);
+        v.push_back(timer);
+
+        logger::debug("MenuModeTimer loaded: timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+            timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+    }
+    return true;
+}
+
+//NoMenuModeTimer =========================================================================================================================================
+void EraseFinishedNoMenuModeTimers();
+bool erasingNoMenuModeTimers = false;
+RE::BSFixedString sNoMenuModeTimerEvent = "OnTimerNoMenuMode";
+
+struct NoMenuModeTimer {
+    std::chrono::system_clock::time_point startTime;
+    std::chrono::system_clock::time_point lastMenuCheck;
+    bool lastMenuCheckSet = false;
+    float initInterval;
+    float currentInterval;
+    float totalTimePaused;
+    float savedTimeElapsed;
+    RE::VMHandle handle;
+    int timerID;
+    bool cancelled = false;
+    bool started = false;
+    bool finished = false;
+    bool canDelete = false;
+
+    NoMenuModeTimer(RE::VMHandle akHandle, float afInterval, int aitimerID, float afSavedTimeElapsed = 0.0) {
+        startTime = std::chrono::system_clock::now();
+        initInterval = afInterval;
+        currentInterval = afInterval;
+        totalTimePaused = 0.0;
+        savedTimeElapsed = afSavedTimeElapsed;
+        handle = akHandle;
+        timerID = aitimerID;
+        if (!inMenuMode) {
+            StartTimer();
+        }
+        else {
+            lastMenuCheckSet = true;
+            lastMenuCheck = std::chrono::system_clock::now();
+        }
+    }
+
+    void StartTimer() {
+        started = true;
+
+        if (lastMenuCheckSet) {
+            lastMenuCheckSet = false;
+            totalTimePaused += timePointDiffToFloat(std::chrono::system_clock::now(), lastMenuCheck);
+        }
+
+        std::thread t([=]() {
+            int milliSecondInterval = (currentInterval * 1000);
+            currentInterval = 0.0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
+
+            if (!cancelled) {
+                if (inMenuMode) {
+                    started = false;
+                    float timeInMenu = timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeMenuWasOpened);
+                    currentInterval += timeInMenu;
+                    totalTimePaused += timeInMenu;
+                    lastMenuCheckSet = true;
+                    lastMenuCheck = std::chrono::system_clock::now();
+                }
+
+                if (currentInterval <= 0.0 && !cancelled) {
+                    float elapsedTime = (savedTimeElapsed + (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+                    auto* args = RE::MakeFunctionArguments((int)timerID);
+                    svm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
+                    delete args;
+                    logger::debug("NoMenuModeTimer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
+                        timerID, initInterval, totalTimePaused, elapsedTime);
+
+                    finished = true;
+                }
+                else if (!inMenuMode && !cancelled) {
+                    StartTimer();
+                }
+                else if (!cancelled) {
+                    started = false;
+                }
+            }
+
+            if (cancelled || finished) {
+                //while (erasingNoMenuModeTimers) { //only 1 thread should call EraseFinishedNoMenuModeTimers at a time.
+                //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                //}
+
+                canDelete = true;
+                EraseFinishedNoMenuModeTimers();
+            }
+            });
+        t.detach();
+    }
+
+    float GetElapsedTime() {
+        return (savedTimeElapsed + (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+    }
+
+    float GetCurrentElapsedTime() {
+        return (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused);
+    }
+
+    float GetTimeLeft() {
+        float timeLeft = initInterval - GetCurrentElapsedTime();
+        if (timeLeft < 0.0) {
+            timeLeft = 0.0;
+        }
+        return (timeLeft);
+    }
+};
+
+std::vector<NoMenuModeTimer*> currentNoMenuModeTimers;
+
+//called after menu close event if game not paused
+void UpdateNoMenuModeTimers(float timeElapsedWhilePaused) {
+    if (currentNoMenuModeTimers.size() == 0) {
+        return;
+    }
+
+    for (auto* noMenuModeTimer : currentNoMenuModeTimers) {
+        if (noMenuModeTimer) {
+            if (!noMenuModeTimer->cancelled && !noMenuModeTimer->finished) {
+                if (noMenuModeTimer->started) {
+                    noMenuModeTimer->currentInterval += timeElapsedWhilePaused;
+                    noMenuModeTimer->totalTimePaused += timeElapsedWhilePaused;
+                }
+                else {
+                    noMenuModeTimer->StartTimer();
+                }
+            }
+        }
+    }
+}
+
+void EraseFinishedNoMenuModeTimers_B() {
+    if (currentNoMenuModeTimers.size() == 0) {
+        return;
+    }
+
+    erasingNoMenuModeTimers = true;
+
+    for (auto it = currentNoMenuModeTimers.begin(); it != currentNoMenuModeTimers.end(); ) {
+        auto* noMenuModeTimer = *it;
+        if (noMenuModeTimer) {
+            if (noMenuModeTimer->canDelete) {
+                delete noMenuModeTimer;
+                noMenuModeTimer = nullptr;
+                it = currentNoMenuModeTimers.erase(it);
+                logger::debug("erased NoMenuModeTimer, NoMenuModeTimers left = {}", currentNoMenuModeTimers.size());
+            }
+            else {
+                ++it;
+            }
+        }
+        else { //safety, this shouldn't occure.
+            it = currentNoMenuModeTimers.erase(it);
+        }
+    }
+    erasingNoMenuModeTimers = false;
+}
+
+void EraseFinishedNoMenuModeTimers() {
+    if (currentNoMenuModeTimers.size() == 0) {
+        return;
+    }
+
+    erasingNoMenuModeTimers = true;
+
+    for (auto* timer : currentNoMenuModeTimers) {
+        if (timer) {
+            if (timer->canDelete) {
+                RemoveFromVectorByValue(currentNoMenuModeTimers, timer);
+                delete timer;
+                timer = nullptr;
+                logger::debug("erased NoMenuModeTimer, Timers left = {}", currentNoMenuModeTimers.size());
+            }
+        }
+        else {
+            RemoveFromVectorByValue(currentNoMenuModeTimers, timer);
+        }
+    }
+    erasingNoMenuModeTimers = false;
+}
+
+NoMenuModeTimer* GetTimer(std::vector<NoMenuModeTimer*>& v, RE::VMHandle akHandle, int aiTimerID) {
+    if (v.size() == 0) {
+        return nullptr;
+    }
+
+    for (auto* noMenuModeTimer : v) {
+        if (noMenuModeTimer) {
+            if (!noMenuModeTimer->cancelled && !noMenuModeTimer->finished) {
+                if (noMenuModeTimer->handle == akHandle && noMenuModeTimer->timerID == aiTimerID) {
+                    return noMenuModeTimer;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+bool SaveTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    if (!a_intfc->OpenRecord(record, 1)) {
+        logger::error("{}: MenuModeTimers Failed to open record[{}]", __func__, record);
+        return false;
+    }
+
+    const std::size_t size = v.size();
+
+    if (!a_intfc->WriteRecordData(size)) {
+        logger::error("{}: record[{}] Failed to write size of MenuModeTimers!", __func__, record);
+        return false;
+    }
+
+    for (auto* timer : v) {
+        if (timer) {
+            float timeLeft = timer->GetTimeLeft();
+            float timeElapsed = timer->GetElapsedTime();
+
+            if (!a_intfc->WriteRecordData(timeLeft)) {
+                logger::error("{}: record[{}] Failed to write time left", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timeElapsed)) {
+                logger::error("{}: record[{}] Failed to write time elapsed", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->handle)) {
+                logger::error("{}: record[{}] Failed to write handle[{}]", __func__, record, timer->handle);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->timerID)) {
+                logger::error("{}: record[{}] Failed to write timerID[{}]", __func__, record, timer->timerID);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->cancelled)) {
+                logger::error("{}: record[{}] Failed to write cancelled[{}]", __func__, record, timer->cancelled);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->finished)) {
+                logger::error("{}: record[{}] Failed to write finished[{}]", __func__, record, timer->finished);
+                return false;
+            }
+
+            logger::debug("NoMenuModeTimer saved : timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+                timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+        }
+        else {
+            float noTimerTimeLeft = -1.0;
+            float noTimerTimeElapsed = 0.0;
+            RE::VMHandle handle;
+            int ID = -1;
+            bool cancelled = true;
+            bool finished = true;
+
+            if (!a_intfc->WriteRecordData(noTimerTimeLeft)) {
+                logger::error("{}: record[{}] Failed to write no Timer Time Left", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(noTimerTimeElapsed)) {
+                logger::error("{}: record[{}] Failed to write no Timer Time Elapsed", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(handle)) {
+                logger::error("{}: record[{}] Failed to write no timer handle", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(ID)) {
+                logger::error("{}: record[{}] Failed to write no timer Id", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(cancelled)) {
+                logger::error("{}: record[{}] Failed to write no timer cancelled[{}]", __func__, record, cancelled);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(finished)) {
+                logger::error("{}: record[{}] Failed to write no timer finished[{}]", __func__, record, finished);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool loadTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::size_t size;
+    if (!a_intfc->ReadRecordData(size)) {
+        logger::error("{}: record[{}] Failed to load size of MenuModeTimers!", __func__, record);
+        return false;
+    }
+
+    if (v.size() > 0) { //cancel current timers
+        for (auto* timer : v) {
+            if (timer) {
+                timer->cancelled = true;
+            }
+        }
+    }
+
+    for (std::size_t i = 0; i < size; i++) {
+        float timeLeft = -1.0;
+        float timeElapsed = 0.0;
+        RE::VMHandle handle;
+        int ID = -1;
+        bool cancelled = false;
+        bool finished = false;
+
+        if (!a_intfc->ReadRecordData(timeLeft)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load timeLeft!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(timeElapsed)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load timeElapsed!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(handle)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load handle!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(ID)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load ID!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(cancelled)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load cancelled!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(finished)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load finished!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ResolveHandle(handle, handle)) {
+            logger::warn("{}: {}: MenuModeTimer warning, failed to resolve handle[{}]", __func__, i, handle);
+            continue;
+        }
+
+        if (cancelled || finished) {
+            continue;
+        }
+
+        NoMenuModeTimer* timer = new NoMenuModeTimer(handle, timeLeft, ID, timeElapsed);
+        v.push_back(timer);
+
+        logger::debug("NoMenuModeTimer loaded: timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+            timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+    }
+    return true;
+}
+
+//timer ===================================================================================================================================
+
+void EraseFinishedTimers();
+bool erasingTimers = false;
+RE::BSFixedString sTimerEvent = "OnTimer";
+
+struct Timer {
+    std::chrono::system_clock::time_point startTime;
+    std::chrono::system_clock::time_point lastPausedTimeCheck;
+    bool lastPausedTimeCheckSet = false;
+    float initInterval;
+    float currentInterval;
+    float totalTimePaused;
+    float savedTimeElapsed;
+    RE::VMHandle handle;
+    int timerID;
+    bool cancelled = false;
+    bool started = false;
+    bool finished = false;
+    bool canDelete = false;
+
+    Timer(RE::VMHandle akHandle, float afInterval, int aiTimerID, float afSavedTimeElapsed = 0.0) {
+        startTime = std::chrono::system_clock::now();
+        initInterval = afInterval;
+        currentInterval = afInterval;
+        totalTimePaused = 0.0;
+        savedTimeElapsed = afSavedTimeElapsed;
+        handle = akHandle;
+        timerID = aiTimerID;
+        if (!ui->GameIsPaused()) {
+            StartTimer();
+        }
+        else {
+            lastPausedTimeCheckSet = true; 
+            lastPausedTimeCheck = std::chrono::system_clock::now();
+        }
+    }
+
+    void StartTimer() {
+        started = true;
+
+        if (lastPausedTimeCheckSet) {
+            lastPausedTimeCheckSet = false;
+            totalTimePaused += timePointDiffToFloat(std::chrono::system_clock::now(), lastPausedTimeCheck);
+        }
+
+        std::thread t([=]() {
+            int milliSecondInterval = (currentInterval * 1000);
+            currentInterval = 0.0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
+
+            if (!cancelled) {
+                if (ui->GameIsPaused()) {
+                    started = false;
+                    float timeInMenu = timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeGameWasPaused);
+                    currentInterval += timeInMenu;
+                    totalTimePaused += timeInMenu;
+                    lastPausedTimeCheckSet = true;
+                    lastPausedTimeCheck = std::chrono::system_clock::now();
+                }
+
+                if (currentInterval <= 0.0 && !cancelled) {
+                    float elapsedTime = (savedTimeElapsed + (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+                    auto* args = RE::MakeFunctionArguments((int)timerID);
+                    svm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
+                    delete args;
+                    logger::debug("timer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
+                        timerID, initInterval, totalTimePaused, elapsedTime);
+
+                    finished = true;
+                }
+                else if (!ui->GameIsPaused() && !cancelled) {
+                    StartTimer();
+                }
+                else if (!cancelled) {
+                    started = false;
+                }
+            }
+
+            if (cancelled || finished) {
+                //while (erasingTimers) { //only 1 thread should call EraseFinishedTimers at a time.
+                //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                //}
+
+                canDelete = true;
+                EraseFinishedTimers();
+            }
+            });
+        t.detach();
+    }
+
+    float GetElapsedTime() {
+        return (savedTimeElapsed + (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+    }
+
+    float getCurrentElapsedTime() {
+        return (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused);
+    }
+
+    float GetTimeLeft() {
+        float timeLeft = initInterval - getCurrentElapsedTime();
+        if (timeLeft < 0.0) {
+            timeLeft = 0.0;
+        }
+        return (timeLeft);
+    }
+
+    void CancelTimer() {
+        cancelled = true;
+    }
+};
+
+std::vector<Timer*> currentTimers;
+
+//called after menu close event if game not paused
+void UpdateTimers(float timeElapsedWhilePaused) {
+    if (currentTimers.size() == 0) {
+        return;
+    }
+
+    for (auto* timer : currentTimers) {
+        if (timer) {
+            if (!timer->cancelled && !timer->finished) {
+                if (timer->started) {
+                    timer->currentInterval += timeElapsedWhilePaused;
+                    timer->totalTimePaused += timeElapsedWhilePaused;
+                }
+                else {
+                    timer->StartTimer();
+                }
+            }
+        }
+    }
+}
+
+void EraseFinishedTimers_B() {
+    if (currentTimers.size() == 0) {
+        return;
+    }
+
+    erasingTimers = true;
+
+    for (auto it = currentTimers.begin(); it != currentTimers.end(); ) {
+        auto* timer = *it;
+        if (timer) {
+            if (timer->canDelete) {
+                delete timer;
+                timer = nullptr;
+                it = currentTimers.erase(it);
+                logger::debug("erased Timer, Timers left = {}", currentTimers.size());
+            }
+            else {
+                ++it;
+            }
+        }
+        else { //safety, this shouldn't occure.
+            it = currentTimers.erase(it);
+        }
+    }
+    erasingTimers = false;
+}
+
+void EraseFinishedTimers() {
+    if (currentTimers.size() == 0) {
+        return;
+    }
+
+    erasingTimers = true;
+
+    for (auto* timer : currentTimers) {
+        if (timer) {
+            if (timer->canDelete) {
+                RemoveFromVectorByValue(currentTimers, timer);
+                delete timer;
+                timer = nullptr;
+                logger::debug("erased timer, Timers left = {}", currentTimers.size());
+            }
+        }
+        else {
+            RemoveFromVectorByValue(currentTimers, timer);
+        }
+    }
+    erasingTimers = false;
+}
+
+Timer* GetTimer(std::vector<Timer*>& v, RE::VMHandle akHandle, int aiTimerID) {
+    if (v.size() == 0) {
+        return nullptr;
+    }
+
+    for (auto* timer : v) {
+        if (timer) {
+            if (!timer->cancelled && !timer->finished) {
+                if (timer->handle == akHandle && timer->timerID == aiTimerID) {
+                    return timer;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+bool SaveTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    if (!a_intfc->OpenRecord(record, 1)) {
+        logger::error("{}: MenuModeTimers Failed to open record[{}]", __func__, record);
+        return false;
+    }
+
+    const std::size_t size = v.size();
+
+    if (!a_intfc->WriteRecordData(size)) {
+        logger::error("{}: record[{}] Failed to write size of MenuModeTimers!", __func__, record);
+        return false;
+    }
+
+    for (auto* timer : v) {
+        if (timer) {
+            float timeLeft = timer->GetTimeLeft();
+            float timeElapsed = timer->GetElapsedTime();
+
+            if (!a_intfc->WriteRecordData(timeLeft)) {
+                logger::error("{}: record[{}] Failed to write time left", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timeElapsed)) {
+                logger::error("{}: record[{}] Failed to write time elapsed", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->handle)) {
+                logger::error("{}: record[{}] Failed to write handle[{}]", __func__, record, timer->handle);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->timerID)) {
+                logger::error("{}: record[{}] Failed to write timerID[{}]", __func__, record, timer->timerID);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->cancelled)) {
+                logger::error("{}: record[{}] Failed to write cancelled[{}]", __func__, record, timer->cancelled);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->finished)) {
+                logger::error("{}: record[{}] Failed to write finished[{}]", __func__, record, timer->finished);
+                return false;
+            }
+
+            logger::debug("Timer saved : timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+                timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+        }
+        else {
+            float noTimerTimeLeft = -1.0;
+            float noTimerTimeElapsed = 0.0;
+            RE::VMHandle handle;
+            int ID = -1;
+            bool cancelled = true;
+            bool finished = true;
+
+            if (!a_intfc->WriteRecordData(noTimerTimeLeft)) {
+                logger::error("{}: record[{}] Failed to write no Timer Time Left", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(noTimerTimeElapsed)) {
+                logger::error("{}: record[{}] Failed to write no Timer Time Elapsed", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(handle)) {
+                logger::error("{}: record[{}] Failed to write no timer handle", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(ID)) {
+                logger::error("{}: record[{}] Failed to write no timer Id", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(cancelled)) {
+                logger::error("{}: record[{}] Failed to write no timer cancelled[{}]", __func__, record, cancelled);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(finished)) {
+                logger::error("{}: record[{}] Failed to write no timer finished[{}]", __func__, record, finished);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool loadTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::size_t size;
+    if (!a_intfc->ReadRecordData(size)) {
+        logger::error("{}: record[{}] Failed to load size of MenuModeTimers!", __func__, record);
+        return false;
+    }
+
+    if (v.size() > 0) { //cancel current timers
+        for (auto* timer : v) {
+            if (timer) {
+                timer->cancelled = true;
+            }
+        }
+    }
+
+    for (std::size_t i = 0; i < size; i++) {
+        float timeLeft = -1.0;
+        float timeElapsed = 0.0;
+        RE::VMHandle handle;
+        int ID = -1;
+        bool cancelled = false;
+        bool finished = false;
+
+        if (!a_intfc->ReadRecordData(timeLeft)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load timeLeft!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(timeElapsed)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load timeElapsed!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(handle)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load handle!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(ID)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load ID!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(cancelled)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load cancelled!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(finished)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load finished!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ResolveHandle(handle, handle)) {
+            logger::warn("{}: {}: MenuModeTimer warning, failed to resolve handle[{}]", __func__, i, handle);
+            continue;
+        }
+
+        if (cancelled || finished) {
+            continue;
+        }
+
+        Timer* timer = new Timer(handle, timeLeft, ID, timeElapsed);
+        v.push_back(timer);
+
+        logger::debug("Timer loaded: timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+            timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+    }
+    return true;
+}
+
+//GameTimeTimer =========================================================================================================================================
+
+void EraseFinishedGameTimers();
+bool erasingGameTimers = false;
+RE::BSFixedString sGameTimeTimerEvent = "OnTimerGameTime";
+
+struct GameTimeTimer {
+    float startTime;
+    float endTime;
+    float initGameHoursInterval;
+    int tick;
+    int timerID;
+    RE::VMHandle handle;
+    bool cancelled = false;
+    bool started = false;
+    bool finished = false;
+    bool canDelete = false;
+
+    GameTimeTimer(RE::VMHandle akHandle, float afInterval, int aiTimerID, float afStartTime = -1.0, float afEndTime = -1.0) {
+        handle = akHandle;
+        timerID = aiTimerID;
+        initGameHoursInterval = afInterval;
+
+        tick = gameTimerPollingInterval;
+
+        if (afStartTime != -1.0) { //timer created from LoadTimers on game load.
+            startTime = afStartTime;
+            endTime = afEndTime;
+        }
+        else {
+            startTime = calendar->GetHoursPassed();
+            endTime = startTime + afInterval;
+        }
+        
+        float secondsInterval = GameHoursToRealTimeSeconds(nullptr, afInterval);
+        int milliTick = (secondsInterval * 1000);
+
+        if (tick > milliTick) {
+            tick = milliTick;
+        }
+
+        StartTimer();
+    }
+
+    void StartTimer() {
+        std::thread t([=]() {
+            while (calendar->GetHoursPassed() < endTime && !cancelled) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(tick));
+            }
+
+            if (!cancelled) {
+                auto now = std::chrono::system_clock::now();
+                float endTime = calendar->GetHoursPassed();
+                float elapsedGameHours = (calendar->GetHoursPassed() - startTime);
+
+                auto* args = RE::MakeFunctionArguments((int)timerID);
+                svm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
+                delete args;
+                logger::debug("game timer event sent. ID[{}] gameHoursInterval[{}] startTime[{}] endTime[{}] elapsedGameHours[{}]",
+                    timerID, initGameHoursInterval, startTime, endTime, elapsedGameHours);
+
+                finished = true;
+            }
+
+            if (cancelled || finished) {
+                //while (erasingGameTimers) { //only 1 thread should call EraseFinishedTimers at a time.
+                //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                //}
+
+                canDelete = true;
+                EraseFinishedGameTimers();
+            }
+            });
+        t.detach();
+    }
+
+    float GetElapsedTime() {
+        return (calendar->GetHoursPassed() - startTime);
+    }
+
+    float GetTimeLeft() {
+        return (endTime - calendar->GetHoursPassed());
+    }
+
+    void CancelTimer() {
+        cancelled = true;
+    }
+};
+
+std::vector<GameTimeTimer*> currentGameTimeTimers;
+
+void EraseFinishedGameTimers_B() {
+    if (currentGameTimeTimers.size() == 0) {
+        return;
+    }
+
+    erasingGameTimers = true;
+
+    for (auto it = currentGameTimeTimers.begin(); it != currentGameTimeTimers.end(); ) {
+        auto* timer = *it;
+        if (timer) {
+            if (timer->canDelete) {
+                delete timer;
+                timer = nullptr;
+                it = currentGameTimeTimers.erase(it);
+                logger::debug("erased gameTimer, Timers left = {}", currentGameTimeTimers.size());
+            }
+            else {
+                ++it;
+            }
+        }
+        else { //safety, this shouldn't occure.
+            it = currentGameTimeTimers.erase(it);
+        }
+    }
+    erasingGameTimers = false;
+}
+
+void EraseFinishedGameTimers() {
+    if (currentGameTimeTimers.size() == 0) {
+        return;
+    }
+
+    erasingGameTimers = true;
+
+    for (auto* timer : currentGameTimeTimers) {
+        if (timer) {
+            if (timer->canDelete) {
+                RemoveFromVectorByValue(currentGameTimeTimers, timer);
+                delete timer;
+                timer = nullptr;
+                logger::debug("erased gameTimer, Timers left = {}", currentGameTimeTimers.size());
+            }
+        }
+        else {
+            RemoveFromVectorByValue(currentGameTimeTimers, timer);
+        }
+    }
+    erasingGameTimers = false;
+}
+
+GameTimeTimer* GetTimer(std::vector<GameTimeTimer*>& v, RE::VMHandle akHandle, int aiTimerID) {
+    if (v.size() == 0) {
+        return nullptr;
+    }
+
+    for (auto* timer : v) {
+        if (timer) {
+            if (!timer->cancelled && !timer->finished) {
+                if (timer->handle == akHandle && timer->timerID == aiTimerID) {
+                    return timer;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+bool SaveTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    if (!a_intfc->OpenRecord(record, 1)) {
+        logger::error("{}: MenuModeTimers Failed to open record[{}]", __func__, record);
+        return false;
+    }
+
+    const std::size_t size = v.size();
+
+    if (!a_intfc->WriteRecordData(size)) {
+        logger::error("{}: record[{}] Failed to write size of MenuModeTimers!", __func__, record);
+        return false;
+    }
+
+    for (auto* timer : v) {
+        if (timer) {
+            
+            if (!a_intfc->WriteRecordData(timer->startTime)) {
+                logger::error("{}: record[{}] Failed to write startTime", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->endTime)) {
+                logger::error("{}: record[{}] Failed to write endTime", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->initGameHoursInterval)) {
+                logger::error("{}: record[{}] Failed to write initGameHoursInterval", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->handle)) {
+                logger::error("{}: record[{}] Failed to write handle[{}]", __func__, record, timer->handle);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->timerID)) {
+                logger::error("{}: record[{}] Failed to write timerID[{}]", __func__, record, timer->timerID);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->cancelled)) {
+                logger::error("{}: record[{}] Failed to write cancelled[{}]", __func__, record, timer->cancelled);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(timer->finished)) {
+                logger::error("{}: record[{}] Failed to write finished[{}]", __func__, record, timer->finished);
+                return false;
+            }
+
+            logger::debug("gameTimer saved : startTime[{}], endTime[{}], initGameHoursInterval[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+                timer->startTime, timer->endTime, timer->initGameHoursInterval, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+        }
+        else {
+            float startTime = 0.0;
+            float endTime = 0.0;
+            float initGameHoursInterval = 0.1;
+            RE::VMHandle handle;
+            int ID = -1;
+            bool cancelled = true;
+            bool finished = true;
+
+            if (!a_intfc->WriteRecordData(startTime)) {
+                logger::error("{}: record[{}] Failed to write no Timer startTime", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(endTime)) {
+                logger::error("{}: record[{}] Failed to write no Timer endTime", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(initGameHoursInterval)) {
+                logger::error("{}: record[{}] Failed to write no Timer initGameHoursInterval", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(handle)) {
+                logger::error("{}: record[{}] Failed to write no timer handle", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(ID)) {
+                logger::error("{}: record[{}] Failed to write no timer Id", __func__, record);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(cancelled)) {
+                logger::error("{}: record[{}] Failed to write no timer cancelled[{}]", __func__, record, cancelled);
+                return false;
+            }
+
+            if (!a_intfc->WriteRecordData(finished)) {
+                logger::error("{}: record[{}] Failed to write no timer finished[{}]", __func__, record, finished);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::size_t size;
+    if (!a_intfc->ReadRecordData(size)) {
+        logger::error("{}: record[{}] Failed to load size of MenuModeTimers!", __func__, record);
+        return false;
+    }
+
+    if (v.size() > 0) { //cancel current timers
+        for (auto* timer : v) {
+            if (timer) {
+                timer->cancelled = true;
+            }
+        }
+    }
+
+    for (std::size_t i = 0; i < size; i++) {
+        float startTime = 0.0;
+        float endTime = 0.0;
+        float initGameHoursInterval = 0.1;
+        RE::VMHandle handle;
+        int ID = -1;
+        bool cancelled = true;
+        bool finished = true;
+
+        if (!a_intfc->ReadRecordData(startTime)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load startTime!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(endTime)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load endTime!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(initGameHoursInterval)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load initGameHoursInterval!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(handle)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load handle!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(ID)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load ID!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(cancelled)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load cancelled!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ReadRecordData(finished)) {
+            logger::error("{}: {}: MenuModeTimer Failed to load finished!", __func__, i);
+            return false;
+        }
+
+        if (!a_intfc->ResolveHandle(handle, handle)) {
+            logger::warn("{}: {}: MenuModeTimer warning, failed to resolve handle[{}]", __func__, i, handle);
+            continue;
+        }
+
+        if (cancelled || finished) {
+            continue;
+        }
+
+         GameTimeTimer* timer = new GameTimeTimer(handle, initGameHoursInterval, ID, startTime, endTime);
+        v.push_back(timer);
+
+        logger::debug("gameTimer loaded: startTime[{}], endTime[{}], initGameHoursInterval[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+            timer->startTime, timer->endTime, timer->initGameHoursInterval, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+    }
+    return true;
+}
+
+//timer papyrus functions==============================================================================================================================================
+
+//forms ==============================================================================================================================================
+
+//menuModeTimer=======================================================================================================================
+void StartMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+        logger::info("{} reset timer on form [{}] ID[{:x}] timerID[{}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID(), aiTimerID);
+    }
+
+    MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
+    currentMenuModeTimers.push_back(newTimer);
+}
+
+void CancelMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called, ID {}", __func__, aiTimerID);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+}
+
+float GetTimeElapsedOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return -1.0;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return -1.0;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//NoMenuModeTimer=======================================================================================================================
+void StartNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called, time: {}", __func__, afInterval);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+
+    NoMenuModeTimer* newTimer = new NoMenuModeTimer(handle, afInterval, aiTimerID);
+    currentNoMenuModeTimers.push_back(newTimer);
+}
+
+void CancelNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return -1.0;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return -1.0;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//timer=======================================================================================================================
+void StartTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called, time: {}", __func__, afInterval);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+
+    Timer* newTimer = new Timer(handle, afInterval, aiTimerID);
+    currentTimers.push_back(newTimer);
+}
+
+void CancelTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return -1.0;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return -1.0;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//gametime timer===========================================================================================================================
+void StartGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+
+    GameTimeTimer* newTimer = new GameTimeTimer(handle, afInterval, aiTimerID);
+    currentGameTimeTimers.push_back(newTimer);
+}
+
+void CancelGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnGameTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return -1.0;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnGameTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        return -1.0;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//timer Alias==============================================================================================================================================
+
+//menu Mode Timer alias=======================================================================================================================
+void StartMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+        logger::info("{} reset timer on Alias [{}] ID[{:x}] timerID[{}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID, aiTimerID);
+    }
+
+    MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
+    currentMenuModeTimers.push_back(newTimer);
+}
+
+void CancelMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called, ID {}", __func__, aiTimerID);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return -1.0;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return -1.0;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//NoMenuModeTimer Alias=======================================================================================================================
+void StartNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called, time: {}", __func__, afInterval);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+
+    NoMenuModeTimer* newTimer = new NoMenuModeTimer(handle, afInterval, aiTimerID);
+    currentNoMenuModeTimers.push_back(newTimer);
+}
+
+void CancelNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnNoMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return -1.0;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnNoMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return -1.0;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//timer alias=======================================================================================================================
+void StartTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+
+    Timer* newTimer = new Timer(handle, afInterval, aiTimerID);
+    currentTimers.push_back(newTimer);
+}
+
+void CancelTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return -1.0;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return -1.0;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//gametime timer alias===========================================================================================================================
+void StartGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+
+    GameTimeTimer* newTimer = new GameTimeTimer(handle, afInterval, aiTimerID);
+    currentGameTimeTimers.push_back(newTimer);
+}
+
+void CancelGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnGameTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return -1.0;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnGameTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
+        return -1.0;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//timer ActiveMagicEffect==============================================================================================================================================
+
+//menu Mode Timer ActiveMagicEffect=======================================================================================================================
+void StartMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+        logger::info("{} reset timer on ActiveMagicEffect [{}] ID[{:x}] timerID[{}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID, aiTimerID);
+    }
+
+    MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
+    currentMenuModeTimers.push_back(newTimer);
+}
+
+void CancelMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called, ID {}", __func__, aiTimerID);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return -1.0;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+
+float GetTimeLeftOnMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return -1.0;
+    }
+
+    MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//NoMenuModeTimer ActiveMagicEffect=======================================================================================================================
+void StartNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called, time: {}", __func__, afInterval);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+
+    NoMenuModeTimer* newTimer = new NoMenuModeTimer(handle, afInterval, aiTimerID);
+    currentNoMenuModeTimers.push_back(newTimer);
+}
+
+void CancelNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnNoMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return -1.0;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnNoMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return -1.0;
+    }
+
+    NoMenuModeTimer* timer = GetTimer(currentNoMenuModeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//timer ActiveMagicEffect=======================================================================================================================
+void StartTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+
+    Timer* newTimer = new Timer(handle, afInterval, aiTimerID);
+    currentTimers.push_back(newTimer);
+}
+
+void CancelTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return -1.0;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return -1.0;
+    }
+
+    Timer* timer = GetTimer(currentTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
+
+//gametime timer ActiveMagicEffect===========================================================================================================================
+void StartGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, float afInterval, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+
+    GameTimeTimer* newTimer = new GameTimeTimer(handle, afInterval, aiTimerID);
+    currentGameTimeTimers.push_back(newTimer);
+}
+
+void CancelGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        timer->cancelled = true;
+    }
+    return;
+}
+
+float GetTimeElapsedOnGameTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return -1.0;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetElapsedTime();
+        }
+    }
+    return  -1.0;
+}
+
+float GetTimeLeftOnGameTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
+    logger::info("{} called", __func__);
+
+    if (!eventReceiver) {
+        logger::error("{}: eventReceiver not found", __func__);
+        return -1.0;
+    }
+
+    RE::VMHandle handle = GetHandle(eventReceiver);
+
+    if (handle == NULL) {
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        return -1.0;
+    }
+
+    GameTimeTimer* timer = GetTimer(currentGameTimeTimers, handle, aiTimerID);
+    if (timer) {
+        if (timer->finished) {
+            return 0.0;
+        }
+        else if (!timer->cancelled) {
+            return timer->GetTimeLeft();
+        }
+    }
+    return  -1.0;
+}
 
 //Papyrus Events =============================================================================================================================
 
@@ -1488,8 +4299,19 @@ enum EventsEnum {
     EventEnum_LockChanged,
     EventEnum_OnOpen,
     EventEnum_OnClose,
+    EventEnum_OnWeaponSwing,
+    EventEnum_OnActorSpellCast,
+    EventEnum_OnActorSpellFire,
+    EventEnum_VoiceCast,
+    EventEnum_VoiceFire,
+    EventEnum_BowDraw,
+    EventEnum_BowRelease,
+    EventEnum_BeginDraw,
+    EventEnum_EndDraw,
+    EventEnum_BeginSheathe,
+    EventEnum_EndSheathe,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnClose
+    EventEnum_Last = EventEnum_EndSheathe
 };
 
 struct EventData {
@@ -1737,6 +4559,11 @@ std::vector<EventData*> eventDataPtrs;
 struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* event, RE::BSTEventSource<RE::TESHitEvent>*/*source*/) {
 
+        if (!event) {
+            logger::error("hit event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::TESObjectREFR* attacker = event->cause.get();
         RE::TESObjectREFR* target = event->target.get();
         RE::TESForm* source = RE::TESForm::LookupByID(event->source);
@@ -1823,6 +4650,11 @@ void CheckForPlayerCombatStatusChange() {
 struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent* event, RE::BSTEventSource<RE::TESCombatEvent>*/*source*/) {
 
+        if (!event) {
+            logger::error("combat change event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::TESObjectREFR* actorObjRef = event->actor.get();
         RE::TESObjectREFR* Target = event->targetActor.get();
         //RE::Actor* actorRef = actorObjRef->As<RE::Actor>();
@@ -1848,6 +4680,11 @@ struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
 
 struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESFurnitureEvent* event, RE::BSTEventSource<RE::TESFurnitureEvent>*/*source*/) {
+
+        if (!event) {
+            logger::error("furniture event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
 
         RE::TESObjectREFR* actorObjRef = event->actor.get();
         RE::Actor* actorRef = actorObjRef->As<RE::Actor>();
@@ -1883,6 +4720,12 @@ struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
 
 struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESActivateEvent* event, RE::BSTEventSource<RE::TESActivateEvent>*/*source*/) {
+
+        if (!event) {
+            logger::error("activate event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::TESObjectREFR* activatorRef = event->actionRef.get();
         RE::TESObjectREFR* activatedRef = event->objectActivated.get();
 
@@ -1902,7 +4745,13 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
 
 struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* event, RE::BSTEventSource<RE::TESDeathEvent>* source) {
-        logger::info("Death Event: dead[{}]", event->dead);
+
+        if (!event) {
+            logger::error("death / dying event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        logger::info("Death Event");
 
         RE::TESObjectREFR* victimRef;
         if (event->actorDying) {
@@ -1916,23 +4765,36 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
 
         RE::Actor* victim;
         if (victimRef != nullptr) {
-            victim = victimRef->As<RE::Actor>();
+            if (IsBadReadPtr(victimRef, sizeof(victimRef))) {
+                victim = nullptr;
+                logger::error("death event: bad victimRef pointer");
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            else if (victimRef->GetFormID() == 0) {
+                victim = nullptr;
+                logger::error("death event: 0 victimRef pointer");
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            else {
+                victim = static_cast<RE::Actor*>(victimRef);
+                logger::info("death event: valid victimRef pointer");
+            }
         }
 
         RE::Actor* killer;
         if (killerRef != nullptr) {
             //this is necessarry because when using console command kill or script command actor.kill() killer will be a bad ptr and cause ctd.
-            if (IsBadReadPtr(killerRef, sizeof(killerRef))) {  
+            if (IsBadReadPtr(killerRef, sizeof(killerRef))) {
                 killer = nullptr;
-                logger::info("death event: bad pointer");
+                logger::error("death event: bad killerRef pointer");
             }
             else if (killerRef->GetFormID() == 0) {
                 killer = nullptr;
-                logger::info("death event: 0 pointer");
+                logger::error("death event: 0 killerRef pointer");
             }
             else {
                 killer = static_cast<RE::Actor*>(killerRef);
-                logger::info("death event: valid pointer");
+                logger::info("death event: valid killerRef pointer");
             }
         }
 
@@ -1967,6 +4829,10 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
 struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* event, RE::BSTEventSource<RE::TESEquipEvent>*/*source*/) {
 
+        if (!event) {
+            logger::error("equip event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
         logger::info("Equip Event");
 
         RE::TESObjectREFR* akActorRef = event->actor.get();
@@ -2004,6 +4870,11 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
 struct WaitStartEventSink : public RE::BSTEventSink<RE::TESWaitStartEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESWaitStartEvent* event, RE::BSTEventSource<RE::TESWaitStartEvent>*/*source*/) {
 
+        if (!event) {
+            logger::error("wait start event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         logger::info("Wait Start Event");
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStart]->globalHandles;
@@ -2020,6 +4891,11 @@ struct WaitStartEventSink : public RE::BSTEventSink<RE::TESWaitStartEvent> {
 struct WaitStopEventSink : public RE::BSTEventSink<RE::TESWaitStopEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESWaitStopEvent* event, RE::BSTEventSource<RE::TESWaitStopEvent>*/*source*/) {
 
+        if (!event) {
+            logger::error("wait stop event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         logger::info("Wait Stop Event");
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStop]->globalHandles;
@@ -2035,12 +4911,17 @@ struct WaitStopEventSink : public RE::BSTEventSink<RE::TESWaitStopEvent> {
 
 struct MagicEffectApplyEventSink : public RE::BSTEventSink<RE::TESMagicEffectApplyEvent> { //
     RE::BSEventNotifyControl ProcessEvent(const RE::TESMagicEffectApplyEvent* event, RE::BSTEventSource<RE::TESMagicEffectApplyEvent>*/*source*/) {
-        
+
+        if (!event) {
+            logger::error("MagicEffectApply event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         logger::info("MagicEffectApply Event");
 
         RE::TESObjectREFR* caster = event->caster.get();
         RE::TESObjectREFR* target = event->target.get();
-        RE::EffectSetting* magicEffect = RE::TESForm::LookupByID<RE::EffectSetting>(event->magicEffect); 
+        RE::EffectSetting* magicEffect = RE::TESForm::LookupByID<RE::EffectSetting>(event->magicEffect);
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnMagicEffectApply]->globalHandles;
 
@@ -2059,6 +4940,11 @@ struct MagicEffectApplyEventSink : public RE::BSTEventSink<RE::TESMagicEffectApp
 
 struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESLockChangedEvent* event, RE::BSTEventSource<RE::TESLockChangedEvent>*/*source*/) {
+
+        if (!event) {
+            logger::error("Lock Changed event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
 
         logger::info("Lock Changed Event");
 
@@ -2084,6 +4970,11 @@ struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
 
 struct OpenCloseEventSink : public RE::BSTEventSink<RE::TESOpenCloseEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESOpenCloseEvent* event, RE::BSTEventSource<RE::TESOpenCloseEvent>*/*source*/) {
+
+        if (!event) {
+            logger::error("OpenClose event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
 
         logger::info("Open Close Event");
 
@@ -2116,6 +5007,11 @@ struct OpenCloseEventSink : public RE::BSTEventSink<RE::TESOpenCloseEvent> {
 struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESSpellCastEvent* event, RE::BSTEventSource<RE::TESSpellCastEvent>*/*source*/) {
 
+        if (!event) {
+            logger::error("spell cast event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         logger::info("spell cast Event");
 
         RE::TESObjectREFR* caster = event->object;
@@ -2137,6 +5033,194 @@ struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
     }
 };
 
+std::vector<std::string> actionSlotStrings{"left", "right", "voice"};
+std::vector<std::string> actionTypeStrings{
+"kWeaponSwing",
+"SpellCast",
+"SpellFire",
+"VoiceCast",
+"VoiceFire",
+"BowDraw",
+"BowRelease",
+"BeginDraw",
+"EndDraw",
+"BeginSheathe",
+"EndSheathe"};
+
+struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const SKSE::ActionEvent* event, RE::BSTEventSource<SKSE::ActionEvent>*/*source*/) {
+
+        if (!event) {
+            logger::error("Action Event event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        logger::info("Action Event");
+
+        RE::Actor* akActor = event->actor;
+
+        //0 = left hand, 1 = right hand, 2 = voice
+        int slot = event->slot.underlying();
+        RE::TESForm* akSource = event->sourceForm;
+
+        /*  kWeaponSwing = 0,
+            kSpellCast = 1,
+            kSpellFire = 2,
+            kVoiceCast = 3,
+            kVoiceFire = 4,
+            kBowDraw = 5,
+            kBowRelease = 6,
+            kBeginDraw = 7,
+            kEndDraw = 8,
+            kBeginSheathe = 9,
+            kEndSheathe = 10*/
+
+        int type = event->type.underlying();
+
+        int eventIndex = -1;
+
+        switch (type) {
+        case 0:
+            eventIndex = EventEnum_OnWeaponSwing;
+            break;
+        case 1:
+            eventIndex = EventEnum_OnActorSpellCast;
+            break;
+        case 2:
+            eventIndex = EventEnum_OnActorSpellFire;
+            break;
+        case 3:
+            eventIndex = EventEnum_VoiceCast;
+            break;
+        case 4:
+            eventIndex = EventEnum_VoiceFire;
+            break;
+        case 5:
+            eventIndex = EventEnum_BowDraw;
+            break;
+        case 6:
+            eventIndex = EventEnum_BowRelease;
+            break;
+        case 7:
+            eventIndex = EventEnum_BeginDraw;
+            break;
+        case 8:
+            eventIndex = EventEnum_EndDraw;
+            break;
+        case 9:
+            eventIndex = EventEnum_BeginSheathe;
+            break;
+        case 10:
+            eventIndex = EventEnum_EndSheathe;
+            break;
+        }
+
+        logger::info("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", GetFormName(akActor), GetFormName(akSource),
+            actionTypeStrings[type], actionSlotStrings[slot]);
+
+        if (eventIndex == -1) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
+
+        CombineEventHandles(handles, akActor, eventDataPtrs[eventIndex]->eventParamMaps[0]);
+        CombineEventHandles(handles, akSource, eventDataPtrs[eventIndex]->eventParamMaps[1]);
+
+        RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESForm*)akSource, (int)slot);
+        SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
+
+        //draw / sheathe events aren't triggered for left hand. Send left hand events manually
+        if (eventIndex >= EventEnum_BeginDraw && eventIndex <= EventEnum_EndSheathe) {
+            RE::TESForm* leftHandSource = akActor->GetEquippedObject(true);
+
+            if (leftHandSource) {
+                if (leftHandSource != akSource) {
+                    std::vector<RE::VMHandle> handlesB = eventDataPtrs[eventIndex]->globalHandles;
+
+                    CombineEventHandles(handlesB, akActor, eventDataPtrs[eventIndex]->eventParamMaps[0]);
+                    CombineEventHandles(handlesB, leftHandSource, eventDataPtrs[eventIndex]->eventParamMaps[1]);
+
+                    RemoveDuplicates(handlesB);
+
+                    auto* argsB = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESForm*)leftHandSource, (int)0);
+                    SendEvents(handlesB, eventDataPtrs[eventIndex]->sEvent, argsB);
+
+                    logger::info("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", GetFormName(akActor), GetFormName(leftHandSource),
+                        actionTypeStrings[type], actionSlotStrings[0]);
+                }
+            }
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+void CheckMenusCurrentlyOpen() {
+    if (menusCurrentlyOpen.size() == 0) {
+        return;
+    }
+    for (auto& menu : menusCurrentlyOpen) {
+        if (!ui->IsMenuOpen(menu)) {
+            RemoveFromVectorByValue(menusCurrentlyOpen, menu);
+        }
+    }
+}
+
+struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*/*source*/) {
+        //this sink is for managing timers and GetCurrentMenuOpen function.
+
+        if (!event) {
+            logger::error("MenuOpenClose Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        
+        logger::debug("Menu Open Close Event, menu[{}], opened[{}]", event->menuName, event->opening);
+
+        if (event->menuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
+            if (event->opening) {
+                lastMenuOpened = event->menuName;
+                if (ui->GameIsPaused() && !gamePaused) {
+                    gamePaused = true;
+                    lastTimeGameWasPaused = std::chrono::system_clock::now();
+                    logger::debug("game was paused");
+                }
+
+                if (!inMenuMode) { //opened menu
+                    inMenuMode = true;
+                    lastTimeMenuWasOpened = std::chrono::system_clock::now();
+                    logger::debug("inMenuMode = true");
+                }
+                menusCurrentlyOpen.push_back(event->menuName);
+            }
+            else {
+                if (!ui->GameIsPaused() && gamePaused) {
+                    gamePaused = false;
+                    auto now = std::chrono::system_clock::now();
+                    UpdateTimers(timePointDiffToFloat(now, lastTimeGameWasPaused));
+                    logger::debug("game was unpaused");
+                }
+
+                //menusCurrentlyOpen.erase(std::remove(menusCurrentlyOpen.begin(), menusCurrentlyOpen.end(), event->menuName), menusCurrentlyOpen.end());
+                RemoveFromVectorByValue(menusCurrentlyOpen, event->menuName);
+                CheckMenusCurrentlyOpen();
+                //logger::info("menu close, number of menusCurrentlyOpen = {}", menusCurrentlyOpen.size());
+
+                if (menusCurrentlyOpen.size() == 0) { //closed menu
+                    inMenuMode = false;
+                    auto now = std::chrono::system_clock::now();
+                    UpdateNoMenuModeTimers(timePointDiffToFloat(now, lastTimeMenuWasOpened));
+                    logger::debug("inMenuMode = false");
+                }
+            }
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
 HitEventSink* hitEventSink;
 CombatEventSink* combatEventSink;
 FurnitureEventSink* furnitureEventSink;
@@ -2149,6 +5233,17 @@ MagicEffectApplyEventSink* magicEffectApplyEventSink;
 LockChangedEventSink* lockChangedEventSink;
 OpenCloseEventSink* openCloseEventSink;
 SpellCastEventSink* spellCastEventSink;
+ActorActionEventSink* actorActionEventSink;
+MenuOpenCloseEventSink* menuOpenCloseEventSink;
+
+bool ShouldActorActionEventSinkBeAdded() {
+    for (int i = EventEnum_OnWeaponSwing; i <= EventEnum_EndSheathe; i++) {
+        if (!eventDataPtrs[i]->isEmpty()) {
+            return true;
+        }
+    }
+    return false;
+}
 
 void AddSink(int index) {
 
@@ -2164,10 +5259,9 @@ void AddSink(int index) {
     case EventEnum_FurnitureEnter:
 
     case EventEnum_FurnitureExit:
-        if (!eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded && !eventDataPtrs[EventEnum_FurnitureExit]->sinkAdded && (!eventDataPtrs[EventEnum_FurnitureEnter]->isEmpty() || !eventDataPtrs[EventEnum_FurnitureExit]->isEmpty())) {
+        if (!eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded && (!eventDataPtrs[EventEnum_FurnitureEnter]->isEmpty() || !eventDataPtrs[EventEnum_FurnitureExit]->isEmpty())) {
             logger::info("{}, EventEnum_FurnitureExit sink added", __func__);
             eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded = true;
-            eventDataPtrs[EventEnum_FurnitureExit]->sinkAdded = true;
             eventSourceholder->AddEventSink(furnitureEventSink);
         }
         break;
@@ -2187,13 +5281,12 @@ void AddSink(int index) {
             eventSourceholder->AddEventSink(hitEventSink);
         }
         break;
-    
+
     case EventEnum_DeathEvent:
 
     case EventEnum_DyingEvent:
-        if (!eventDataPtrs[EventEnum_DeathEvent]->sinkAdded && !eventDataPtrs[EventEnum_DyingEvent]->sinkAdded && (!eventDataPtrs[EventEnum_DeathEvent]->isEmpty() || !eventDataPtrs[EventEnum_DyingEvent]->isEmpty())) {
+        if (!eventDataPtrs[EventEnum_DeathEvent]->sinkAdded && (!eventDataPtrs[EventEnum_DeathEvent]->isEmpty() || !eventDataPtrs[EventEnum_DyingEvent]->isEmpty())) {
             logger::info("{}, EventEnum_DyingEvent sink added", __func__);
-            eventDataPtrs[EventEnum_DyingEvent]->sinkAdded = true;
             eventDataPtrs[EventEnum_DeathEvent]->sinkAdded = true;
             eventSourceholder->AddEventSink(deathEventSink);
         }
@@ -2202,9 +5295,8 @@ void AddSink(int index) {
     case EventEnum_OnObjectEquipped:
 
     case EventEnum_OnObjectUnequipped:
-        if (!eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && !eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() || !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty())) {
+        if (!eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() || !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty())) {
             logger::info("{}, EventEnum_OnObjectUnequipped sink added", __func__);
-            eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded = true;
             eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = true;
             eventSourceholder->AddEventSink(equipEventSink);
         }
@@ -2225,6 +5317,7 @@ void AddSink(int index) {
             eventSourceholder->AddEventSink(waitStopEventSink);
         }
         break;
+
     case EventEnum_OnMagicEffectApply:
         if (!eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded && !eventDataPtrs[EventEnum_OnMagicEffectApply]->isEmpty()) {
             logger::info("{}, EventEnum_OnMagicEffectApply sink added", __func__);
@@ -2249,14 +5342,33 @@ void AddSink(int index) {
         }
         break;
 
-    case EventEnum_OnOpen: 
+    case EventEnum_OnOpen:
 
-    case EventEnum_OnClose: 
-        if (!eventDataPtrs[EventEnum_OnOpen]->sinkAdded && !eventDataPtrs[EventEnum_OnClose]->sinkAdded && (!eventDataPtrs[EventEnum_OnOpen]->isEmpty() || !eventDataPtrs[EventEnum_OnClose]->isEmpty())) {
+    case EventEnum_OnClose:
+        if (!eventDataPtrs[EventEnum_OnOpen]->sinkAdded && (!eventDataPtrs[EventEnum_OnOpen]->isEmpty() || !eventDataPtrs[EventEnum_OnClose]->isEmpty())) {
             logger::info("{}, EventEnum_OnClose sink added", __func__);
-            eventDataPtrs[EventEnum_OnClose]->sinkAdded = true;
             eventDataPtrs[EventEnum_OnOpen]->sinkAdded = true;
             eventSourceholder->AddEventSink(openCloseEventSink);
+        }
+        break;
+
+        //actorActionEventSink events
+    case EventEnum_OnWeaponSwing:
+    case EventEnum_OnActorSpellCast:
+    case EventEnum_OnActorSpellFire:
+    case EventEnum_VoiceCast:
+    case EventEnum_VoiceFire:
+    case EventEnum_BowDraw:
+    case EventEnum_BowRelease:
+    case EventEnum_BeginDraw:
+    case EventEnum_EndDraw:
+    case EventEnum_BeginSheathe:
+
+    case EventEnum_EndSheathe:
+        if (!eventDataPtrs[EventEnum_EndSheathe]->sinkAdded && ShouldActorActionEventSinkBeAdded()) {
+            logger::info("{}, actorActionEventSink sink added", __func__);
+            eventDataPtrs[EventEnum_EndSheathe]->sinkAdded = true;
+            SKSE::GetActionEventSource()->AddEventSink(actorActionEventSink);
         }
         break;
     }
@@ -2267,7 +5379,7 @@ void RemoveSink(int index) {
 
     switch (index) {
     case EventEnum_OnCombatStateChanged:
-        if (!eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded && eventDataPtrs[EventEnum_OnCombatStateChanged]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded && eventDataPtrs[EventEnum_OnCombatStateChanged]->isEmpty()) {
             logger::info("{}, EventEnum_OnCombatStateChanged sink removed", __func__);
             eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(combatEventSink);
@@ -2277,10 +5389,9 @@ void RemoveSink(int index) {
     case EventEnum_FurnitureEnter:
 
     case EventEnum_FurnitureExit:
-        if (eventDataPtrs[EventEnum_FurnitureEnter]->isEmpty() && eventDataPtrs[EventEnum_FurnitureExit]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded && eventDataPtrs[EventEnum_FurnitureEnter]->isEmpty() && eventDataPtrs[EventEnum_FurnitureExit]->isEmpty()) {
             logger::info("{}, EventEnum_FurnitureEnter sink removed", __func__);
             eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded = false;
-            eventDataPtrs[EventEnum_FurnitureExit]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(furnitureEventSink);
         }
         break;
@@ -2294,7 +5405,7 @@ void RemoveSink(int index) {
         break;
 
     case EventEnum_HitEvent:
-        if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_HitEvent]->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
             logger::info("{}, EventEnum_hitEvent sink removed", __func__);
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(hitEventSink);
@@ -2304,10 +5415,9 @@ void RemoveSink(int index) {
     case EventEnum_DeathEvent:
 
     case EventEnum_DyingEvent:
-        if (eventDataPtrs[EventEnum_DeathEvent]->isEmpty() && eventDataPtrs[EventEnum_DyingEvent]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_DeathEvent]->sinkAdded && eventDataPtrs[EventEnum_DeathEvent]->isEmpty() && eventDataPtrs[EventEnum_DyingEvent]->isEmpty()) {
             logger::info("{}, EventEnum_DeathEvent sink removed", __func__);
             eventDataPtrs[EventEnum_DeathEvent]->sinkAdded = false;
-            eventDataPtrs[EventEnum_DyingEvent]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(deathEventSink);
         }
         break;
@@ -2315,16 +5425,15 @@ void RemoveSink(int index) {
     case EventEnum_OnObjectEquipped:
 
     case EventEnum_OnObjectUnequipped:
-        if (eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() && eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() && eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty()) {
             logger::info("{}, EventEnum_OnObjectEquipped sink removed", __func__);
             eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = false;
-            eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(equipEventSink);
         }
         break;
 
     case EventEnum_OnWaitStart:
-        if (!eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded && eventDataPtrs[EventEnum_OnWaitStart]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded && eventDataPtrs[EventEnum_OnWaitStart]->isEmpty()) {
             logger::info("{}, EventEnum_OnWaitStart sink removed", __func__);
             eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(waitStartEventSink);
@@ -2332,7 +5441,7 @@ void RemoveSink(int index) {
         break;
 
     case EventEnum_OnWaitStop:
-        if (!eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded && eventDataPtrs[EventEnum_OnWaitStop]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded && eventDataPtrs[EventEnum_OnWaitStop]->isEmpty()) {
             logger::info("{}, EventEnum_OnWaitStop sink removed", __func__);
             eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(waitStopEventSink);
@@ -2340,7 +5449,7 @@ void RemoveSink(int index) {
         break;
 
     case EventEnum_OnMagicEffectApply:
-        if (!eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded && eventDataPtrs[EventEnum_OnMagicEffectApply]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded && eventDataPtrs[EventEnum_OnMagicEffectApply]->isEmpty()) {
             logger::info("{}, EventEnum_OnMagicEffectApply sink removed", __func__);
             eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(magicEffectApplyEventSink);
@@ -2348,7 +5457,7 @@ void RemoveSink(int index) {
         break;
 
     case EventEnum_OnSpellCast:
-        if (!eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded && eventDataPtrs[EventEnum_OnSpellCast]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded && eventDataPtrs[EventEnum_OnSpellCast]->isEmpty()) {
             logger::info("{}, EventEnum_OnSpellCast sink removed", __func__);
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(spellCastEventSink);
@@ -2356,27 +5465,44 @@ void RemoveSink(int index) {
         break;
 
     case EventEnum_LockChanged:
-        if (!eventDataPtrs[EventEnum_LockChanged]->sinkAdded && eventDataPtrs[EventEnum_LockChanged]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_LockChanged]->sinkAdded && eventDataPtrs[EventEnum_LockChanged]->isEmpty()) {
             logger::info("{}, EventEnum_LockChanged sink removed", __func__);
             eventDataPtrs[EventEnum_LockChanged]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(lockChangedEventSink);
         }
         break;
 
-    case EventEnum_OnOpen: 
+    case EventEnum_OnOpen:
 
     case EventEnum_OnClose:
-        if (eventDataPtrs[EventEnum_OnOpen]->isEmpty() && eventDataPtrs[EventEnum_OnClose]->isEmpty()) {
+        if (eventDataPtrs[EventEnum_OnOpen]->sinkAdded && eventDataPtrs[EventEnum_OnOpen]->isEmpty() && eventDataPtrs[EventEnum_OnClose]->isEmpty()) {
             logger::info("{}, EventEnum_OnOpen sink removed", __func__);
             eventDataPtrs[EventEnum_OnOpen]->sinkAdded = false;
-            eventDataPtrs[EventEnum_OnClose]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(openCloseEventSink);
+        }
+        break;
+
+        //actorActionEventSink events
+    case EventEnum_OnWeaponSwing:
+    case EventEnum_OnActorSpellCast:
+    case EventEnum_OnActorSpellFire:
+    case EventEnum_VoiceCast:
+    case EventEnum_VoiceFire:
+    case EventEnum_BowDraw:
+    case EventEnum_BowRelease:
+    case EventEnum_BeginDraw:
+    case EventEnum_EndDraw:
+    case EventEnum_BeginSheathe:
+
+    case EventEnum_EndSheathe:
+        if (eventDataPtrs[EventEnum_EndSheathe]->sinkAdded && !ShouldActorActionEventSinkBeAdded()) {
+            logger::info("{}, actorActionEventSink sink removed", __func__);
+            eventDataPtrs[EventEnum_EndSheathe]->sinkAdded = false;
+            SKSE::GetActionEventSource()->RemoveEventSink(actorActionEventSink);
         }
         break;
     }
 }
-
-//Global Events papyrus===================================================================================================================================
 
 int GetEventIndex(std::vector<EventData*> v, RE::BSFixedString asEvent) {
     if (asEvent == "") {
@@ -2397,6 +5523,8 @@ int GetEventIndex(std::vector<EventData*> v, RE::BSFixedString asEvent) {
     return -1;
 }
 
+//global events ==========================================================================================================================================================================================
+
 // is registered
 bool IsFormRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
     logger::info("{} {}", __func__, asEvent);
@@ -2408,8 +5536,7 @@ bool IsFormRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString as
 
     logger::info("{} getting handle is registered for: {}", __func__, GetFormName(eventReceiver));
 
-    RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiver->GetFormType());
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
@@ -2436,8 +5563,7 @@ bool IsAliasRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString a
 
     logger::info("{} getting handle is registered for: {}", __func__, eventReceiver->aliasName);
 
-    RE::VMTypeID id = eventReceiver->GetVMTypeID();
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
@@ -2464,8 +5590,7 @@ bool IsActiveMagicEffectRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSF
 
     logger::info("{} getting handle is registered for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
 
-    RE::VMTypeID id = eventReceiver->VMTYPEID;
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
@@ -2493,8 +5618,7 @@ void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEven
 
     logger::info("{} adding handle for: {}", __func__, GetFormName(eventReceiver));
 
-    RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiver->GetFormType());
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
@@ -2521,8 +5645,7 @@ void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEve
 
     logger::info("{} adding handle for: {}", __func__, eventReceiver->aliasName);
 
-    RE::VMTypeID id = eventReceiver->GetVMTypeID();
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
@@ -2549,8 +5672,7 @@ void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixed
 
     logger::info("{} adding handle for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
 
-    RE::VMTypeID id = eventReceiver->VMTYPEID;
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
@@ -2578,8 +5700,7 @@ void UnregisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEv
 
     logger::info("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
 
-    RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiver->GetFormType());
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
@@ -2605,8 +5726,7 @@ void UnregisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asE
 
     logger::info("{} removing handle for: {}", __func__, eventReceiver->aliasName);
 
-    RE::VMTypeID id = eventReceiver->GetVMTypeID();
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
@@ -2632,8 +5752,7 @@ void UnregisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFix
 
     logger::info("{} removing handle for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
 
-    RE::VMTypeID id = eventReceiver->VMTYPEID;
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
@@ -2660,8 +5779,7 @@ void UnregisterFormForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString 
 
     logger::info("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
 
-    RE::VMTypeID id = static_cast<RE::VMTypeID>(eventReceiver->GetFormType());
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
@@ -2687,8 +5805,7 @@ void UnregisterAliasForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString
 
     logger::info("{} removing all handles for: {}", __func__, eventReceiver->aliasName);
 
-    RE::VMTypeID id = eventReceiver->GetVMTypeID();
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
@@ -2714,8 +5831,7 @@ void UnregisterActiveMagicEffectForGlobalEvent_All(RE::StaticFunctionTag*, RE::B
 
     logger::info("{} removing all handles for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
 
-    RE::VMTypeID id = eventReceiver->VMTYPEID;
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, eventReceiver);
+    RE::VMHandle handle = GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
@@ -2732,6 +5848,7 @@ void UnregisterActiveMagicEffectForGlobalEvent_All(RE::StaticFunctionTag*, RE::B
 }
 
 // plugin load / maintenance==================================================================================================================================================
+
 void CreateEventSinks() {
     if (!player) { player = RE::PlayerCharacter::GetSingleton(); }
     if (!playerRef) { playerRef = RE::TESForm::LookupByID<RE::TESForm>(20)->As<RE::Actor>(); }
@@ -2756,6 +5873,17 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_LockChanged] = new EventData("OnLockChangedGlobal", EventEnum_LockChanged, 1, 'EDlc');
         eventDataPtrs[EventEnum_OnOpen] = new EventData("OnOpenGlobal", EventEnum_OnOpen, 2, 'EDo0');
         eventDataPtrs[EventEnum_OnClose] = new EventData("OnCloseGlobal", EventEnum_OnClose, 2, 'EDo1');
+        eventDataPtrs[EventEnum_OnWeaponSwing] = new EventData("OnWeaponSwingGlobal", EventEnum_OnWeaponSwing, 2, 'EAA0');              //actorActionEventSink
+        eventDataPtrs[EventEnum_OnActorSpellCast] = new EventData("OnActorSpellCastGlobal", EventEnum_OnActorSpellCast, 2, 'EAA1');     //actorActionEventSink
+        eventDataPtrs[EventEnum_OnActorSpellFire] = new EventData("OnActorSpellFireGlobal", EventEnum_OnActorSpellFire, 2, 'EAA2');     //actorActionEventSink
+        eventDataPtrs[EventEnum_VoiceCast] = new EventData("OnVoiceCastGlobal", EventEnum_VoiceCast, 2, 'EAA3');                        //actorActionEventSink
+        eventDataPtrs[EventEnum_VoiceFire] = new EventData("OnVoiceFireGlobal", EventEnum_VoiceFire, 2, 'EAA4');                        //actorActionEventSink
+        eventDataPtrs[EventEnum_BowDraw] = new EventData("OnBowDrawGlobal", EventEnum_BowDraw, 2, 'EAA5');                              //actorActionEventSink
+        eventDataPtrs[EventEnum_BowRelease] = new EventData("OnBowReleaseGlobal", EventEnum_BowRelease, 2, 'EAA6');                     //actorActionEventSink
+        eventDataPtrs[EventEnum_BeginDraw] = new EventData("OnBeginDrawGlobal", EventEnum_BeginDraw, 2, 'EAA7');                        //actorActionEventSink
+        eventDataPtrs[EventEnum_EndDraw] = new EventData("OnEndDrawGlobal", EventEnum_EndDraw, 2, 'EAA8');                              //actorActionEventSink
+        eventDataPtrs[EventEnum_BeginSheathe] = new EventData("OnBeginSheatheGlobal", EventEnum_BeginSheathe, 2, 'EAA9');               //actorActionEventSink
+        eventDataPtrs[EventEnum_EndSheathe] = new EventData("OnEndSheatheGlobal", EventEnum_EndSheathe, 2, 'EA10');                     //actorActionEventSink
     }
 
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -2770,8 +5898,11 @@ void CreateEventSinks() {
     if (!spellCastEventSink) { spellCastEventSink = new SpellCastEventSink(); }
     if (!lockChangedEventSink) { lockChangedEventSink = new LockChangedEventSink(); }
     if (!openCloseEventSink) { openCloseEventSink = new OpenCloseEventSink(); }
-    
-    //eventSourceholder->AddEventSink(openCloseEventSink);
+    if (!actorActionEventSink) { actorActionEventSink = new ActorActionEventSink(); }
+    if (!menuOpenCloseEventSink) { menuOpenCloseEventSink = new MenuOpenCloseEventSink(); }
+
+    //SKSE::GetActionEventSource()->AddEventSink(actorActionEventSink);
+    ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
 
     logger::info("Event Sinks Created");
 }
@@ -2782,13 +5913,19 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
 
     gvm = vm;
     svm = RE::SkyrimVM::GetSingleton();
+    ui = RE::UI::GetSingleton();
+    calendar = RE::Calendar::GetSingleton();
 
-    //functions
+    //functions 
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
     vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
     vm->RegisterFunction("SetClipBoardText", "DbSkseFunctions", SetClipBoardText);
     vm->RegisterFunction("IsWhiteSpace", "DbSkseFunctions", IsWhiteSpace);
     vm->RegisterFunction("CountWhiteSpaces", "DbSkseFunctions", CountWhiteSpaces);
+    vm->RegisterFunction("GameHoursToRealTimeSeconds", "DbSkseFunctions", GameHoursToRealTimeSeconds);
+    vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused); 
+    vm->RegisterFunction("IsInMenu", "DbSkseFunctions", IsInMenu);
+    vm->RegisterFunction("GetLastMenuOpened", "DbSkseFunctions", GetLastMenuOpened);
     vm->RegisterFunction("SetMapMarkerName", "DbSkseFunctions", SetMapMarkerName);
     vm->RegisterFunction("GetMapMarkerName", "DbSkseFunctions", GetMapMarkerName);
     vm->RegisterFunction("SetMapMarkerIconType", "DbSkseFunctions", SetMapMarkerIconType);
@@ -2803,17 +5940,16 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetMusicTypePriority", "DbSkseFunctions", GetMusicTypePriority);
     vm->RegisterFunction("SetMusicTypePriority", "DbSkseFunctions", SetMusicTypePriority);
     vm->RegisterFunction("GetMusicTypeStatus", "DbSkseFunctions", GetMusicTypeStatus);
-
     vm->RegisterFunction("GetKnownEnchantments", "DbSkseFunctions", GetKnownEnchantments);
-
     vm->RegisterFunction("AddKnownEnchantmentsToFormList", "DbSkseFunctions", AddKnownEnchantmentsToFormList);
+    vm->RegisterFunction("GetWordOfPowerTranslation", "DbSkseFunctions", GetWordOfPowerTranslation);
+    vm->RegisterFunction("UnlockShout", "DbSkseFunctions", UnlockShout);
+    vm->RegisterFunction("AddAndUnlockAllShouts", "DbSkseFunctions", AddAndUnlockAllShouts);
     vm->RegisterFunction("GetActiveEffectSource", "DbSkseFunctions", GetActiveEffectSource);
     vm->RegisterFunction("GetActiveEffectCastingSource", "DbSkseFunctions", GetActiveEffectCastingSource);
-
     vm->RegisterFunction("SetSoulGemSize", "DbSkseFunctions", SetSoulGemSize);
     vm->RegisterFunction("CanSoulGemHoldNPCSoul", "DbSkseFunctions", CanSoulGemHoldNPCSoul);
     vm->RegisterFunction("SetSoulGemCanHoldNPCSoul", "DbSkseFunctions", SetSoulGemCanHoldNPCSoul);
-
     vm->RegisterFunction("IsActorAttacking", "DbSkseFunctions", IsActorAttacking);
     vm->RegisterFunction("IsActorPowerAttacking", "DbSkseFunctions", IsActorPowerAttacking);
     vm->RegisterFunction("IsActorSpeaking", "DbSkseFunctions", IsActorSpeaking);
@@ -2838,7 +5974,6 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("CreateTextureSet", "DbSkseFunctions", CreateTextureSet);
     vm->RegisterFunction("CreateSoundMarker", "DbSkseFunctions", CreateSoundMarker);
     vm->RegisterFunction("PlaySound", "DbSkseFunctions", PlaySound);
-
     vm->RegisterFunction("PlaySoundDescriptor", "DbSkseFunctions", PlaySoundDescriptor);
     vm->RegisterFunction("GetParentSoundCategory", "DbSkseFunctions", GetParentSoundCategory);
     vm->RegisterFunction("GetSoundCategoryForSoundDescriptor", "DbSkseFunctions", GetSoundCategoryForSoundDescriptor);
@@ -2847,7 +5982,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetSoundCategoryFrequency", "DbSkseFunctions", GetSoundCategoryFrequency);
 
     //global events ====================================================================================================
-    
+
     //form
     vm->RegisterFunction("IsFormRegisteredForGlobalEvent", "DbSkseEvents", IsFormRegisteredForGlobalEvent);
     vm->RegisterFunction("RegisterFormForGlobalEvent", "DbSkseEvents", RegisterFormForGlobalEvent);
@@ -2865,6 +6000,71 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("RegisterActiveMagicEffectForGlobalEvent", "DbSkseEvents", RegisterActiveMagicEffectForGlobalEvent);
     vm->RegisterFunction("UnregisterActiveMagicEffectForGlobalEvent", "DbSkseEvents", UnregisterActiveMagicEffectForGlobalEvent);
     vm->RegisterFunction("UnregisterActiveMagicEffectForGlobalEvent_All", "DbSkseEvents", UnregisterActiveMagicEffectForGlobalEvent_All);
+
+    //timers
+    
+    //form
+    vm->RegisterFunction("StartTimer", "DbFormTimer", StartTimerOnForm);
+    vm->RegisterFunction("CancelTimer", "DbFormTimer", CancelTimerOnForm);
+    vm->RegisterFunction("GetTimeElapsedOnTimer", "DbFormTimer", GetTimeElapsedOnTimerForm);
+    vm->RegisterFunction("GetTimeLeftOnTimer", "DbFormTimer", GetTimeLeftOnTimerForm);
+
+    vm->RegisterFunction("StartNoMenuModeTimer", "DbFormTimer", StartNoMenuModeTimerOnForm);
+    vm->RegisterFunction("CancelNoMenuModeTimer", "DbFormTimer", CancelNoMenuModeTimerOnForm);
+    vm->RegisterFunction("GetTimeElapsedOnNoMenuModeTimer", "DbFormTimer", GetTimeElapsedOnNoMenuModeTimerForm);
+    vm->RegisterFunction("GetTimeLeftOnNoMenuModeTimer", "DbFormTimer", GetTimeLeftOnNoMenuModeTimerForm);
+
+    vm->RegisterFunction("StartMenuModeTimer", "DbFormTimer", StartMenuModeTimerOnForm);
+    vm->RegisterFunction("CancelMenuModeTimer", "DbFormTimer", CancelMenuModeTimerOnForm);
+    vm->RegisterFunction("GetTimeElapsedOnMenuModeTimer", "DbFormTimer", GetTimeElapsedOnMenuModeTimerForm);
+    vm->RegisterFunction("GetTimeLeftOnMenuModeTimer", "DbFormTimer", GetTimeLeftOnMenuModeTimerForm);
+
+    vm->RegisterFunction("StartGameTimer", "DbFormTimer", StartGameTimerOnForm);
+    vm->RegisterFunction("CancelGameTimer", "DbFormTimer", CancelGameTimerOnForm);
+    vm->RegisterFunction("GetTimeElapsedOnGameTimer", "DbFormTimer", GetTimeElapsedOnGameTimerForm);
+    vm->RegisterFunction("GetTimeLeftOnGameTimer", "DbFormTimer", GetTimeLeftOnGameTimerForm);
+
+    //Alias
+    vm->RegisterFunction("StartTimer", "DbAliasTimer", StartMenuModeTimerOnAlias);
+    vm->RegisterFunction("CancelTimer", "DbAliasTimer", CancelMenuModeTimerOnAlias);
+    vm->RegisterFunction("GetTimeElapsedOnTimer", "DbAliasTimer", GetTimeElapsedOnMenuModeTimerAlias);
+    vm->RegisterFunction("GetTimeLeftOnTimer", "DbAliasTimer", GetTimeLeftOnMenuModeTimerAlias);
+
+    vm->RegisterFunction("StartNoMenuModeTimer", "DbAliasTimer", StartTimerOnAlias);
+    vm->RegisterFunction("CancelNoMenuModeTimer", "DbAliasTimer", CancelTimerOnAlias);
+    vm->RegisterFunction("GetTimeElapsedOnNoMenuModeTimer", "DbAliasTimer", GetTimeElapsedOnTimerAlias);
+    vm->RegisterFunction("GetTimeLeftOnNoMenuModeTimer", "DbAliasTimer", GetTimeLeftOnTimerAlias);
+
+    vm->RegisterFunction("StartMenuModeTimer", "DbAliasTimer", StartTimerOnAlias);
+    vm->RegisterFunction("CancelMenuModeTimer", "DbAliasTimer", CancelTimerOnAlias);
+    vm->RegisterFunction("GetTimeElapsedOnMenuModeTimer", "DbAliasTimer", GetTimeElapsedOnTimerAlias);
+    vm->RegisterFunction("GetTimeLeftOnMenuModeTimer", "DbAliasTimer", GetTimeLeftOnTimerAlias);
+
+    vm->RegisterFunction("StartGameTimer", "DbAliasTimer", StartGameTimerOnAlias);
+    vm->RegisterFunction("CancelGameTimer", "DbAliasTimer", CancelGameTimerOnAlias);
+    vm->RegisterFunction("GetTimeElapsedOnGameTimer", "DbAliasTimer", GetTimeElapsedOnGameTimerAlias);
+    vm->RegisterFunction("GetTimeLeftOnGameTimer", "DbAliasTimer", GetTimeLeftOnGameTimerAlias);
+
+    //ActiveMagicEffect
+    vm->RegisterFunction("StartTimer", "DbActiveMagicEffectTimer", StartMenuModeTimerOnActiveMagicEffect);
+    vm->RegisterFunction("CancelTimer", "DbActiveMagicEffectTimer", CancelMenuModeTimerOnActiveMagicEffect);
+    vm->RegisterFunction("GetTimeElapsedOnTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnMenuModeTimerActiveMagicEffect);
+    vm->RegisterFunction("GetTimeLeftOnTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnMenuModeTimerActiveMagicEffect);
+
+    vm->RegisterFunction("StartNoMenuModeTimer", "DbActiveMagicEffectTimer", StartTimerOnActiveMagicEffect);
+    vm->RegisterFunction("CancelNoMenuModeTimer", "DbActiveMagicEffectTimer", CancelTimerOnActiveMagicEffect);
+    vm->RegisterFunction("GetTimeElapsedOnNoMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnTimerActiveMagicEffect);
+    vm->RegisterFunction("GetTimeLeftOnNoMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnTimerActiveMagicEffect);
+
+    vm->RegisterFunction("StartMenuModeTimer", "DbActiveMagicEffectTimer", StartTimerOnActiveMagicEffect);
+    vm->RegisterFunction("CancelMenuModeTimer", "DbActiveMagicEffectTimer", CancelTimerOnActiveMagicEffect);
+    vm->RegisterFunction("GetTimeElapsedOnMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnTimerActiveMagicEffect);
+    vm->RegisterFunction("GetTimeLeftOnMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnTimerActiveMagicEffect);
+
+    vm->RegisterFunction("StartGameTimer", "DbActiveMagicEffectTimer", StartGameTimerOnActiveMagicEffect);
+    vm->RegisterFunction("CancelGameTimer", "DbActiveMagicEffectTimer", CancelGameTimerOnActiveMagicEffect);
+    vm->RegisterFunction("GetTimeElapsedOnGameTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnGameTimerActiveMagicEffect);
+    vm->RegisterFunction("GetTimeLeftOnGameTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnGameTimerActiveMagicEffect);
 
     logger::info("Papyrus Functions Bound");
 
@@ -2922,8 +6122,9 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         //    break;
 
     case SKSE::MessagingInterface::kDataLoaded:
+        SKSE::GetPapyrusInterface()->Register(BindPapyrusFunctions);
         CreateEventSinks();
-        //ExecuteConsoleCommand(nullptr, "coc riverwood", nullptr);
+        SetSettingsFromIniFile();
         logger::info("kDataLoaded: sent after the data handler has loaded all its forms");
         break;
 
@@ -2934,15 +6135,28 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 }
 
 void LoadCallback(SKSE::SerializationInterface* a_intfc) {
-
     int max = EventEnum_Last + 1;
     std::uint32_t type, version, length;
 
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
-        for (int i = EventEnum_First; i < max; i++) {
-            if (type == eventDataPtrs[i]->record) {
-                eventDataPtrs[i]->Load(a_intfc);
-                break;
+        if (type == 'DBT0') {
+            loadTimers(currentMenuModeTimers, 'DBT0', a_intfc);
+        }
+        else if (type == 'DBT1') {
+            loadTimers(currentNoMenuModeTimers, 'DBT1', a_intfc);
+        }
+        else if (type == 'DBT2') {
+            loadTimers(currentTimers, 'DBT2', a_intfc);
+        }
+        else if (type == 'DBT3') {
+            loadTimers(currentGameTimeTimers, 'DBT3', a_intfc);
+        }
+        else {
+            for (int i = EventEnum_First; i < max; i++) {
+                if (type == eventDataPtrs[i]->record) {
+                    eventDataPtrs[i]->Load(a_intfc);
+                    break;
+                }
             }
         }
     }
@@ -2968,7 +6182,12 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     for (int i = EventEnum_First; i < max; i++) {
         eventDataPtrs[i]->Save(a_intfc);
     }
-}
+    
+    SaveTimers(currentMenuModeTimers, 'DBT0', a_intfc);
+    SaveTimers(currentNoMenuModeTimers, 'DBT1', a_intfc);
+    SaveTimers(currentTimers, 'DBT2', a_intfc);
+    SaveTimers(currentGameTimeTimers, 'DBT3', a_intfc);
+} 
 
 //init================================================================================================================================================================
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
@@ -2977,8 +6196,6 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
     //CreateEventSinks();
     SKSE::GetMessagingInterface()->RegisterListener(MessageListener);
-
-    SKSE::GetPapyrusInterface()->Register(BindPapyrusFunctions);
 
     auto serialization = SKSE::GetSerializationInterface();
     serialization->SetUniqueID('DbSF');
