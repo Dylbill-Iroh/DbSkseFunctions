@@ -18,6 +18,7 @@ std::string lastMenuOpened;
 std::vector<RE::BSFixedString> menusCurrentlyOpen;
 std::chrono::system_clock::time_point lastTimeMenuWasOpened;
 std::chrono::system_clock::time_point lastTimeGameWasPaused;
+std::map<RE::TESObjectBOOK*, int> skillBooksMap;
 int gameTimerPollingInterval = 1500; //in milliseconds
 float secondsPassedGameNotPaused = 0.0;
 float lastFrameDelta = 0.1;
@@ -34,6 +35,405 @@ void AddSink(int index);
 void RemoveSink(int index);
 
 //general functions============================================================================================================================================================
+
+RE::BSFixedString GetFormName(RE::TESForm* akForm) {
+    if (!akForm) {
+        return "null";
+    }
+
+    RE::TESObjectREFR* ref = akForm->As<RE::TESObjectREFR>();
+    if (ref) {
+        return ref->GetDisplayFullName();
+    }
+    else {
+        return akForm->GetName();
+    }
+}
+
+void logFormMap(auto& map) {
+    logger::info("logging form map");
+    for (auto const& x : map)
+    {
+        RE::TESForm* akForm = x.first;
+        if (akForm) {
+            logger::info("Form[{}] ID[{:x}] value[{}]", GetFormName(akForm), akForm->GetFormID(), x.second);
+        }
+    }
+}
+
+//when reading a skill book in game, it removes the skill from the book, not just the TeachesSkill flag
+//this saves skill books and their respective skills for use with skill book functions below.
+void SaveSkillBooks() {
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+
+            if (baseForm) {
+                RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
+                if (akBook) {
+                    if (akBook->TeachesSkill()) {
+                        skillBooksMap[akBook] = static_cast<int>(akBook->GetSkill());
+                    }
+                }
+            }
+        }
+    }
+    //logFormMap(skillBooksMap);
+}
+
+std::map<int, std::string>ActorValueIntsMap = {
+    {0, "aggression"},
+    {1, "confidence"},
+    {2, "energy"},
+    {3, "morality"},
+    {4, "mood"},
+    {5, "assistance"},
+    {6, "onehanded"},
+    {7, "twohanded"},
+    {8, "marksman"},
+    {9, "block"},
+    {10, "smithing"},
+    {11, "heavyarmor"},
+    {12, "lightarmor"},
+    {13, "pickpocket"},
+    {14, "lockpicking"},
+    {15, "sneak"},
+    {16, "alchemy"},
+    {17, "speechcraft"},
+    {18, "alteration"},
+    {19, "conjuration"},
+    {20, "destruction"},
+    {21, "illusion"},
+    {22, "restoration"},
+    {23, "enchanting"},
+    {24, "health"},
+    {25, "magicka"},
+    {26, "stamina"},
+    {27, "healrate"},
+    {28, "magickarate"},
+    {29, "staminarate"},
+    {30, "speedmult"},
+    {31, "inventoryweight"},
+    {32, "carryweight"},
+    {33, "criticalchance"},
+    {34, "meleedamage"},
+    {35, "unarmeddamage"},
+    {36, "mass"},
+    {37, "voicepoints"},
+    {38, "voicerate"},
+    {39, "damageresist"},
+    {40, "poisonresist"},
+    {41, "resistfire"},
+    {42, "resistshock"},
+    {43, "resistfrost"},
+    {44, "resistmagic"},
+    {45, "resistdisease"},
+    {46, "perceptioncondition"},
+    {47, "endurancecondition"},
+    {48, "leftattackcondition"},
+    {49, "rightattackcondition"},
+    {50, "leftmobilitycondition"},
+    {51, "rightmobilitycondition"},
+    {52, "braincondition"},
+    {53, "paralysis"},
+    {54, "invisibility"},
+    {55, "nighteye"},
+    {56, "detectliferange"},
+    {57, "waterbreathing"},
+    {58, "waterwalking"},
+    {59, "ignorecrippledlimbs"},
+    {60, "fame"},
+    {61, "infamy"},
+    {62, "jumpingbonus"},
+    {63, "wardpower"},
+    {64, "rightitemcharge"},
+    {65, "armorperks"},
+    {66, "shieldperks"},
+    {67, "warddeflection"},
+    {68, "variable01"},
+    {69, "variable02"},
+    {70, "variable03"},
+    {71, "variable04"},
+    {72, "variable05"},
+    {73, "variable06"},
+    {74, "variable07"},
+    {75, "variable08"},
+    {76, "variable09"},
+    {77, "variable10"},
+    {78, "bowspeedbonus"},
+    {79, "favoractive"},
+    {80, "favorsperday"},
+    {81, "favorsperdaytimer"},
+    {82, "leftitemcharge"},
+    {83, "absorbchance"},
+    {84, "blindness"},
+    {85, "weaponspeedmult"},
+    {86, "shoutrecoverymult"},
+    {87, "bowstaggerbonus"},
+    {88, "telekinesis"},
+    {89, "favorpointsbonus"},
+    {90, "lastbribedintimidated"},
+    {91, "lastflattered"},
+    {92, "movementnoisemult"},
+    {93, "bypassvendorstolencheck"},
+    {94, "bypassvendorkeywordcheck"},
+    {95, "waitingforplayer"},
+    {96, "onehandedmodifier"},
+    {97, "twohandedmodifier"},
+    {98, "marksmanmodifier"},
+    {99, "blockmodifier"},
+    {100, "smithingmodifier"},
+    {101, "heavyarmormodifier"},
+    {102, "lightarmormodifier"},
+    {103, "pickpocketmodifier"},
+    {104, "lockpickingmodifier"},
+    {105, "sneakingmodifier"},
+    {106, "alchemymodifier"},
+    {107, "speechcraftmodifier"},
+    {108, "alterationmodifier"},
+    {109, "conjurationmodifier"},
+    {110, "destructionmodifier"},
+    {111, "illusionmodifier"},
+    {112, "restorationmodifier"},
+    {113, "enchantingmodifier"},
+    {114, "onehandedskilladvance"},
+    {115, "twohandedskilladvance"},
+    {116, "marksmanskilladvance"},
+    {117, "blockskilladvance"},
+    {118, "smithingskilladvance"},
+    {119, "heavyarmorskilladvance"},
+    {120, "lightarmorskilladvance"},
+    {121, "pickpocketskilladvance"},
+    {122, "lockpickingskilladvance"},
+    {123, "sneakingskilladvance"},
+    {124, "alchemyskilladvance"},
+    {125, "speechcraftskilladvance"},
+    {126, "alterationskilladvance"},
+    {127, "conjurationskilladvance"},
+    {128, "destructionskilladvance"},
+    {129, "illusionskilladvance"},
+    {130, "restorationskilladvance"},
+    {131, "enchantingskilladvance"},
+    {132, "leftweaponspeedmultiply"},
+    {133, "dragonsouls"},
+    {134, "combathealthregenmultiply"},
+    {135, "onehandedpowermodifier"},
+    {136, "twohandedpowermodifier"},
+    {137, "marksmanpowermodifier"},
+    {138, "blockpowermodifier"},
+    {139, "smithingpowermodifier"},
+    {140, "heavyarmorpowermodifier"},
+    {141, "lightarmorpowermodifier"},
+    {142, "pickpocketpowermodifier"},
+    {143, "lockpickingpowermodifier"},
+    {144, "sneakingpowermodifier"},
+    {145, "alchemypowermodifier"},
+    {146, "speechcraftpowermodifier"},
+    {147, "alterationpowermodifier"},
+    {148, "conjurationpowermodifier"},
+    {149, "destructionpowermodifier"},
+    {150, "illusionpowermodifier"},
+    {151, "restorationpowermodifier"},
+    {152, "enchantingpowermodifier"},
+    {153, "dragonrend"},
+    {154, "attackdamagemult"},
+    {155, "healratemult"},
+    {156, "magickarate"},
+    {157, "staminarate"},
+    {158, "werewolfperks"},
+    {159, "vampireperks"},
+    {160, "grabactoroffset"},
+    {161, "grabbed"},
+    {162, "deprecated05"},
+    {163, "reflectdamage"}
+};
+
+std::map<std::string, int>ActorValuesMap = {
+    {"aggression", 0},
+    {"confidence", 1},
+    {"energy", 2},
+    {"morality", 3},
+    {"mood", 4},
+    {"assistance", 5},
+    {"onehanded", 6},
+    {"twohanded", 7},
+    {"marksman", 8},
+    {"block", 9},
+    {"smithing", 10},
+    {"heavyarmor", 11},
+    {"lightarmor", 12},
+    {"pickpocket", 13},
+    {"lockpicking", 14},
+    {"sneak", 15},
+    {"alchemy", 16},
+    {"speechcraft", 17},
+    {"alteration", 18},
+    {"conjuration", 19},
+    {"destruction", 20},
+    {"illusion", 21},
+    {"restoration", 22},
+    {"enchanting", 23},
+    {"health", 24},
+    {"magicka", 25},
+    {"stamina", 26},
+    {"healrate", 27},
+    {"magickarate", 28},
+    {"staminarate", 29},
+    {"speedmult", 30},
+    {"inventoryweight", 31},
+    {"carryweight", 32},
+    {"criticalchance", 33},
+    {"meleedamage", 34},
+    {"unarmeddamage", 35},
+    {"mass", 36},
+    {"voicepoints", 37},
+    {"voicerate", 38},
+    {"damageresist", 39},
+    {"poisonresist", 40},
+    {"resistfire", 41},
+    {"resistshock", 42},
+    {"resistfrost", 43},
+    {"resistmagic", 44},
+    {"resistdisease", 45},
+    {"perceptioncondition", 46},
+    {"endurancecondition", 47},
+    {"leftattackcondition", 48},
+    {"rightattackcondition", 49},
+    {"leftmobilitycondition", 50},
+    {"rightmobilitycondition", 51},
+    {"braincondition", 52},
+    {"paralysis", 53},
+    {"invisibility", 54},
+    {"nighteye", 55},
+    {"detectliferange", 56},
+    {"waterbreathing", 57},
+    {"waterwalking", 58},
+    {"ignorecrippledlimbs", 59},
+    {"fame", 60},
+    {"infamy", 61},
+    {"jumpingbonus", 62},
+    {"wardpower", 63},
+    {"rightitemcharge", 64},
+    {"armorperks", 65},
+    {"shieldperks", 66},
+    {"warddeflection", 67},
+    {"variable01", 68},
+    {"variable02", 69},
+    {"variable03", 70},
+    {"variable04", 71},
+    {"variable05", 72},
+    {"variable06", 73},
+    {"variable07", 74},
+    {"variable08", 75},
+    {"variable09", 76},
+    {"variable10", 77},
+    {"bowspeedbonus", 78},
+    {"favoractive", 79},
+    {"favorsperday", 80},
+    {"favorsperdaytimer", 81},
+    {"leftitemcharge", 82},
+    {"absorbchance", 83},
+    {"blindness", 84},
+    {"weaponspeedmult", 85},
+    {"shoutrecoverymult", 86},
+    {"bowstaggerbonus", 87},
+    {"telekinesis", 88},
+    {"favorpointsbonus", 89},
+    {"lastbribedintimidated", 90},
+    {"lastflattered", 91},
+    {"movementnoisemult", 92},
+    {"bypassvendorstolencheck", 93},
+    {"bypassvendorkeywordcheck", 94},
+    {"waitingforplayer", 95},
+    {"onehandedmodifier", 96},
+    {"twohandedmodifier", 97},
+    {"marksmanmodifier", 98},
+    {"blockmodifier", 99},
+    {"smithingmodifier", 100},
+    {"heavyarmormodifier", 101},
+    {"lightarmormodifier", 102},
+    {"pickpocketmodifier", 103},
+    {"lockpickingmodifier", 104},
+    {"sneakingmodifier", 105},
+    {"alchemymodifier", 106},
+    {"speechcraftmodifier", 107},
+    {"alterationmodifier", 108},
+    {"conjurationmodifier", 109},
+    {"destructionmodifier", 110},
+    {"illusionmodifier", 111},
+    {"restorationmodifier", 112},
+    {"enchantingmodifier", 113},
+    {"onehandedskilladvance", 114},
+    {"twohandedskilladvance", 115},
+    {"marksmanskilladvance", 116},
+    {"blockskilladvance", 117},
+    {"smithingskilladvance", 118},
+    {"heavyarmorskilladvance", 119},
+    {"lightarmorskilladvance", 120},
+    {"pickpocketskilladvance", 121},
+    {"lockpickingskilladvance", 122},
+    {"sneakingskilladvance", 123},
+    {"alchemyskilladvance", 124},
+    {"speechcraftskilladvance", 125},
+    {"alterationskilladvance", 126},
+    {"conjurationskilladvance", 127},
+    {"destructionskilladvance", 128},
+    {"illusionskilladvance", 129},
+    {"restorationskilladvance", 130},
+    {"enchantingskilladvance", 131},
+    {"leftweaponspeedmultiply", 132},
+    {"dragonsouls", 133},
+    {"combathealthregenmultiply", 134},
+    {"onehandedpowermodifier", 135},
+    {"twohandedpowermodifier", 136},
+    {"marksmanpowermodifier", 137},
+    {"blockpowermodifier", 138},
+    {"smithingpowermodifier", 139},
+    {"heavyarmorpowermodifier", 140},
+    {"lightarmorpowermodifier", 141},
+    {"pickpocketpowermodifier", 142},
+    {"lockpickingpowermodifier", 143},
+    {"sneakingpowermodifier", 144},
+    {"alchemypowermodifier", 145},
+    {"speechcraftpowermodifier", 146},
+    {"alterationpowermodifier", 147},
+    {"conjurationpowermodifier", 148},
+    {"destructionpowermodifier", 149},
+    {"illusionpowermodifier", 150},
+    {"restorationpowermodifier", 151},
+    {"enchantingpowermodifier", 152},
+    {"dragonrend", 153},
+    {"attackdamagemult", 154},
+    {"healratemult", 155},
+    {"magickarate", 156},
+    {"staminarate", 157},
+    {"werewolfperks", 158},
+    {"vampireperks", 159},
+    {"grabactoroffset", 160},
+    {"grabbed", 161},
+    {"deprecated05", 162},
+    { "reflectdamage", 163}
+};
+
+int GetActorValueInt(std::string actorValue) {
+    if (actorValue == "") {
+        return -1;
+    }
+
+    std::transform(actorValue.begin(), actorValue.end(), actorValue.begin(), tolower);
+    int value = ActorValuesMap[actorValue];
+    if (value == 0 && actorValue != "aggression") {
+        return -2;
+    }
+    else {
+        return value;
+    }
+}
 
 //call the function after delay (milliseconds)
 void DelayedFunction(auto function, int delay) {
@@ -105,19 +505,7 @@ RE::VMHandle GetHandle(RE::ActiveEffect* akEffect) {
     return handle;
 }
 
-RE::BSFixedString GetFormName(RE::TESForm* akForm) {
-    if (!akForm) {
-        return "null";
-    }
 
-    RE::TESObjectREFR* ref = akForm->As<RE::TESObjectREFR>();
-    if (ref) {
-        return ref->GetDisplayFullName();
-    }
-    else {
-        return akForm->GetName();
-    }
-}
 
 std::string GetDescription(RE::TESForm* akForm) {
     logger::info("{} called", __func__);
@@ -844,7 +1232,7 @@ bool HasCollision(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef) {
     LogAndMessage(std::format("{} called", __func__));
 
     if (!objRef) {
-        LogAndMessage(std::format("{}: objRef doesn't exist", __func__), warn);
+        logger::warn("{}: objRef doesn't exist", __func__);
         return false;
     }
     return objRef->HasCollision();
@@ -864,7 +1252,7 @@ RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
         RE::BSIMusicTrack* currentPriorityTrack = nullptr;
         std::int8_t currentPriority = 127;
 
-        //loop through all music types to check which one is running and what the current track is for said type
+        
         for (RE::BSTArray<RE::TESForm*>::iterator itr = musicTypeArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
@@ -1073,6 +1461,295 @@ void AddAndUnlockAllShouts(RE::StaticFunctionTag*, int minNumberOfWordsWithTrans
                     }
                     UnlockShout(nullptr, akShout);
                 }
+            }
+        }
+    }
+}
+
+void SetBookSpell(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, RE::SpellItem* akSpell) {
+    logger::info("{} called", __func__);
+
+    if (!akBook) {
+        logger::warn("{} akBook doesn't exist.", __func__);
+        return;
+    }
+
+    if (!akSpell) {
+        akBook->data.flags.reset(RE::OBJ_BOOK::Flag::kTeachesSpell);
+        logger::info("{} akSpell is none, removing teaches spell flag", __func__);
+        return;
+    }
+
+    else {
+        akBook->data.teaches.spell = akSpell;
+        akBook->data.flags.reset(RE::OBJ_BOOK::Flag::kTeachesSpell);
+        akBook->data.flags |= RE::OBJ_BOOK::Flag::kTeachesSpell;
+    }
+}
+
+RE::TESObjectBOOK* GetSpellTomeForSpell(RE::StaticFunctionTag*, RE::SpellItem* akSpell) {
+    if (!akSpell) {
+        logger::warn("{} akSpell doesn't exist.", __func__);
+        return nullptr;
+    }
+
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+
+            if (baseForm) {
+                RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
+                if (akBook) {
+                    if (akBook->TeachesSpell()) {
+                        if (akBook->GetSpell() == akSpell) {
+                            return akBook;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+std::vector<RE::TESObjectBOOK*> GetSpellTomesForSpell(RE::StaticFunctionTag*, RE::SpellItem* akSpell) {
+    std::vector<RE::TESObjectBOOK*> v;
+
+    if (!akSpell) {
+        logger::warn("{} akSpell doesn't exist.", __func__);
+        return v;
+    }
+
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+
+            if (baseForm) {
+                RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
+                if (akBook) {
+                    if (akBook->TeachesSpell()) {
+                        if (akBook->GetSpell() == akSpell) {
+                            v.push_back(akBook);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return v;
+}
+
+void AddSpellTomesForSpellToList(RE::StaticFunctionTag*, RE::SpellItem* akSpell, RE::BGSListForm* akList) {
+    if (!akSpell) {
+        logger::warn("{} akSpell doesn't exist.", __func__);
+        return;
+    }
+
+    if (!akList) {
+        logger::warn("{} akList doesn't exist.", __func__);
+        return;
+    }
+
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+
+            if (baseForm) {
+                RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
+                if (akBook) {
+                    if (akBook->TeachesSpell()) {
+                        if (akBook->GetSpell() == akSpell) {
+                            akList->AddForm(akBook);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+std::string GetBookSkill(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook) {
+    logger::info("{} called", __func__);
+
+    if (!akBook) {
+        logger::warn("{} akBook doesn't exist.", __func__);
+        return "";
+    }
+
+    if (skillBooksMap.find(akBook) != skillBooksMap.end()) {
+        return ActorValueIntsMap[(skillBooksMap[akBook])];
+    }
+    return "";
+}
+
+void SetBookSkillInt(RE::TESObjectBOOK* akBook, int value, std::string skill = "", bool addToSkillBooksMap = true) {
+    if (value == -1) {
+        akBook->data.flags.reset(RE::OBJ_BOOK::Flag::kAdvancesActorValue);
+        akBook->RemoveChange(RE::TESObjectBOOK::ChangeFlags::kTeachesSkill);
+        if (addToSkillBooksMap) {
+            skillBooksMap[akBook] = value;
+        }
+        logger::info("{} book[{}] ID[{:x}] no longer teaches skill", __func__, GetFormName(akBook), akBook->GetFormID());
+        return;
+    }
+    else if (value < -1 || value > 163) {
+        logger::info("{} skill[{}] value[{}] not recognized", __func__, skill, value);
+        return;
+    }
+
+    akBook->data.teaches.actorValueToAdvance = static_cast<RE::ActorValue>(value);
+    if (addToSkillBooksMap) {
+        skillBooksMap[akBook] = value;
+    }
+    akBook->data.flags.set(RE::OBJ_BOOK::Flag::kAdvancesActorValue);
+    akBook->AddChange(RE::TESObjectBOOK::ChangeFlags::kTeachesSkill);
+}
+
+void SetBookSkill(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, std::string actorValue) {
+    logger::info("{} called", __func__);
+
+    if (!akBook) {
+        logger::warn("{} akBook doesn't exist.", __func__);
+        return;
+    }
+
+    int value = GetActorValueInt(actorValue);
+    SetBookSkillInt(akBook, value, actorValue);
+}
+
+std::vector<RE::TESObjectBOOK*> GetSkillBooksForSkill(RE::StaticFunctionTag*, std::string actorValue) {
+    std::vector<RE::TESObjectBOOK*> v;
+
+    int value = GetActorValueInt(actorValue);
+    logger::info("{} actorValue = {} int value = {}", __func__, actorValue, value);
+
+    if (value < 0) {
+        logger::warn("{} actorValue [{}] not recognized", __func__, actorValue);
+        return v;
+    }
+    
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+
+            if (baseForm) {
+                RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
+                if (akBook) {
+                    if (skillBooksMap.find(akBook) != skillBooksMap.end()) {
+                        if (skillBooksMap[akBook] == value) {
+                            v.push_back(akBook);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return v;
+}
+
+void AddSkillBookForSkillToList(RE::StaticFunctionTag*, std::string actorValue, RE::BGSListForm* akList) {
+    if (!akList) {
+        logger::warn("{} akList doesn't exist.", __func__);
+        return;
+    }
+
+    int value = GetActorValueInt(actorValue);
+    logger::info("{} actorValue = {} int value = {}", __func__, actorValue, value);
+
+    if (value < 0) {
+        logger::warn("{} actorValue [{}] not recognized", __func__, actorValue);
+        return;
+    }
+
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+
+            if (baseForm) {
+                RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
+                if (akBook) {
+                    if (skillBooksMap.find(akBook) != skillBooksMap.end()) {
+                        if (skillBooksMap[akBook] == value) {
+                            akList->AddForm(akBook);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void SetBookRead(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, bool read) {
+    if (!akBook) {
+        logger::warn("{} akBook doesn't exist.", __func__);
+        return;
+    }
+
+    if (read) {
+        if (!akBook->IsRead()) {
+            akBook->data.flags.set(RE::OBJ_BOOK::Flag::kHasBeenRead);
+            akBook->AddChange(RE::TESObjectBOOK::ChangeFlags::kRead);
+
+            if (skillBooksMap.find(akBook) != skillBooksMap.end()) { //book is a skill book
+                SetBookSkillInt(akBook, -1, "", false);
+            }
+        }
+    }
+    else {
+        if (akBook->IsRead()) {
+            akBook->data.flags.reset(RE::OBJ_BOOK::Flag::kHasBeenRead);
+            akBook->RemoveChange(RE::TESObjectBOOK::ChangeFlags::kRead);
+
+            if (skillBooksMap.find(akBook) != skillBooksMap.end()) { //book is a skill book
+                SetBookSkillInt(akBook, skillBooksMap[akBook]);
+            }
+        }
+    }
+}
+
+void SetAllBooksRead(RE::StaticFunctionTag*, bool read) {
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+
+            if (baseForm) {
+                RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
+                SetBookRead(nullptr, akBook, read);
             }
         }
     }
@@ -1828,7 +2505,7 @@ MenuModeTimer* GetTimer(std::vector<MenuModeTimer*>& v, RE::VMHandle akHandle, i
     return nullptr;
 }
 
-bool SaveTimers(std::vector<MenuModeTimer*> &v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+bool SaveTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
     if (!a_intfc->OpenRecord(record, 1)) {
         logger::error("{}: MenuModeTimers Failed to open record[{}]", __func__, record);
         return false;
@@ -1948,7 +2625,7 @@ bool loadTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
             logger::error("{}: {}: MenuModeTimer Failed to load timeLeft!", __func__, i);
             return false;
         }
-        
+
         if (!a_intfc->ReadRecordData(timeElapsed)) {
             logger::error("{}: {}: MenuModeTimer Failed to load timeElapsed!", __func__, i);
             return false;
@@ -2386,7 +3063,7 @@ struct Timer {
             StartTimer();
         }
         else {
-            lastPausedTimeCheckSet = true; 
+            lastPausedTimeCheckSet = true;
             lastPausedTimeCheck = std::chrono::system_clock::now();
         }
     }
@@ -2752,7 +3429,7 @@ struct GameTimeTimer {
             startTime = calendar->GetHoursPassed();
             endTime = startTime + afInterval;
         }
-        
+
         float secondsInterval = GameHoursToRealTimeSeconds(nullptr, afInterval);
         int milliTick = (secondsInterval * 1000);
 
@@ -2892,7 +3569,7 @@ bool SaveTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
 
     for (auto* timer : v) {
         if (timer) {
-            
+
             if (!a_intfc->WriteRecordData(timer->startTime)) {
                 logger::error("{}: record[{}] Failed to write startTime", __func__, record);
                 return false;
@@ -3047,7 +3724,7 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
             continue;
         }
 
-         GameTimeTimer* timer = new GameTimeTimer(handle, initGameHoursInterval, ID, startTime, endTime);
+        GameTimeTimer* timer = new GameTimeTimer(handle, initGameHoursInterval, ID, startTime, endTime);
         v.push_back(timer);
 
         logger::debug("gameTimer loaded: startTime[{}], endTime[{}], initGameHoursInterval[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
@@ -5035,17 +5712,17 @@ struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
 
 std::vector<std::string> actionSlotStrings{"left", "right", "voice"};
 std::vector<std::string> actionTypeStrings{
-"kWeaponSwing",
-"SpellCast",
-"SpellFire",
-"VoiceCast",
-"VoiceFire",
-"BowDraw",
-"BowRelease",
-"BeginDraw",
-"EndDraw",
-"BeginSheathe",
-"EndSheathe"};
+    "kWeaponSwing",
+        "SpellCast",
+        "SpellFire",
+        "VoiceCast",
+        "VoiceFire",
+        "BowDraw",
+        "BowRelease",
+        "BeginDraw",
+        "EndDraw",
+        "BeginSheathe",
+        "EndSheathe"};
 
 struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
     RE::BSEventNotifyControl ProcessEvent(const SKSE::ActionEvent* event, RE::BSTEventSource<SKSE::ActionEvent>*/*source*/) {
@@ -5177,7 +5854,7 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
             logger::error("MenuOpenClose Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
-        
+
         logger::debug("Menu Open Close Event, menu[{}], opened[{}]", event->menuName, event->opening);
 
         if (event->menuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
@@ -5923,7 +6600,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("IsWhiteSpace", "DbSkseFunctions", IsWhiteSpace);
     vm->RegisterFunction("CountWhiteSpaces", "DbSkseFunctions", CountWhiteSpaces);
     vm->RegisterFunction("GameHoursToRealTimeSeconds", "DbSkseFunctions", GameHoursToRealTimeSeconds);
-    vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused); 
+    vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused);
     vm->RegisterFunction("IsInMenu", "DbSkseFunctions", IsInMenu);
     vm->RegisterFunction("GetLastMenuOpened", "DbSkseFunctions", GetLastMenuOpened);
     vm->RegisterFunction("SetMapMarkerName", "DbSkseFunctions", SetMapMarkerName);
@@ -5945,6 +6622,16 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetWordOfPowerTranslation", "DbSkseFunctions", GetWordOfPowerTranslation);
     vm->RegisterFunction("UnlockShout", "DbSkseFunctions", UnlockShout);
     vm->RegisterFunction("AddAndUnlockAllShouts", "DbSkseFunctions", AddAndUnlockAllShouts);
+    vm->RegisterFunction("GetSpellTomeForSpell", "DbSkseFunctions", GetSpellTomeForSpell);
+    vm->RegisterFunction("SetBookSpell", "DbSkseFunctions", SetBookSpell);
+    vm->RegisterFunction("GetSpellTomesForSpell", "DbSkseFunctions", GetSpellTomesForSpell);
+    vm->RegisterFunction("AddSpellTomesForSpellToList", "DbSkseFunctions", AddSpellTomesForSpellToList);
+    vm->RegisterFunction("GetSkillBooksForSkill", "DbSkseFunctions", GetSkillBooksForSkill);
+    vm->RegisterFunction("AddSkillBookForSkillToList", "DbSkseFunctions", AddSkillBookForSkillToList);
+    vm->RegisterFunction("SetBookSkill", "DbSkseFunctions", SetBookSkill);
+    vm->RegisterFunction("GetBookSkill", "DbSkseFunctions", GetBookSkill);
+    vm->RegisterFunction("SetBookRead", "DbSkseFunctions", SetBookRead);
+    vm->RegisterFunction("SetAllBooksRead", "DbSkseFunctions", SetAllBooksRead);
     vm->RegisterFunction("GetActiveEffectSource", "DbSkseFunctions", GetActiveEffectSource);
     vm->RegisterFunction("GetActiveEffectCastingSource", "DbSkseFunctions", GetActiveEffectCastingSource);
     vm->RegisterFunction("SetSoulGemSize", "DbSkseFunctions", SetSoulGemSize);
@@ -6002,7 +6689,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("UnregisterActiveMagicEffectForGlobalEvent_All", "DbSkseEvents", UnregisterActiveMagicEffectForGlobalEvent_All);
 
     //timers
-    
+
     //form
     vm->RegisterFunction("StartTimer", "DbFormTimer", StartTimerOnForm);
     vm->RegisterFunction("CancelTimer", "DbFormTimer", CancelTimerOnForm);
@@ -6100,6 +6787,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         //SendLoadGameEvent();
         //CreateEventSinks();
         bPlayerIsInCombat = player->IsInCombat();
+        
         break;
 
         //case SKSE::MessagingInterface::kSaveGame:
@@ -6125,6 +6813,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         SKSE::GetPapyrusInterface()->Register(BindPapyrusFunctions);
         CreateEventSinks();
         SetSettingsFromIniFile();
+        SaveSkillBooks();
         logger::info("kDataLoaded: sent after the data handler has loaded all its forms");
         break;
 
@@ -6182,12 +6871,12 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     for (int i = EventEnum_First; i < max; i++) {
         eventDataPtrs[i]->Save(a_intfc);
     }
-    
+
     SaveTimers(currentMenuModeTimers, 'DBT0', a_intfc);
     SaveTimers(currentNoMenuModeTimers, 'DBT1', a_intfc);
     SaveTimers(currentTimers, 'DBT2', a_intfc);
     SaveTimers(currentGameTimeTimers, 'DBT3', a_intfc);
-} 
+}
 
 //init================================================================================================================================================================
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
@@ -6202,5 +6891,6 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     serialization->SetSaveCallback(SaveCallback);
     serialization->SetLoadCallback(LoadCallback);
 
+    
     return true;
 }

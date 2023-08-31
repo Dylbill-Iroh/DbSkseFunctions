@@ -96,6 +96,206 @@ function UnlockShout(shout akShout) Global Native
 ;default is adding and unlocking ALL shouts found in game to player
 function AddAndUnlockAllShouts(int minNumberOfWordsWithTranslations = 0, bool onlyShoutsWithNames = false, bool onlyShoutsWithDescriptions = false) Global Native 
 
+;/
+valid skills for use with the 'string skill' params in following book functions
+aggression  
+confidence  
+energy  
+morality  
+mood  
+assistance  
+onehanded  
+twohanded  
+marksman  
+block  
+smithing  
+heavyarmor  
+lightarmor  
+pickpocket  
+lockpicking  
+sneak  
+alchemy  
+speechcraft  
+alteration  
+conjuration  
+destruction  
+illusion  
+restoration  
+enchanting  
+health  
+magicka  
+stamina  
+healrate  
+magickarate  
+staminarate  
+speedmult  
+inventoryweight  
+carryweight  
+criticalchance  
+meleedamage  
+unarmeddamage  
+mass  
+voicepoints  
+voicerate  
+damageresist  
+poisonresist  
+resistfire  
+resistshock  
+resistfrost  
+resistmagic  
+resistdisease  
+perceptioncondition  
+endurancecondition  
+leftattackcondition  
+rightattackcondition  
+leftmobilitycondition  
+rightmobilitycondition  
+braincondition  
+paralysis  
+invisibility  
+nighteye  
+detectliferange  
+waterbreathing  
+waterwalking  
+ignorecrippledlimbs  
+fame  
+infamy  
+jumpingbonus  
+wardpower  
+rightitemcharge  
+armorperks  
+shieldperks  
+warddeflection  
+variable01  
+variable02  
+variable03  
+variable04  
+variable05  
+variable06  
+variable07  
+variable08  
+variable09  
+variable10  
+bowspeedbonus  
+favoractive  
+favorsperday  
+favorsperdaytimer  
+leftitemcharge  
+absorbchance  
+blindness  
+weaponspeedmult  
+shoutrecoverymult  
+bowstaggerbonus  
+telekinesis  
+favorpointsbonus  
+lastbribedintimidated  
+lastflattered  
+movementnoisemult  
+bypassvendorstolencheck  
+bypassvendorkeywordcheck  
+waitingforplayer  
+onehandedmodifier  
+twohandedmodifier  
+marksmanmodifier  
+blockmodifier  
+smithingmodifier  
+heavyarmormodifier  
+lightarmormodifier  
+pickpocketmodifier  
+lockpickingmodifier  
+sneakingmodifier  
+alchemymodifier  
+speechcraftmodifier  
+alterationmodifier  
+conjurationmodifier  
+destructionmodifier  
+illusionmodifier  
+restorationmodifier  
+enchantingmodifier  
+onehandedskilladvance  
+twohandedskilladvance  
+marksmanskilladvance  
+blockskilladvance  
+smithingskilladvance  
+heavyarmorskilladvance  
+lightarmorskilladvance  
+pickpocketskilladvance  
+lockpickingskilladvance  
+sneakingskilladvance  
+alchemyskilladvance  
+speechcraftskilladvance  
+alterationskilladvance  
+conjurationskilladvance  
+destructionskilladvance  
+illusionskilladvance  
+restorationskilladvance  
+enchantingskilladvance  
+leftweaponspeedmultiply  
+dragonsouls  
+combathealthregenmultiply  
+onehandedpowermodifier  
+twohandedpowermodifier  
+marksmanpowermodifier  
+blockpowermodifier  
+smithingpowermodifier  
+heavyarmorpowermodifier  
+lightarmorpowermodifier  
+pickpocketpowermodifier  
+lockpickingpowermodifier  
+sneakingpowermodifier  
+alchemypowermodifier  
+speechcraftpowermodifier  
+alterationpowermodifier  
+conjurationpowermodifier  
+destructionpowermodifier  
+illusionpowermodifier  
+restorationpowermodifier  
+enchantingpowermodifier  
+dragonrend  
+attackdamagemult  
+healratemult  
+magickarate  
+staminarate  
+werewolfperks  
+vampireperks  
+grabactoroffset  
+grabbed  
+deprecated05  
+reflectdamage  
+/;
+
+string function GetBookSkill(book akBook) Global Native 
+
+;sets the skill book teaches. If skill is "", removes TeachesSkill flag from book. (Book will no longer teach a skill.)
+;not save persistent, use a load game event for maintenance
+function SetBookSkill(book akBook, string skill) Global Native 
+
+;get all books that teach the skill
+book[] function GetSkillBooksForSkill(string skill) Global Native 
+
+;add all books that teach skill to akList
+function AddSkillBookForSkillToList(string skill, formlist akList) Global Native 
+
+;Sets spell book tome teaches. If akSpell is none, removes TeachesSpell flag from book. (Book will no longer teach a spell.)
+;not save persistent, use a load game event for maintenance
+function SetBookSpell(book akBook, spell akSpell) Global Native 
+
+;get the first spell tome found that teaches akSpell, or none if not found.
+Book function GetSpellTomeForSpell(spell akSpell) Global Native 
+
+;get all spell tomes that teach akSpell, or empty array if none found.
+Book[] function GetSpellTomesForSpell(spell akSpell) Global Native 
+
+;add all spell tomes that teach akSpell to akList
+function AddSpellTomesForSpellToList(spell akSpell, FormList akList) Global Native 
+
+;if read is true, set akBook  as 'read', otherwise set akBook as 'unread'
+;if read is false and akBook is a skill book, the skill from the book can be increased again when reading.
+function SetBookRead(book akBook, bool read) Global Native
+
+;if read is true, set all books in game as 'read', otherwise set all books in game as 'unread'
+function SetAllBooksRead(bool read) Global Native
+
 ;not working currently, don't use. Will fix later.
 ActiveMagicEffect[] Function GetActiveEffectsOnActor(Actor akActor, Actor casterFilter = none, spell SpellFilter = none, MagicEffect effectFilter = none, bool MatchAll = true) Global Native
 
@@ -159,8 +359,6 @@ SoundCategory Function GetSoundCategoryForSoundDescriptor(SoundDescriptor akSoun
 Function SetSoundCategoryForSoundDescriptor(SoundDescriptor akSoundDescriptor, SoundCategory akSoundCategory) Global Native 
 Float Function GetSoundCategoryVolume(SoundCategory akSoundCategory) Global Native 
 Float Function GetSoundCategoryFrequency(SoundCategory akSoundCategory) Global Native 
-
-
 
 ;/map marker icon types:
 kNone = 0,
@@ -232,7 +430,6 @@ blue arrow = 65
 player flashing arrow = 66
 Big circle = any other value
 /;
-
 
 ;returns true if Ref has map data.
 bool function IsMapMarker(ObjectReference Ref) Global Native 
