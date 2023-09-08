@@ -11,7 +11,57 @@ Bool Function SetClipBoardText(String s) Global Native
 ;is the string c char whitespace? Uses c++ isspace function
 Bool Function IsWhiteSpace(String c) Global Native 
 int Function CountWhiteSpaces(String s) Global Native
+
+;returns new form array that contains the forms of the passed in akForms array, but sorted. 
+;Sort options are as follows. 1 = by form name ascending, 2 = by form name descending, 3 = by form Id ascending, 4 = by form Id descending
+Form[] Function SortFormArray(Form[] akForms, int sortOption = 1) Global Native
+
+;if maxCharacters is greater than 0, limits the number of characters for descriptions. 
+;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
+;if newLineReplacer is not empty "", replaces new lines in description with newLineReplacer
+;if formIdIfNone is true and a description is empty, "", gets form ID instead of the description
+String Function GetFormDescription(form akForm, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ", bool formIdIfNone = false) Global Native
+
+;get form descriptions for akForms
+;if maxCharacters is greater than 0, limits the number of characters for descriptions. 
+;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
+;if formIdIfNone is true and a description is empty, "", gets form ID instead of the description for that form.
+;Sort options are as follows. 0 = not sorted, 1 = sorted by description ascending, 2 = sorted by description descending, 3 = sorted by form name ascending, 4 = sorted by form name descending.
+String[] Function GetFormDescriptions(Form[] akForms, int sortOption = 0, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ", bool formIdIfNone = false) Global Native
+
+;get form names for akForms
+;if formIdIfNone is true and a name is empty, "", get's form ID instead of the name for that form.
+;Sort options are as follows. 0 = not sorted, 1 = sorted by name ascending, 2 = sorted by name descending.
+String[] Function GetFormNames(Form[] akForms, int sortOption = 0, bool formIdIfNone = false) Global Native
+
+;Sort options are as follows. 0 = not sorted, 1 = sorted by name ascending, 2 = sorted by name descending.
+String[] Function GetLoadedModNames(int sortOption = 0) Global Native
+
+;Sort options are as follows. 0 = not sorted, 1 = sorted by name ascending, 2 = sorted by name descending.
+String[] Function GetLoadedLightModNames(int sortOption = 0) Global Native
+
+;Get all loaded mod names, (regular mods and light mods)
+;Sort options are as follows. 0 = not sorted, 1 = sorted by name ascending, 2 = sorted by name descending.
+String[] Function GetAllLoadedModNames(int sortOption = 0) Global Native
+
+;get loaded mod descriptions.
+;if maxCharacters is greater than 0, limits the number of characters for descriptions. 
+;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
+;Sort options are as follows. 0 = not sorted, 1 = sorted by Description ascending, 2 = sorted by Description descending, 3 sorted by mod name ascending, 4 = sorted by mod name descending.
+String[] Function GetLoadedModDescriptions(int sortOption = 0, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ") Global Native
    
+;get loaded light mod descriptions. 
+;if maxCharacters is greater than 0, limits the number of characters for descriptions. 
+;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
+;Sort options are as follows. 0 = not sorted, 1 = sorted by Description ascending, 2 = sorted by Description descending, 3 sorted by mod name ascending, 4 = sorted by mod name descending.
+String[] Function GetLoadedLightModDescriptions(int sortOption = 0, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ") Global Native
+
+;get all loaded mod descriptions, (regular mods and light mods)
+;if maxCharacters is greater than 0, limits the number of characters for descriptions. 
+;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
+;Sort options are as follows. 0 = not sorted, 1 = sorted by Description ascending, 2 = sorted by Description descending, 3 sorted by mod name ascending, 4 = sorted by mod name descending.
+String[] Function GetAllLoadedModDescriptions(int sortOption = 0, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ") Global Native
+
 ;Calculate how many real time seconds it will take for gameHours to pass based on current time scale.
 ;Example - with default time scale (20), GameHoursToRealTimeSeconds(1) returns 180.0
 float Function GameHoursToRealTimeSeconds(float gameHours) Global Native

@@ -1,268 +1,5 @@
 Scriptname DbMiscFunctions Hidden 
 
-;/List of functions: =================================================================================================================
-Function MoveToLocalOffset(ObjectReference RefToMove, ObjectReference CenterRef, Float Angle, Float Distance, float afZOffset = 0.0, bool abMatchRotation = true) global  
-Function ApplyHavokImpulseLocal(ObjectReference Ref, Float Angle, float afZ, Float afMagnitude) Global
-Bool Function ToggleCreationKitMarkers(Bool ShowMarkers = true, ObjectReference MoveToRef = none) Global
-ObjectReference Function CreateXMarkerRef(Bool PersistentRef = false, ObjectReference PlaceAtMeRef = none) Global
-Function DropAllItems(ObjectReference Ref, bool dropIndividual = false, float delay = 0.01) Global
-Function DropAllItems_P03(ObjectReference Ref, bool noEquipped = true, bool noFavourited = false, bool noQuestItem = false, bool dropIndividual = false, float delay = 0.01) Global
-Function DropIndividualItems(ObjectReference Ref, Form Item, int NumOfItems = 0, float delay = 0.01) Global
-Bool Function LocationOrParentsHasKeyword(Location akLocation, Keyword akKeyword) global
-Bool Function akFormHasKeywordString(Form akForm, String akString)  global
-Bool Function FormHasKeywordInFormList(Form akForm, Formlist akList, Bool AllKeywords = False) Global 
-Bool Function FormHasKeywordInArray(Form akForm, Keyword[] akList, Bool AllKeywords = False) Global
-Bool Function FormHasKeywordInStorageUtilList(Form akForm, Form ObjKey, String ListKeyName, Bool AllKeywords = False) Global
-Bool Function FormHasKeywordInJsonUtilList(Form akForm, String JsonFilePath, String ListKeyName, Bool AllKeywords = False) Global
-Bool Function IsNumber(String akString, Bool AllowForDecimals = True, Bool AllowNegativeNumbers = True) global
-Int Function ClampInt(Int i, Int Min, Int Max) Global
-Float Function ClampFloat(Float f, Float Min, Float Max) Global
-Bool Function IsIntInRange(Int I, Int Min, Int Max) Global
-Bool Function IsFloatInRange(Float f, Float Min, Float Max) Global 
-Bool Function IsStringIndexBetween(String s, Int Index, String StartKey, String EndKey) Global
-String function ConvertIntToHex(int i, int minDigits = 8) Global
-Int function ConvertHexToInt(string hex, Bool TreatAsNegative = false) global
-String Function GetFormIDHex(Form akForm) Global
-Int Function IntPow(Int x, Int y) Global
-Int Function IntSqrt(Int i) Global 
-Int Function IntAbs(Int i) Global 
-int function RoundAsInt(Float f) Global
-float function RoundAsFloat(Float f) Global
-Float Function RoundDownToDec(Float f, Int DecimalPlaces = 0) Global 
-String Function RoundDownToDecString(Float f, Int DecimalPlaces = 0) Global 
-Int Function CountDecimalPlaces(Float f) Global
-Float[] Function SplitAsFloat(String s, int Max = -1, String Divider = "||") Global
-Int[] Function SplitAsInt(String s, int Max = -1, String Divider = "||") Global
-String[] Function SortStringArray(String[] akArray, Bool Ascending = true, Bool Direct = true) Global
-String[] Function CopyStringArray(String[] akArray) Global
-String Function JoinStringArray(String[] akArray, String Divider = "||", Bool IgnoreDuplicates = false) Global
-String Function JoinFloatArray(Float[] akArray, String Divider = "||", Bool IgnoreDuplicates = false) Global
-String Function JoinIntArray(Int[] akArray, String Divider = "||", Bool IgnoreDuplicates = false) Global
-
-Function PrintT(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
-String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ", int aiSeverity = 0) Global
-
-Function PrintTU(string asUserLog = "", String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
-String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ", int aiSeverity = 0) Global
-
-Function PrintN(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
-String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ") Global
-
-Function PrintM(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
-String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ") Global
-
-Function PrintEvm(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
-String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ") Global
-
-Function PrintF(String FilePath, String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
-String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ") Global
-
-String Function JoinStrings(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
-String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ") Global
-
-Int[] Function GetGameActorSoulLevels() Global
-String[] Function GetGameSoulLevelNames() Global
-Int Function GetActorSoulSize(Actor akActor) Global 
-String Function GetActorSoulSizeString(Actor akActor, String sBlackSize = "Black") Global
-Bool Function IsActorNPC(Actor akActor) Global
-Bool Function IsActorMoving(Actor akActor) Global 
-Form Function GetRandomFormFromRef(ObjectReference Ref, Int[] TypeArrayFilter = None, Formlist ListFilter = None, Bool TypeFilterHasType = true, Bool akListHasForm = true) Global
-Form Function GetRandomFormFromRefA(ObjectReference Ref, Int[] TypeArrayFilter = None, Form[] ListFilter = None, Bool TypeFilterHasType = true, Bool akListHasForm = true) Global
-Form Function GetRandomFormFromRefS(ObjectReference Ref, Int[] TypeArrayFilter = None, Form ObjKey = None, String ListKeyName = "", Bool TypeFilterHasType = true, Bool akListHasForm = true) Global
-Form Function GetRandomFormFromRefJ(ObjectReference Ref, Int[] TypeArrayFilter = None, String JsonFilePath = "", String ListKeyName = "", Bool TypeFilterHasType = true, Bool akListHasForm = true) Global
-Function SortActorArrayByName(Actor[] akArray, Bool Ascending = true) Global
-Function SortObjectRefArrayByName(ObjectReference[] akArray, Bool Ascending = true) Global
-Function SortFormArrayByName(Form[] akArray, Bool Ascending = true) Global
-String[] Function GetActorNames(Actor[] akArray) Global
-String[] Function GetObjectRefNames(ObjectReference[] akArray) Global
-String[] Function GetFormNames(Form[] akArray) Global
-String[] Function GetFormNamesFromList(Formlist akList) Global
-Form[] Function FormlistToArray(Formlist akList) Global 
-Function AddFormArrayFormsToList(Form[] akArray, Formlist akList) Global
-Function RegisterFormForKeys(Form akForm, Int min = 1, Int Max = 281) Global
-Function RegisterAliasForKeys(Alias akAlias, Int min = 1, Int Max = 281) Global
-Function RegisterActiveMagicEffectForKeys(ActiveMagicEffect akActiveMagicEffect, Int min = 1, Int Max = 281) Global
-
-Function SwapStrings(String[] akArray, Int IndexA, Int IndexB)
-Function SwapStringsV(String[] akArray, Int IndexA, Int IndexB) 
-Function SwapBools(Bool[] akArray, Int IndexA, Int IndexB)
-Function SwapBoolsV(Bool[] akArray, Int IndexA, Int IndexB) 
-Function SwapInts(Int[] akArray, Int IndexA, Int IndexB)
-Function SwapIntsV(Int[] akArray, Int IndexA, Int IndexB) 
-Function SwapFloats(Float[] akArray, Int IndexA, Int IndexB)
-Function SwapFloatsV(Float[] akArray, Int IndexA, Int IndexB) 
-Function SwapActors(Actor[] akArray, Int IndexA, Int IndexB)
-Function SwapActorsV(Actor[] akArray, Int IndexA, Int IndexB) 
-Function SwapObjectReferences(ObjectReference[] akArray, Int IndexA, Int IndexB)
-Function SwapObjectReferencesV(ObjectReference[] akArray, Int IndexA, Int IndexB) 
-Function SwapForms(Form[] akArray, Int IndexA, Int IndexB)
-Function SwapFormsV(Form[] akArray, Int IndexA, Int IndexB) 
-
-int function JsonIntListPluck(string FileName, string KeyName, int index, int default = 0) global 
-Float function JsonFloatListPluck(string FileName, string KeyName, int index, Float default = 0.0) global 
-string function JsonStringListPluck(string FileName, string KeyName, int index, string default = "") global 
-Form function JsonFormListPluck(String FileName, String KeyName, int index, Form default = none) global 
-
-int function JsonintListShift(string FileName, string KeyName, int default = 0) global 
-Float function JsonFloatListShift(string FileName, string KeyName, Float default = 0.0) global 
-String function JsonStringListShift(string FileName, string KeyName, String default = "") global 
-Form function JsonFormListShift(string FileName, string KeyName, Form default = none) global 
-
-Int function JsonIntListPop(string FileName, string KeyName, Int default = 0) global 
-Float function JsonFloatListPop(string FileName, string KeyName, Float default = 0.0) global 
-String function JsonStringListPop(string FileName, string KeyName, String default = "") global 
-Form function JsonFormListPop(string FileName, string KeyName, Form default = none) global 
-
-Function JsonIntListRemoveAllDuplicates(string FileName, string KeyName, Bool Acending = True) Global
-Function JsonFloatListRemoveAllDuplicates(String FileName, String KeyName, Bool Acending = True) Global
-Function JsonStringListRemoveAllDuplicates(string FileName, string KeyName, Bool Acending = True) Global
-Function JsonFormListRemoveAllDuplicates(String FileName, String KeyName, Bool Acending = True) Global
-
-String Function JsonJoinIntList(string FileName, string KeyName, string Divider = "||") Global
-String Function JsonJoinFloatList(string FileName, string KeyName, string Divider = "||") Global
-String Function JsonJoinStringList(string FileName, string KeyName, string Divider = "||") Global
-
-String Function GetFormTypeString(Int Type, String sFilePath = "Data/interface/DbMiscFunctions/DbFormTypeStrings.txt") Global
-String Function GetKeyCodeString(Int keyCode, String sFilePath = "Data/interface/DbMiscFunctions/DbKeyCodeStrings.txt") Global
-String Function GetModOriginName(Form akForm) Global
-
-get common form types without skse. See the actual functions for which types they return. Different from skse's Form.GetType()
-int Function GetActorFormType(Form F) Global
-int Function GetAudioFormType(Form F) Global
-int Function GetCharacterFormType(Form F) Global
-int Function GetItemFormType(Form F) Global
-int Function GetMagicFormType(Form F) Global
-int Function GetMiscFormType(Form F) Global
-int Function GetSpecialEffectFormType(Form F) Global
-int Function GetWorldDataFormType(Form F) Global
-int Function GetWorldObjectFormType(Form F) Global
-int Function GetInventoryItemFormType(Form F) Global
-Int Function GetFormTypeAll(Form F) Global
-
-String Function GetActorFormTypeString(Form F, String[] TypeStrings = none) Global
-String Function GetAudioFormTypeString(Form F, String[] TypeStrings = none) Global
-String Function GetCharacterFormTypeString(Form F, String[] TypeStrings = none) Global
-String Function GetItemFormTypeString(Form F, String[] TypeStrings = none) Global
-String Function GetMagicFormTypeString(Form F, String[] TypeStrings = none) Global
-String Function GetMiscFormTypeString(Form F, String[] TypeStrings = none) Global
-String Function GetSpecialEffectFormTypeString(Form F, String[] TypeStrings = none) Global
-String Function GetWorldDataFormTypeString(Form F, String[] TypeStrings = none) Global
-String Function GetWorldObjectFormTypeString(Form F, String[] TypeStrings = none) Global
-String Function GetInventoryItemFormTypeString(Form F, String[] TypeStrings = none) Global
-string Function GetFormTypeStringAll(Form F, String[] TypeStrings = none) Global
-
-Function DisableThenEnablePlayerControls(Float Delay = 1.0) Global
-Function UpdateActor(Actor akActor, Form akForm) Global
-Function SwapEquipment(Actor A, Actor B) Global
-Function SetActorValues(Actor akActor, String[] ActorValues, Float[] Values) Global
-Function ModActorValues(Actor akActor, String[] ActorValues, Float[] Values) Global
-Float[] Function GetActorValues(Actor akActor, String[] ActorValues, DynamicArrays DArrays = none) Global
-String[] Function GetActorValueStrings(Actor akActor, String[] ActorValues, String[] ActorValueStrings = none, DynamicArrays DArrays = none) Global
-String Function sGetActorValueStrings(Actor akActor, String[] ActorValues, String[] ActorValueStrings = none, String Divider = "||") Global
-Float[] Function GetBaseActorValues(Actor akActor, String[] ActorValues, DynamicArrays DArrays = none) Global
-String[] Function GetBaseActorValueStrings(Actor akActor, String[] ActorValues, String[] ActorValueStrings = none, DynamicArrays DArrays = none) Global
-String Function sGetBaseActorValueStrings(Actor akActor, String[] ActorValues, String[] ActorValueStrings = none, String Divider = "||") Global
-Float[] Function GetActorValuesFromFile(Actor akActor, String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt") Global
-String[] Function GetActorValueStringsFromFile(Actor akActor, String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt") Global
-String Function sGetActorValueStringsFromFile(Actor akActor, String Divider = "||", String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt") Global
-Float[] Function GetBaseActorValuesFromFile(Actor akActor, String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt") Global
-String[] Function GetBaseActorValueStringsFromFile(Actor akActor, String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt") Global
-String Function sGetBaseActorValueStringsFromFile(Actor akActor, String Divider = "||", String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt") Global
-
-Function AttachPapyrusScript(String akScript, ObjectReference Ref) Global
-Function OpenMenu(string menuName) Global
-Function CloseMenu(string menuName) Global
-
-Int Function FindLastStringIndex(String s, String ToFind) Global
-Int Function FindWholeWordString(String s, String ToFind, Int StartIndex = 0) Global
-Bool Function IsCharWhiteSpace(String C) Global
-String Function FindNextWordInString(String s, int startIndex = 0) global 
-String Function RFindNextWordInString(String s, int startIndex = -1) global 
-Int function FindNextNonWhiteSpaceCharIndexInString(String s, int startIndex = 0) global
-Int function RFindNextNonWhiteSpaceCharIndexInString(String s, int startIndex = -1) global
-Int Function FindNextWhiteSpaceCharIndexInString(String s, int startIndex = 0) global
-Int Function RFindNextWhiteSpaceCharIndexInString(String s, int startIndex = -1) global
-String Function FindNextNonWhiteSpaceCharInString(String s, int startIndex = 0) global
-String Function RFindNextNonWhiteSpaceCharInString(String s, int startIndex = -1) global
-String Function FindNextWhiteSpaceCharInString(String s, int startIndex = 0) global
-String Function RFindNextWhiteSpaceCharInString(String s, int startIndex = -1) global
-String Function RemoveWhiteSpaces(String s, Bool IncludeSpaces = True, Bool IncludeTabs = true, Bool IncludeNewLines = true) Global
-Int Function CountWhiteSpaces(String s, Bool IncludeSpaces = True, Bool IncludeTabs = true, Bool IncludeNewLines = true) Global 
-Int Function CountStringsInString(String s, String ToFind, Bool WholeWordsOnly = false) Global
-String Function StringReplace(String TargetStr, String SearchStr, String ReplaceStr, Int Count = 0) Global
-String Function StringInsert(String TargetStr, String InsertStr, Int CharPosition = -1) Global
-String Function StringRemoveCharAt(String s, Int Index) Global
-String Function StringRemoveNonPrintableCharacters(String s) Global
-String Function StringRemovePrintableCharacters(String s) Global
-String Function AddPrefixToString(String s, String Prefix, Bool OnlyIfNotPresent = true) Global
-String Function AddPrefixToStrings(String[] s, String Prefix, Bool OnlyIfNotPresent = true) Global
-String Function RemovePrefixFromString(String s, String Prefix) Global
-String Function RemovePrefixFromStrings(String[] s, String Prefix) Global
-String Function AddSuffixToString(String s, String Suffix, Bool OnlyIfNotPresent = true) Global
-String Function AddSuffixToStrings(String[] s, String Suffix, Bool OnlyIfNotPresent = true) Global
-String Function RemoveSuffixFromString(String s, String Suffix) Global
-String Function RemoveSuffixFromStrings(String[] s, String Suffix) Global
-Function AddPrefixToFormName(Form akForm, String Prefix, Bool OnlyIfNotPresent = true) Global
-Function AddPrefixToFormNames(Form[] akForm, String Prefix, Bool OnlyIfNotPresent = true) Global
-Function RemovePrefixFromFormName(Form akForm, String Prefix) Global
-Function RemovePrefixFromFormNames(Form[] akForm, String Prefix) Global
-Function AddSuffixToFormName(Form akForm, String Suffix, Bool OnlyIfNotPresent = true) Global
-Function AddSuffixToFormNames(Form[] akForm, String Suffix, Bool OnlyIfNotPresent = true) Global
-Function RemoveSuffixFromFormName(Form akForm, String Suffix) Global
-Function RemoveSuffixFromFormNames(Form[] akForm, String Suffix) Global
-Bool Function StringHasPrefix(String s, String Prefix) Global
-Bool Function StringHasSuffix(String s, String Suffix) Global
-
-String Function GetStringFromFile(String StringKey, String FileContents = "", String FilePath = "", String StartKey = "[", String EndKey = "]", String Default = "") global 
-int Function GetIntFromFile(String StringKey, String FileContents = "", String FilePath = "", String StartKey = "[", String EndKey = "]", int Default = -1) global 
-Float Function GetFloatFromFile(String StringKey, String FileContents = "", String FilePath = "", String StartKey = "[", String EndKey = "]", Float Default = -1.0) global 
-String[] Function GetAllStringsFromFile(String FileContents = "", String FilePath = "", String RangeStart = "", String RangeEnd = "", String StartKey = "[", String EndKey = "]", String[] Default = None) global
-Int[] Function GetAllIntsFromFile(String FileContents = "", String FilePath = "", String RangeStart = "", String RangeEnd = "", String StartKey = "[", String EndKey = "]", Int[] Default = None) global
-Float[] Function GetAllFloatsFromFile(String FileContents = "", String FilePath = "", String RangeStart = "", String RangeEnd = "", String StartKey = "[", String EndKey = "]", Float[] Default = None) global
-Bool Function PrintStringKeysToFile(String FilePathToSearch, String FilePathToPrintTo, String StartKey = "[", String EndKey = "]", String FinishedMsg = "Done Printing") global
-Function PrintContainerItemsToFile(ObjectReference akContainer, String FilePath, String ConfirmMessage = "") global
-Function WriteIDsInFormListToFile(Formlist akList, String FilePath, Bool IncludeNames = False, Bool ReplaceIdStartWith0x = true) Global
-Function WriteIDsInFormArrayToFile(Form[] akList, String FilePath, Bool IncludeNames = False, Bool ReplaceIdStartWith0x = true) Global
-Function WriteIDsInStorageUtilListToFile(Form ObjKey, String ListKeyName, String FilePath, Bool IncludeNames = False, Bool ReplaceIdStartWith0x = true) Global 
-Function WriteIDsInJsonUtilListToFile(String JsonFilePath, String ListKeyName, String FilePath, Bool IncludeNames = False, Bool ReplaceIdStartWith0x = true) Global 
-Function WriteAnimationVariableBoolsToFile(ObjectReference akRef, String OutputFilePath, String VariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableBools.txt") Global
-Function WriteAnimationVariableIntsToFile(ObjectReference akRef, String OutputFilePath, String VariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableInts.txt") Global
-Function WriteAnimationVariableFloatsToFile(ObjectReference akRef, String OutputFilePath, String VariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableFloats.txt") Global
-    
-Function WriteAllAnimationVariablesToFile(ObjectReference akRef, String OutputFilePath, String BoolVariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableBools.txt", \
-                                                                                String IntVariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableInts.txt", \
-                                                                                String FloatVariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableFloats.txt") Global
-
-Function RegisterFormForAnimationEvents(Form akForm, ObjectReference akSender, String[] AnimationEvents) Global
-Function RegisterAliasForAnimationEvents(Alias akAlias, ObjectReference akSender, String[] AnimationEvents) Global
-Function RegisterActiveMagicEffectForAnimationEvents(ActiveMagicEffect akActiveMagicEffect, ObjectReference akSender, String[] AnimationEvents) Global
-Function RegisterFormForAnimationEventsFromFile(Form akForm, ObjectReference akSender, String FilePath = "Data/interface/DbMiscFunctions/DbAnimationEvents.txt") Global
-Function RegisterAliasForAnimationEventsFromFile(Alias akAlias, ObjectReference akSender, String FilePath = "Data/interface/DbMiscFunctions/DbAnimationEvents.txt") Global
-Function RegisterActiveMagicEffectForAnimationEventsFromFile(ActiveMagicEffect akActiveMagicEffect, ObjectReference akSender, String FilePath = "Data/interface/DbMiscFunctions/DbAnimationEvents.txt") Global
-
-Function RegisterFormForMenus(Form akForm, String[] Menus) Global
-Function RegisterAliasForMenus(Alias akAlias, String[] Menus) Global
-Function RegisterActiveMagicEffectForMenus(ActiveMagicEffect akActiveMagicEffect, String[] Menus) Global
-Function RegisterFormForMenusFromFile(Form akForm, String FilePath = "Data/interface/DbMiscFunctions/DbMenus.txt") Global
-Function RegisterAliasForMenusFromFile(Alias akAlias, String FilePath = "Data/interface/DbMiscFunctions/DbMenus.txt") Global
-Function RegisterActiveMagicEffectForMenusFromFile(ActiveMagicEffect akActiveMagicEffect, String FilePath = "Data/interface/DbMiscFunctions/DbMenus.txt") Global
-
-Function WriteAllPscDataInFolderToFile(String SearchFolderPath, String TargetFilePath, String Divider = "\n", String DoneMessage = "Done Writing") Global    
-String Function GetPscEventNamesFromFile(String SourceFilePath, String Divider = "\n", int StartIndex = 0) Global
-String Function GetPscFunctionNamesFromFile(String SourceFilePath, String Divider = "\n", int StartIndex = 0) Global
-String Function GetPscDataNamesFromFile(String SourceFilePath, String NameType, String Divider = "\n", int StartIndex = 0) Global
-String Function GetPscEventDefinitionsFromFile(String SourceFilePath, String Divider = "\n", int StartIndex = 0) Global 
-String Function GetPscFunctionDefinitionsFromFile(String SourceFilePath, String Divider = "\n", int StartIndex = 0) Global 
-String Function GetPscDataDefinitionsFromFile(String SourceFilePath, String NameType, String Divider = "\n", int StartIndex = 0) Global
-    
-Function WriteJsonSaveAndLoadFunctionsToFile(String SourceFilePath, String DestinationFilePath = "", \
-    Bool GlobalVariablesToggle = true, Bool FloatsToggle = true, Bool StringsToggle = true, Bool IntsToggle = true, Bool BoolsToggle = true, \
-    Bool GlobalVariableArraysToggle = true, Bool FloatArraysToggle = true, Bool StringArraysToggle = true, Bool IntArraysToggle = true, Bool BoolArraysToggle = true, \
-    int Messages = 0, String ConfirmMessage = "Done Writing Json Functions", Bool UsePropertiesAsDefaults = True) global
-
-===================================================================================================================================================================================
-/;
-
 ;Like MoveTo, but can specifify local angle / distance offset.
 ;If angle == 0.0, moves object in front of CenterRef by Distance
 ;If angle == 90.0 moves object the right of CenterRef by Distance
@@ -431,6 +168,10 @@ Function DropIndividualItems(ObjectReference Ref, Form Item, int NumOfItems = 0,
     EndWhile
 EndFunction
 
+Function MovePlayerTo(ObjectReference Ref)
+    
+EndFunction
+
 ;add shout to player if necessary and unlock all words of power.
 ;requires skse
 Function UnlockShout(shout akShout) Global
@@ -511,6 +252,13 @@ string Function GetFormName(Form akForm, string nullString = "null", string NoNa
 	endif 
 	
 	return GetStringIfNull(name, NoNameString)
+EndFunction
+
+;Returns true if the Mod has at least 1 form of type
+;Requires papyrus extender and skse
+Bool Function ModHasFormType(String modName, int type) global
+    Form[] akForms = po3_skseFunctions.GetAllFormsInMod(ModName, type)
+    return (akForms.length > 0)
 EndFunction
 
 ;Like HasKeywordString but returns true if multiple esp's have keyWords with the same name added.
@@ -1905,6 +1653,18 @@ Function RegisterFormForKeys(Form akForm, Int min = 1, Int Max = 281) Global
     EndWhile
 EndFunction 
 
+;requires skse
+int[] function GetAllKeysPressed() Global
+    int i = input.GetNumKeysPressed()
+    int[] keysPressed = utility.CreateIntArray(i) 
+    While i > 0 
+        i -= 1 
+        keysPressed[i] = input.GetNthKeyPressed(i)
+    EndWhile 
+
+    return keysPressed
+EndFunction
+
 Function RegisterAliasForKeys(Alias akAlias, Int min = 1, Int Max = 281) Global
     If akAlias == none 
         return 
@@ -2322,6 +2082,23 @@ String Function GetFormTypeString(Int Type, String sFilePath = "Data/interface/D
     Return GetStringFromFile(Type, FilePath = sFilePath)
 EndFunction
 
+;requires skse and papyrusUtil. 
+;Get form type strings within a range.
+String[] Function GetFormTypeStrings(String sFilePath = "Data/interface/DbMiscFunctions/DbFormTypeStrings.txt", int startIndex = 0, int endIndex = 134)
+    startIndex -= 1
+    endIndex -= 1
+    string fileContents = MiscUtil.ReadFromFile(sFilePath) 
+    string[] formTypeStrings = utility.CreateStringArray((endIndex - startIndex) + 1)
+    int i = 0
+    while startIndex <= endIndex
+        formTypeStrings[i] = GetStringFromFile(startIndex, fileContents)
+        i += 1
+        startIndex += 1
+    EndWhile 
+
+    return formTypeStrings
+EndFunction
+
 ;requires skse and papyrusUtil. Get the string for keycode. 
 ;Exampe: GetKeyCodeString(28) returns "Enter"
 ;can specify another file other than "Data/interface/DbKeyCodeStrings.txt" if desired
@@ -2330,11 +2107,30 @@ String Function GetKeyCodeString(Int keyCode, String sFilePath = "Data/interface
     Return GetStringFromFile(keyCode, FilePath = sFilePath)
 EndFunction
 
-;Return mod name string that the akForm comes from. e.g "Skyrim.esm"
+;requires skse
+String Function GetKeyCodeStrings(int[] keys, string startBracket = "[", string endBracket = "]", string divider = "\n", bool includeInts = true) Global
+    string keysString 
+    int i = 0 
+    int m = keys.length 
+    if includeInts
+        while i < m 
+            keysString += startBracket + keys[i] + ", " + DbMiscFunctions.GetKeyCodeString(keys[i]) + endBracket + divider
+            i += 1
+        EndWhile
+    else
+        while i < m 
+            keysString += startBracket + DbMiscFunctions.GetKeyCodeString(keys[i]) + endBracket + divider
+            i += 1
+        EndWhile
+    endif
+
+    return keysString
+EndFunction
+
+;Return mod name string that the FormID comes from. e.g "Skyrim.esm"
+;assumes FormID is 8 digits long.
 ;Requires skse
-String Function GetModOriginName(Form akForm) Global
-    String FormID = ConvertIntToHex(akForm.GetFormId())
-    
+String Function GetModOriginFromHexID(string FormID) Global
     If StringUtil.SubString(FormID, 0, 2) == "FE" 
         Int ModIndex = ConvertHexToInt(StringUtil.SubString(FormID, 2, 3)) ;FEXXXYYY, for light plugins. XXX is Load Order
         Return Game.GetLightModName(ModIndex)
@@ -2342,6 +2138,13 @@ String Function GetModOriginName(Form akForm) Global
         Int ModIndex =  ConvertHexToInt(StringUtil.SubString(FormID, 0, 2)) ;XXYYYYYY, for normal plugins, XX is load Order
         Return Game.GetModName(ModIndex)
     Endif 
+EndFunction
+
+;Return mod name string that the akForm comes from. e.g "Skyrim.esm"
+;Requires skse
+String Function GetModOriginName(Form akForm) Global
+    String FormID = ConvertIntToHex(akForm.GetFormId())
+    return GetModOriginFromHexID(formID)
 EndFunction
 
 ;get common form types without SKSE =======================================================================
@@ -6902,7 +6705,6 @@ Function WriteJsonSaveAndLoadFunctionsToFile(String SourceFilePath, String Desti
         Debug.MessageBox(ConfirmMessage) 
     Endif 
 EndFunction
-
 
 ;used to write the states in the DynamicArrays script. Saved here for posterity
 ;requires SKSE and PapyrusUtil. 
