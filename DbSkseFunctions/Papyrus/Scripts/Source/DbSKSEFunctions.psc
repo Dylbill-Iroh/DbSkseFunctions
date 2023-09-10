@@ -12,27 +12,105 @@ Bool Function SetClipBoardText(String s) Global Native
 Bool Function IsWhiteSpace(String c) Global Native 
 int Function CountWhiteSpaces(String s) Global Native
 
+;does the mod have at least 1 form of formType?
+Bool Function ModHasFormType(String modName, int formType) Global Native
+
 ;returns new form array that contains the forms of the passed in akForms array, but sorted. 
-;Sort options are as follows. 1 = by form name ascending, 2 = by form name descending, 3 = by form Id ascending, 4 = by form Id descending
+;Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
+;1 = by form name ascending, 
+;2 = by form name descending, 
+;3 = by form editor Id name ascending,
+;4 = by form editor Id name descending,
+;5 = by form Id ascending, 
+;6 = by form Id descending
 Form[] Function SortFormArray(Form[] akForms, int sortOption = 1) Global Native
+
+;returns new form array that contains the forms in akList 
+;Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
+;1 = by form name ascending, 
+;2 = by form name descending, 
+;3 = by form editor Id name ascending,
+;4 = by form editor Id name descending,
+;5 = by form Id ascending, 
+;6 = by form Id descending
+Form[] Function FormListToArray(Formlist akList, int sortOption = 0) Global Native
+
+;Add forms in akForms array to akList
+Function AddFormsToList(Form[] akForms, Formlist akList) Global Native
 
 ;if maxCharacters is greater than 0, limits the number of characters for descriptions. 
 ;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
 ;if newLineReplacer is not empty "", replaces new lines in description with newLineReplacer
-;if formIdIfNone is true and a description is empty, "", gets form ID instead of the description
-String Function GetFormDescription(form akForm, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ", bool formIdIfNone = false) Global Native
+;if noneStringType is 1 and a description is empty, "", gets editorID instead of the description
+;if noneStringType is 2 and a description is empty, "", gets form ID instead of the description
+;if akForm is none, returns nullFormString
+String Function GetFormDescription(form akForm, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ", int noneStringType = 0, string nullFormString = "Null") Global Native 
 
-;get form descriptions for akForms
+;get form descriptions for akForms.
 ;if maxCharacters is greater than 0, limits the number of characters for descriptions. 
 ;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
-;if formIdIfNone is true and a description is empty, "", gets form ID instead of the description for that form.
-;Sort options are as follows. 0 = not sorted, 1 = sorted by description ascending, 2 = sorted by description descending, 3 = sorted by form name ascending, 4 = sorted by form name descending.
-String[] Function GetFormDescriptions(Form[] akForms, int sortOption = 0, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ", bool formIdIfNone = false) Global Native
+;if noneStringType is 1 and a description is empty, "", gets editorID instead of the description
+;if noneStringType is 2 and a description is empty, "", gets form ID instead of the description
+;if akForm is none, sets nullFormString for that form.
+;Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
+;0 = not sorted, 
+;1 = sorted by description ascending, 
+;2 = sorted by description descending, 
+;3 = by form name ascending, 
+;4 = by form name descending, 
+;5 = by form editor Id name ascending,
+;6 = by form editor Id name descending,
+;7 = by form Id ascending, 
+;8 = by form Id descending
+String[] Function GetFormDescriptions(Form[] akForms, int sortOption = 0, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ", int noneStringType = 0, string nullFormString = "Null") Global Native
+
+;get form descriptions for forms in akFormList.
+;if maxCharacters is greater than 0, limits the number of characters for descriptions. 
+;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
+;if noneStringType is 1 and a description is empty, "", gets editorID instead of the description
+;if noneStringType is 2 and a description is empty, "", gets form ID instead of the description
+;if akForm is none, sets nullFormString for that form.
+;Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
+;0 = not sorted, 
+;1 = sorted by description ascending, 
+;2 = sorted by description descending, 
+;3 = by form name ascending, 
+;4 = by form name descending, 
+;5 = by form editor Id name ascending,
+;6 = by form editor Id name descending,
+;7 = by form Id ascending, 
+;8 = by form Id descending
+String[] Function GetFormDescriptionsFromList(Formlist akFormList, int sortOption = 0, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ", int noneStringType = 0, string nullFormString = "Null") Global Native
 
 ;get form names for akForms
-;if formIdIfNone is true and a name is empty, "", get's form ID instead of the name for that form.
+;if noneStringType is 1 and a name is empty, "", gets editorID instead of name
+;if noneStringType is 2 and a name is empty, "", gets form ID instead of name
+;if a form is none, sets nullFormString for that form
 ;Sort options are as follows. 0 = not sorted, 1 = sorted by name ascending, 2 = sorted by name descending.
-String[] Function GetFormNames(Form[] akForms, int sortOption = 0, bool formIdIfNone = false) Global Native
+String[] Function GetFormNames(Form[] akForms, int sortOption = 0, int noneStringType = 0, string nullFormString = "Null") Global Native
+
+;get form names for forms in akFormList
+;if noneStringType is 1 and a name is empty, "", gets editorID instead of name
+;if noneStringType is 2 and a name is empty, "", gets form ID instead of name
+;if a form is none, sets nullFormString for that form
+;Sort options are as follows. 0 = not sorted, 1 = sorted by name ascending, 2 = sorted by name descending.
+String[] Function GetFormNamesFromList(Formlist akFormList, int sortOption = 0, int noneStringType = 0, string nullFormString = "Null") Global Native
+
+;Get form editor Id name. 
+;If akForm is none, returns nullFormString
+string function GetFormEditorId(Form akForm, string nullFormString = "Null") Global Native
+
+;get form editor id names for akForms
+;if a form is none, sets nullFormString for that form
+;Sort options are as follows. 0 = not sorted, 1 = sorted by name ascending, 2 = sorted by name descending.
+;Note, to get editor Ids reliably, po3 tweaks must be installed.
+string[] function GetFormEditorIds(Form[] akForms, int sortOption = 0, string nullFormString = "Null") Global Native
+
+;get form editor id names for forms in akFormList
+;if a form is none, sets nullFormString for that form
+;Sort options are as follows. 0 = not sorted, 1 = sorted by name ascending, 2 = sorted by name descending.
+;Note, to get editor Ids reliably, po3 tweaks must be installed.
+string[] function GetFormEditorIdsFromList(Formlist akFormList, int sortOption = 0, string nullFormString = "Null") Global Native
 
 ;Sort options are as follows. 0 = not sorted, 1 = sorted by name ascending, 2 = sorted by name descending.
 String[] Function GetLoadedModNames(int sortOption = 0) Global Native
