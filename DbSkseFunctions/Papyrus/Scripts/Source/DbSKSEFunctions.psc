@@ -1,7 +1,7 @@
 Scriptname DbSkseFunctions Hidden 
 ;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
 
-;returns 5.3
+;returns 5.8
 Float Function GetVersion() Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
@@ -139,6 +139,20 @@ String[] Function GetLoadedLightModDescriptions(int sortOption = 0, int maxChara
 ;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
 ;Sort options are as follows. 0 = not sorted, 1 = sorted by Description ascending, 2 = sorted by Description descending, 3 sorted by mod name ascending, 4 = sorted by mod name descending.
 String[] Function GetAllLoadedModDescriptions(int sortOption = 0, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ") Global Native
+
+;Get all quests in game currently being tracked by the player.
+Quest[] Function GetAllActiveQuests() Global Native
+
+;Get all ReferenceAlias's in game.
+;if onlyQuestObjects is true, only gets ref alias's that have the Quest Object box checked
+;if onlyFilled is true, only gets ref alias's that are filled with a valid object reference.
+ReferenceAlias[] function GetAllRefaliases(bool onlyQuestObjects = false, bool onlyFilled = false) global native
+
+;Get all quest object references in game
+ObjectReference[] function GetAllQuestObjectRefs() Global Native
+
+;Get all quest object references in containerRef
+ObjectReference[] function GetQuestObjectRefsInContainer(ObjectReference containerRef) Global Native
 
 ;Calculate how many real time seconds it will take for gameHours to pass based on current time scale.
 ;Example - with default time scale (20), GameHoursToRealTimeSeconds(1) returns 180.0
@@ -437,6 +451,12 @@ Form Function GetActiveEffectSource(ActiveMagicEffect akEffect) Global Native
 ;kOther = 2, (most likely shout) 
 ;kInstant = 3
 int Function GetActiveEffectCastingSource(ActiveMagicEffect akEffect) Global Native
+
+;get magic effects for akForm, assuming akForm is a magic item such as a spell, potion, shout, enchantment, scroll ect...
+MagicEffect[] Function GetMagicEffectsForForm(Form akForm) Global Native
+
+;is the form a magic item such as spell, potion, shout, enchantment, scroll ect...?
+bool Function IsFormMagicItem(Form akForm) Global Native
 
 Bool Function IsActorAttacking(actor akActor) Global Native
 Bool Function IsActorPowerAttacking(actor akActor) Global Native

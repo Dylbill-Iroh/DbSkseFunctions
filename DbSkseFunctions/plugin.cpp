@@ -2011,7 +2011,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(5.3);
+    return float(5.8);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2616,6 +2616,226 @@ std::vector<RE::BSFixedString> GetAllLoadedModDescriptions(RE::StaticFunctionTag
     return fileDescriptions;
 }
 
+std::vector<RE::TESQuest*> GetAllActiveQuests(RE::StaticFunctionTag*) {
+    logger::debug("{} called", __func__);
+
+    std::vector<RE::TESQuest*> questItems;
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+            if (baseForm) {
+                RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                if (quest) {
+                    if (quest->IsActive()) {
+                        questItems.push_back(quest);
+                    }
+                }
+            }
+        }
+    }
+    return questItems;
+}
+
+std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool onlyQuestObjects, bool onlyFilled) {
+    logger::debug("{} called", __func__);
+
+    std::vector<RE::BGSRefAlias*> questItems;
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end(); 
+
+        if (onlyQuestObjects && onlyFilled) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+                RE::TESForm* baseForm = *itr;
+                if (baseForm) {
+                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                    if (quest) {
+                        if (quest->aliases.size() > 0) {
+                            for (int i = 0; i < quest->aliases.size(); i++) {
+                                if (quest->aliases[i]) {
+                                    if (quest->aliases[i]->IsQuestObject()) {
+                                        RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                        if (refAlias) {
+                                            RE::TESObjectREFR* akRef = refAlias->GetReference();
+                                            if (akRef) {
+                                                questItems.push_back(refAlias);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } 
+        else if (onlyQuestObjects) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+                RE::TESForm* baseForm = *itr;
+                if (baseForm) {
+                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                    if (quest) {
+                        if (quest->aliases.size() > 0) {
+                            for (int i = 0; i < quest->aliases.size(); i++) {
+                                if (quest->aliases[i]) {
+                                    if (quest->aliases[i]->IsQuestObject()) {
+                                        RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                        if (refAlias) {
+                                            questItems.push_back(refAlias);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else if (onlyFilled) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+                RE::TESForm* baseForm = *itr;
+                if (baseForm) {
+                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                    if (quest) {
+                        if (quest->aliases.size() > 0) {
+                            for (int i = 0; i < quest->aliases.size(); i++) {
+                                if (quest->aliases[i]) {
+                                    RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                    if (refAlias) {
+                                        RE::TESObjectREFR* akRef = refAlias->GetReference();
+                                        if (akRef) {
+                                            questItems.push_back(refAlias);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+                RE::TESForm* baseForm = *itr;
+                if (baseForm) {
+                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                    if (quest) {
+                        if (quest->aliases.size() > 0) {
+                            for (int i = 0; i < quest->aliases.size(); i++) {
+                                if (quest->aliases[i]) {
+                                    RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                    if (refAlias) {
+                                        questItems.push_back(refAlias);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return questItems;
+}
+
+std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {
+    logger::debug("{} called", __func__);
+
+    std::vector<RE::TESObjectREFR*> questItems;
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+
+            if (baseForm) {
+                RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                if (quest) {
+                    if (quest->aliases.size() > 0) {
+                        for (int i = 0; i < quest->aliases.size(); i++) {
+                            if (quest->aliases[i]) {
+                                if (quest->aliases[i]->IsQuestObject()) {
+                                    //quest->aliases[i].
+                                    RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                    if (refAlias) {
+                                        RE::TESObjectREFR* akRef = refAlias->GetReference();
+                                        if (akRef) {
+                                            questItems.push_back(akRef);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return questItems;
+} 
+
+std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+    logger::debug("{} called", __func__);
+
+    std::vector<RE::TESObjectREFR*> questItems;
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    
+    if (!ref) {
+        logger::warn("{} ref doesn't exist", __func__);
+        return questItems;
+    }
+
+    auto inventory = ref->GetInventory();
+
+    if (inventory.size() == 0) {
+        logger::warn("{} {} ref doesn't contain any items", __func__, GetFormName(ref, "", "", true));
+        return questItems;
+    }
+
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        logger::debug("{} number of quests is {}", __func__, akArray->size());
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+
+            if (baseForm) {
+                RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                if (quest) {
+                    if (quest->aliases.size() > 0) {
+                        for (int i = 0; i < quest->aliases.size(); i++) {
+                            if (quest->aliases[i]) {
+                                if (quest->aliases[i]->IsQuestObject()) {
+                                    RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                    if (refAlias) {
+                                        RE::TESObjectREFR* akRef = refAlias->GetReference();
+                                        if (akRef) {
+                                            if (inventory.contains(akRef->GetObjectReference())) {
+                                                questItems.push_back(akRef);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    logger::debug("{} number of refs is {}", __func__, questItems.size());
+    return questItems;
+}
 
 float GameHoursToRealTimeSeconds(RE::StaticFunctionTag*, float gameHours) {
     float timeScale = calendar->GetTimescale(); //timeScale is minutes ratio
@@ -3326,6 +3546,44 @@ int GetActiveEffectCastingSource(RE::StaticFunctionTag*, RE::ActiveEffect* akEff
     }
 
     return static_cast<int>(akEffect->castingSource);
+}
+
+std::vector<RE::EffectSetting*> GetMagicEffectsForForm(RE::StaticFunctionTag*, RE::TESForm* akForm) {
+    std::vector<RE::EffectSetting*> akEffects;
+    if (!akForm) {
+        logger::warn("{} akForm doesn't exist", __func__);
+        return akEffects;
+    }
+
+    RE::MagicItem* magicItem = akForm->As<RE::MagicItem>();
+    if (!magicItem) {
+        logger::info("{} akForm name[{}] editorID[{}] formID[{}], is not a magic item", __func__, GetFormName(akForm), GetFormEditorId(nullptr, akForm, ""), akForm->GetFormID());
+        return akEffects;
+    }
+
+    int m = magicItem->effects.size();
+    for (int i = 0; i < m; i++) {
+        RE::EffectSetting* effect = magicItem->effects[i]->baseEffect;
+        if (effect) {
+            akEffects.push_back(effect);
+        }
+    }
+    return akEffects;
+}
+
+bool IsFormMagicItem(RE::StaticFunctionTag*, RE::TESForm* akForm) {
+    if (!akForm) {
+        logger::warn("{} akForm doesn't exist", __func__);
+        return false;
+    }
+
+    RE::MagicItem* magicItem = akForm->As<RE::MagicItem>();
+    if (magicItem) {
+        return true;
+    }
+    else {
+        return false;
+    }
 }
 
 //kNone = 0,
@@ -8172,6 +8430,10 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("SortFormArray", "DbSkseFunctions", SortFormArray); 
     vm->RegisterFunction("FormListToArray", "DbSkseFunctions", FormListToArray);
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
+    vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
+    vm->RegisterFunction("GetAllRefaliases", "DbSkseFunctions", GetAllRefaliases);
+    vm->RegisterFunction("GetAllQuestObjectRefs", "DbSkseFunctions", GetAllQuestObjectRefs);
+    vm->RegisterFunction("GetQuestObjectRefsInContainer", "DbSkseFunctions", GetQuestObjectRefsInContainer);
     vm->RegisterFunction("GameHoursToRealTimeSeconds", "DbSkseFunctions", GameHoursToRealTimeSeconds);
     vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused);
     vm->RegisterFunction("IsInMenu", "DbSkseFunctions", IsInMenu);
@@ -8207,6 +8469,8 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("SetAllBooksRead", "DbSkseFunctions", SetAllBooksRead);
     vm->RegisterFunction("GetActiveEffectSource", "DbSkseFunctions", GetActiveEffectSource);
     vm->RegisterFunction("GetActiveEffectCastingSource", "DbSkseFunctions", GetActiveEffectCastingSource);
+    vm->RegisterFunction("GetMagicEffectsForForm", "DbSkseFunctions", GetMagicEffectsForForm);
+    vm->RegisterFunction("IsFormMagicItem", "DbSkseFunctions", IsFormMagicItem);
     vm->RegisterFunction("SetSoulGemSize", "DbSkseFunctions", SetSoulGemSize);
     vm->RegisterFunction("CanSoulGemHoldNPCSoul", "DbSkseFunctions", CanSoulGemHoldNPCSoul);
     vm->RegisterFunction("SetSoulGemCanHoldNPCSoul", "DbSkseFunctions", SetSoulGemCanHoldNPCSoul);

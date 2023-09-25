@@ -1653,18 +1653,6 @@ Function RegisterFormForKeys(Form akForm, Int min = 1, Int Max = 281) Global
     EndWhile
 EndFunction 
 
-;requires skse
-int[] function GetAllKeysPressed() Global
-    int i = input.GetNumKeysPressed()
-    int[] keysPressed = utility.CreateIntArray(i) 
-    While i > 0 
-        i -= 1 
-        keysPressed[i] = input.GetNthKeyPressed(i)
-    EndWhile 
-
-    return keysPressed
-EndFunction
-
 Function RegisterAliasForKeys(Alias akAlias, Int min = 1, Int Max = 281) Global
     If akAlias == none 
         return 
@@ -1689,6 +1677,43 @@ Function RegisterActiveMagicEffectForKeys(ActiveMagicEffect akActiveMagicEffect,
     EndWhile
     
 EndFunction     
+
+;requires skse
+int[] function GetAllKeysPressed() Global
+    int i = input.GetNumKeysPressed()
+    int[] keysPressed = utility.CreateIntArray(i) 
+    While i > 0 
+        i -= 1 
+        keysPressed[i] = input.GetNthKeyPressed(i)
+    EndWhile 
+
+    return keysPressed
+EndFunction
+
+;Are all the hotkeys pressed? 
+;If onlyTheseKeys is true, (default), returns true only if all the hotkeys are pressed and no other keys are pressed.
+;requires skse.
+Bool Function HotkeysPressed(int[] hotkeys, bool onlyTheseKeys = true) Global
+    int m = hotkeys.length 
+    if m == 0 
+        return false 
+    endif 
+    
+    if onlyTheseKeys
+        if input.GetNumKeysPressed() != m 
+            return false
+        endif    
+    endif
+
+    while m > 0 
+        m -= 1
+        if !input.IsKeyPressed(hotkeys[m])
+            return false
+        endif
+    EndWhile
+
+    return true
+EndFunction
 
 ;Swap============================================================================== 
 ;Swap the element at IndexA with the element at IndexB in the akArray 
@@ -2114,7 +2139,7 @@ String Function GetKeyCodeStrings(int[] keys, string startBracket = "[", string 
     int m = keys.length 
     if includeInts
         while i < m 
-            keysString += startBracket + keys[i] + ", " + DbMiscFunctions.GetKeyCodeString(keys[i]) + endBracket + divider
+            keysString += startBracket + keys[i] + ": " + DbMiscFunctions.GetKeyCodeString(keys[i]) + endBracket + divider
             i += 1
         EndWhile
     else
@@ -2125,6 +2150,29 @@ String Function GetKeyCodeStrings(int[] keys, string startBracket = "[", string 
     endif
 
     return keysString
+EndFunction 
+
+;requires skse
+String[] Function GetKeyCodeStringsInRange(int minKey = 1, int maxKey = 281, string startBracket = "[", string endBracket = "]", bool includeInts = true) Global
+    string[] keyCodeStrings = Utility.CreateStringArray(m)
+    int keyIndex = minKey
+    int i = 0
+    int m = maxKey + 1
+    if includeInts
+        while i < m 
+            keyCodeStrings[i] = startBracket + keyIndex + ": " + DbMiscFunctions.GetKeyCodeString(keyIndex) + endBracket
+            i += 1
+            keyIndex += 1
+        EndWhile
+    else
+        while i < m 
+            keyCodeStrings[i] = startBracket + DbMiscFunctions.GetKeyCodeString(keyIndex) + endBracket
+            i += 1
+            keyIndex += 1
+        EndWhile
+    endif
+
+    return keyCodeStrings
 EndFunction
 
 ;Return mod name string that the FormID comes from. e.g "Skyrim.esm"
