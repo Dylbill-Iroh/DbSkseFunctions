@@ -972,8 +972,8 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
 }
 
 std::vector<std::string> getFormNamesAndDescriptionsAsStrings(std::vector<RE::TESForm*> akForms, int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer, int noneStringType, std::string nullFormString) {
-    std::vector<std::string> descriptions; 
-    
+    std::vector<std::string> descriptions;
+
     if (noneStringType == 2 && maxCharacters > 0) {
         for (auto* akForm : akForms) {
             std::string description = GetDescription(akForm, newLineReplacer);
@@ -1246,7 +1246,7 @@ std::vector<std::string> GetFormEditorIdsAsStrings(RE::BGSListForm* akFormlist, 
         }
         formNames.push_back(name);
     }
-    
+
     if (sortOption == 1 || sortOption == 2) {
         std::sort(formNames.begin(), formNames.end());
         if (sortOption == 2) {
@@ -2011,7 +2011,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(5.8);
+    return float(5.9);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2104,7 +2104,7 @@ bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType) {
 
     for (RE::BSTArray<RE::TESForm*>::iterator it = formArray->begin(); it != itrEndType; it++) {
         RE::TESForm* akForm = *it;
-        
+
         if (akForm) {
             if (modFile->IsFormInMod(akForm->GetFormID())) {
                 return true;
@@ -2318,7 +2318,7 @@ void AddFormsToList(RE::StaticFunctionTag*, std::vector<RE::TESForm*> akForms, R
     }
 }
 
-std::string GetEffectsDescriptions(RE::BSTArray<RE::Effect *> effects) {
+std::string GetEffectsDescriptions(RE::BSTArray<RE::Effect*> effects) {
     std::string description = "";
 
     int m = effects.size();
@@ -2415,7 +2415,7 @@ std::string GetFormDescription(RE::StaticFunctionTag*, RE::TESForm* akForm, int 
         }
     }
     return s;
-} 
+}
 
 std::vector<RE::BSFixedString> GetFormDescriptions(RE::StaticFunctionTag*, std::vector<RE::TESForm*> akForms, int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer, int noneStringType, std::string nullFormString) {
     std::vector<RE::BSFixedString> descriptions;
@@ -2434,7 +2434,7 @@ std::vector<RE::BSFixedString> GetFormDescriptions(RE::StaticFunctionTag*, std::
         std::vector<std::string> sDescriptions = GetFormDescriptionsAsStrings(akForms, sortOption, maxCharacters, overMaxCharacterSuffix, newLineReplacer, noneStringType, nullFormString);
         std::copy(sDescriptions.begin(), sDescriptions.end(), std::back_inserter(descriptions));
     }
-   
+
     return descriptions;
 }
 
@@ -2468,9 +2468,9 @@ std::vector<RE::BSFixedString> GetFormNames(RE::StaticFunctionTag*, std::vector<
 
     std::vector<std::string> sFormNames = GetFormNamesAsStrings(akForms, sortOption, noneStringType, nullFormString);
     std::copy(sFormNames.begin(), sFormNames.end(), std::back_inserter(formNames));
-    
+
     return formNames;
-} 
+}
 
 std::vector<RE::BSFixedString> GetFormNamesFromList(RE::StaticFunctionTag*, RE::BGSListForm* akFormlist, int sortOption, int noneStringType, std::string nullFormString) {
     std::vector<RE::BSFixedString> formNames;
@@ -2560,10 +2560,10 @@ std::vector<RE::BSFixedString> GetLoadedModDescriptions(RE::StaticFunctionTag*, 
         std::vector<std::string> sfileNamesAndDescriptions = GetLoadedModNamesAndDescriptionsAsStrings(sortOption, maxCharacters, overMaxCharacterSuffix, newLineReplacer);
         int m = sfileNamesAndDescriptions.size();
         for (int i = 0; i < m; i++) {
-            std::size_t delimIndex = sfileNamesAndDescriptions[i].find("||"); 
+            std::size_t delimIndex = sfileNamesAndDescriptions[i].find("||");
             if (delimIndex != std::string::npos) {
-                delimIndex += 2; 
-                fileDescriptions.push_back(sfileNamesAndDescriptions[i].substr(delimIndex)); 
+                delimIndex += 2;
+                fileDescriptions.push_back(sfileNamesAndDescriptions[i].substr(delimIndex));
             }
         }
     }
@@ -2649,7 +2649,7 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
 
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end(); 
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
         if (onlyQuestObjects && onlyFilled) {
             for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
@@ -2675,7 +2675,7 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
                     }
                 }
             }
-        } 
+        }
         else if (onlyQuestObjects) {
             for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
                 RE::TESForm* baseForm = *itr;
@@ -2781,14 +2781,14 @@ std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {
         }
     }
     return questItems;
-} 
+}
 
 std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
     logger::debug("{} called", __func__);
 
     std::vector<RE::TESObjectREFR*> questItems;
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    
+
     if (!ref) {
         logger::warn("{} ref doesn't exist", __func__);
         return questItems;
@@ -3027,7 +3027,7 @@ RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
         RE::BSIMusicTrack* currentPriorityTrack = nullptr;
         std::int8_t currentPriority = 127;
 
-        
+
         for (RE::BSTArray<RE::TESForm*>::iterator itr = musicTypeArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
@@ -3274,7 +3274,7 @@ RE::TESObjectBOOK* GetSpellTomeForSpell(RE::StaticFunctionTag*, RE::SpellItem* a
 
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
-        
+
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
@@ -3307,7 +3307,7 @@ std::vector<RE::TESObjectBOOK*> GetSpellTomesForSpell(RE::StaticFunctionTag*, RE
 
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
-        
+
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
@@ -3343,7 +3343,7 @@ void AddSpellTomesForSpellToList(RE::StaticFunctionTag*, RE::SpellItem* akSpell,
 
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
-        
+
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
@@ -3420,14 +3420,14 @@ std::vector<RE::TESObjectBOOK*> GetSkillBooksForSkill(RE::StaticFunctionTag*, st
         logger::warn("{} actorValue [{}] not recognized", __func__, actorValue);
         return v;
     }
-    
+
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
 
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
-        
+
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
@@ -3466,7 +3466,7 @@ void AddSkillBookForSkillToList(RE::StaticFunctionTag*, std::string actorValue, 
 
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
-        
+
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
@@ -6800,8 +6800,9 @@ enum EventsEnum {
     EventEnum_EndDraw,
     EventEnum_BeginSheathe,
     EventEnum_EndSheathe,
+    EventEnum_OnContainerChanged,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_EndSheathe
+    EventEnum_Last = EventEnum_OnContainerChanged
 };
 
 struct EventData {
@@ -7523,6 +7524,62 @@ struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
     }
 };
 
+struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChangedEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* event, RE::BSTEventSource<RE::TESContainerChangedEvent>*/*source*/) {
+
+        if (!event) {
+            logger::error("Container Change event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        //logger::debug("Container Change Event");
+
+        RE::TESForm* baseObj = RE::TESForm::LookupByID(event->baseObj);
+       
+        RE::TESObjectREFR* itemReference = nullptr;
+        auto refHandle = event->reference;
+        if (refHandle) {
+            //logger::debug("refHandle found");
+            
+            RE::TESForm* refForm = RE::TESForm::LookupByID(refHandle.native_handle());
+            if (refForm) {
+                //logger::debug("refForm found");
+                itemReference = refForm->AsReference();
+            }
+        }
+
+        RE::TESObjectREFR* newContainer = nullptr;
+        RE::TESForm* newContainerForm = RE::TESForm::LookupByID(event->newContainer);
+        if (newContainerForm) {
+            newContainer = newContainerForm->AsReference();
+        }
+
+        RE::TESObjectREFR* oldContainer = nullptr;
+        RE::TESForm* oldContainerForm = RE::TESForm::LookupByID(event->oldContainer);
+        if (oldContainerForm) {
+            oldContainer = oldContainerForm->AsReference();
+        }
+
+        int itemCount = event->itemCount;
+
+        //logger::debug("newContainer[{}] oldContainer[{}] itemReference[{}] baseObj[{}] itemCount[{}]", GetFormName(newContainer), GetFormName(oldContainer), GetFormName(itemReference), GetFormName(baseObj), itemCount);
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnContainerChanged]->globalHandles;
+
+        CombineEventHandles(handles, newContainer, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[0]);
+        CombineEventHandles(handles, oldContainer, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[1]);
+        CombineEventHandles(handles, itemReference, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[2]);
+        CombineEventHandles(handles, baseObj, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[3]);
+
+        RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)newContainer, (RE::TESObjectREFR*)oldContainer, (RE::TESObjectREFR*)itemReference, (RE::TESForm*)baseObj, (int)itemCount);
+        SendEvents(handles, eventDataPtrs[EventEnum_OnContainerChanged]->sEvent, args);
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
 std::vector<std::string> actionSlotStrings{"left", "right", "voice"};
 std::vector<std::string> actionTypeStrings{
     "kWeaponSwing",
@@ -7724,6 +7781,7 @@ LockChangedEventSink* lockChangedEventSink;
 OpenCloseEventSink* openCloseEventSink;
 SpellCastEventSink* spellCastEventSink;
 ActorActionEventSink* actorActionEventSink;
+ContainerChangedEventSink* containerChangedEventSink;
 MenuOpenCloseEventSink* menuOpenCloseEventSink;
 
 bool ShouldActorActionEventSinkBeAdded() {
@@ -7821,6 +7879,14 @@ void AddSink(int index) {
             logger::info("{}, EventEnum_OnSpellCast sink added", __func__);
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = true;
             eventSourceholder->AddEventSink(spellCastEventSink);
+        }
+        break;
+    
+    case EventEnum_OnContainerChanged:
+        if (!eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded && !eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
+            logger::info("{}, EventEnum_OnContainerChanged sink added", __func__);
+            eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = true;
+            eventSourceholder->AddEventSink(containerChangedEventSink);
         }
         break;
 
@@ -7951,6 +8017,14 @@ void RemoveSink(int index) {
             logger::info("{}, EventEnum_OnSpellCast sink removed", __func__);
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(spellCastEventSink);
+        }
+        break;
+
+    case EventEnum_OnContainerChanged:
+        if (eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded && eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
+            logger::info("{}, EventEnum_OnContainerChanged sink removed", __func__);
+            eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(containerChangedEventSink);
         }
         break;
 
@@ -8374,6 +8448,7 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_EndDraw] = new EventData("OnEndDrawGlobal", EventEnum_EndDraw, 2, 'EAA8');                              //actorActionEventSink
         eventDataPtrs[EventEnum_BeginSheathe] = new EventData("OnBeginSheatheGlobal", EventEnum_BeginSheathe, 2, 'EAA9');               //actorActionEventSink
         eventDataPtrs[EventEnum_EndSheathe] = new EventData("OnEndSheatheGlobal", EventEnum_EndSheathe, 2, 'EA10');                     //actorActionEventSink
+        eventDataPtrs[EventEnum_OnContainerChanged] = new EventData("OnContainerChangedGlobal", EventEnum_OnContainerChanged, 4, 'ECc0');
     }
 
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -8386,10 +8461,12 @@ void CreateEventSinks() {
     if (!waitStopEventSink) { waitStopEventSink = new WaitStopEventSink(); }
     if (!magicEffectApplyEventSink) { magicEffectApplyEventSink = new MagicEffectApplyEventSink(); }
     if (!spellCastEventSink) { spellCastEventSink = new SpellCastEventSink(); }
+    if (!containerChangedEventSink) { containerChangedEventSink = new ContainerChangedEventSink(); }
     if (!lockChangedEventSink) { lockChangedEventSink = new LockChangedEventSink(); }
     if (!openCloseEventSink) { openCloseEventSink = new OpenCloseEventSink(); }
     if (!actorActionEventSink) { actorActionEventSink = new ActorActionEventSink(); }
     if (!menuOpenCloseEventSink) { menuOpenCloseEventSink = new MenuOpenCloseEventSink(); }
+
 
     //SKSE::GetActionEventSource()->AddEventSink(actorActionEventSink);
     ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
@@ -8427,7 +8504,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetLoadedModDescriptions", "DbSkseFunctions", GetLoadedModDescriptions);
     vm->RegisterFunction("GetLoadedLightModDescriptions", "DbSkseFunctions", GetLoadedLightModDescriptions);
     vm->RegisterFunction("GetAllLoadedModDescriptions", "DbSkseFunctions", GetAllLoadedModDescriptions);
-    vm->RegisterFunction("SortFormArray", "DbSkseFunctions", SortFormArray); 
+    vm->RegisterFunction("SortFormArray", "DbSkseFunctions", SortFormArray);
     vm->RegisterFunction("FormListToArray", "DbSkseFunctions", FormListToArray);
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
@@ -8624,7 +8701,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         //SendLoadGameEvent();
         //CreateEventSinks();
         bPlayerIsInCombat = player->IsInCombat();
-        
+
         break;
 
         //case SKSE::MessagingInterface::kSaveGame:
@@ -8728,6 +8805,5 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     serialization->SetSaveCallback(SaveCallback);
     serialization->SetLoadCallback(LoadCallback);
 
-    
     return true;
 }

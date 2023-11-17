@@ -193,6 +193,10 @@ EndEvent
 Event OnDyingGlobal(Actor Victim, Actor Killer)
 EndEvent
 
+;Note that this can be used as ItemAdded or ItemRemoved event. 
+Event OnContainerChangedGlobal(ObjectReference newContainer, ObjectReference oldContainer, ObjectReference itemReference, Form baseObj, int itemCount)
+EndEvent
+
 Event OnObjectEquippedGlobal(Actor akActor, Form akBaseObject, ObjectReference akReference)
 EndEvent
 

@@ -1,7 +1,7 @@
 Scriptname DbSkseFunctions Hidden 
 ;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
 
-;returns 5.8
+;returns 5.9
 Float Function GetVersion() Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
