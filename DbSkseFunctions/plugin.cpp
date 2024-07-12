@@ -17,10 +17,14 @@ bool bPlayerIsInCombat = false;
 bool bRegisteredForPlayerCombatChange = false;
 bool inMenuMode = false;
 bool gamePaused = false;
+bool bIsLoadingSerialization = false;
+bool bIsSavingSerialization = false;
 std::string lastMenuOpened;
 std::vector<RE::BSFixedString> menusCurrentlyOpen;
 std::chrono::system_clock::time_point lastTimeMenuWasOpened;
 std::chrono::system_clock::time_point lastTimeGameWasPaused;
+std::vector<RE::TESObjectREFR*> actorsRegisteredForAnimationEvents;
+std::map<RE::TESObjectREFR*, RE::TESAmmo*> trackedActorAmmoMap;
 std::map<RE::TESObjectBOOK*, int> skillBooksMap;
 int gameTimerPollingInterval = 1500; //in milliseconds
 float secondsPassedGameNotPaused = 0.0;
@@ -38,6 +42,7 @@ RE::ScriptEventSourceHolder* eventSourceholder;
 void AddSink(int index);
 void RemoveSink(int index);
 std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString);
+int GetIndexInVector(std::vector<RE::TESObjectREFR*> v, RE::TESObjectREFR* element);
 //general functions============================================================================================================================================================
 
 template< typename T >
@@ -104,15 +109,44 @@ RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString 
 }
 
 void logFormMap(auto& map) {
-    logger::info("logging form map");
+    logger::trace("logging form map");
     for (auto const& x : map)
     {
         RE::TESForm* akForm = x.first;
         if (akForm) {
-            logger::info("Form[{}] ID[{:x}] value[{}]", GetFormName(akForm), akForm->GetFormID(), x.second);
+            logger::trace("Form[{}] ID[{:x}] value[{}]", GetFormName(akForm), akForm->GetFormID(), x.second);
         }
     }
 }
+
+bool formIsBowOrCrossbow(RE::TESForm* akForm) {
+    if (akForm) {
+        RE::TESObjectWEAP* weapon = akForm->As<RE::TESObjectWEAP>();
+        if (weapon) {
+            if (weapon->IsBow() || weapon->IsCrossbow()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool actorHasBowEquipped(RE::Actor* actor) {
+    if (actor) {
+        RE::TESForm* equippedObj = actor->GetEquippedObject(false); //right hand
+        if (formIsBowOrCrossbow(equippedObj)) {
+            return true;
+        }
+
+        equippedObj = actor->GetEquippedObject(true); //left hand
+        if (formIsBowOrCrossbow(equippedObj)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
 
 //when reading a skill book in game, it removes the skill from the book, not just the TeachesSkill flag
 //this saves skill books and their respective skills for use with skill book functions below.
@@ -630,7 +664,7 @@ int GetIndexInVector(std::vector<RE::VMHandle> v, RE::VMHandle element) {
 }
 
 int GetIndexInVector(std::vector<RE::TESObjectREFR*> v, RE::TESObjectREFR* element) {
-    if (element == NULL) {
+    if (!element) {
         return -1;
     }
 
@@ -669,7 +703,7 @@ void SetSettingsFromIniFile() {
     if (gameTimerPollingInterval <= 0) {
         gameTimerPollingInterval = 100;
     }
-    logger::debug("{} gameTimerPollingInterval set to {}", __func__, gameTimerPollingInterval);
+    logger::info("{} gameTimerPollingInterval set to {}", __func__, gameTimerPollingInterval);
 }
 
 void SetupLog() {
@@ -700,7 +734,7 @@ void SetupLog() {
 enum logLevel { trace, debug, info, warn, error, critical };
 enum debugLevel { notification, messageBox };
 
-void LogAndMessage(std::string message, int logLevel = info, int debugLevel = notification) {
+void LogAndMessage(std::string message, int logLevel = trace, int debugLevel = notification) {
     switch (logLevel) {
     case trace:
         logger::trace("{}", message);
@@ -763,12 +797,12 @@ void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm
     auto it = formHandles.find(akForm);
 
     if (it != formHandles.end()) {
-        logger::info("{}: events for form: [{}] ID[{:x}] found", __func__, GetFormName(akForm), akForm->GetFormID());
+        logger::debug("{}: events for form: [{}] ID[{:x}] found", __func__, GetFormName(akForm), akForm->GetFormID());
         handles.reserve(handles.size() + it->second.size());
         handles.insert(handles.end(), it->second.begin(), it->second.end());
     }
     else {
-        logger::info("{}: events for form: [{}] ID[{:x}] not found", __func__, GetFormName(akForm), akForm->GetFormID());
+        logger::debug("{}: events for form: [{}] ID[{:x}] not found", __func__, GetFormName(akForm), akForm->GetFormID());
     }
 }
 
@@ -1807,7 +1841,7 @@ bool LoadFormIDVector(std::vector<RE::FormID>& arr, uint32_t record, SKSE::Seria
         return false;
     }
 
-    logger::info("{}: load arr size = {}", __func__, size);
+    logger::debug("{}: load arr size = {}", __func__, size);
 
     for (std::size_t i = 0; i < size; ++i) {
         RE::FormID formID;
@@ -1817,7 +1851,7 @@ bool LoadFormIDVector(std::vector<RE::FormID>& arr, uint32_t record, SKSE::Seria
         }
 
         if (!a_intfc->ResolveFormID(formID, formID)) {
-            logger::warn("{}: {}: warning, failed to resolve formID[{:x}]", __func__, i, formID);
+            logger::warn("{}: {}: failed to resolve formID[{:x}]", __func__, i, formID);
             continue;
         }
 
@@ -1834,10 +1868,21 @@ bool SaveFormIDVector(std::vector<RE::FormID>& arr, uint32_t record, SKSE::Seria
         return false;
     }
 
-    for (const auto& formID : arr) {
-        if (!a_intfc->WriteRecordData(formID)) {
-            logger::error("{}: record[{}] Failed to write data for handle[{}]", __func__, record, formID);
-            return false;
+    for (std::size_t i = 0; i < size; i++) {
+        RE::FormID& formID = arr[i];
+
+        if (formID) {
+            if (!a_intfc->WriteRecordData(formID)) {
+                logger::error("{}: record[{}] Failed to write data for formID[{}]", __func__, record, formID);
+                return false;
+            }
+        }
+        else {
+            RE::FormID noFormID = -1;
+            if (!a_intfc->WriteRecordData(noFormID)) {
+                logger::error("{}: record[{}] Failed to write data for noFormID", __func__, record);
+                return false;
+            }
         }
     }
 
@@ -1853,7 +1898,7 @@ bool LoadHandlesVector(std::vector<RE::VMHandle>& arr, uint32_t record, SKSE::Se
         return false;
     }
 
-    logger::info("{}: load arr size = {}", __func__, size);
+    logger::trace("{}: load arr size = {}", __func__, size);
 
     for (std::size_t i = 0; i < size; ++i) {
         RE::VMHandle handle;
@@ -1880,10 +1925,21 @@ bool SaveHandlesVector(std::vector<RE::VMHandle>& arr, uint32_t record, SKSE::Se
         return false;
     }
 
-    for (const auto& handle : arr) {
-        if (!a_intfc->WriteRecordData(handle)) {
-            logger::error("{}: record[{}] Failed to write data for handle[{}]", __func__, record, handle);
-            return false;
+    for (std::size_t i = 0; i < size; i++) {
+        RE::VMHandle& handle = arr[i];
+
+        if (handle) {
+            if (!a_intfc->WriteRecordData(handle)) {
+                logger::error("{}: record[{}] Failed to write data for handle[{}]", __func__, record, handle);
+                return false;
+            }
+        }
+        else {
+            RE::VMHandle noHandle = -1;
+            if (!a_intfc->WriteRecordData(noHandle)) {
+                logger::error("{}: record[{}] Failed to write data for noHandle", __func__, record);
+                return false;
+            }
         }
     }
 
@@ -1900,7 +1956,7 @@ bool LoadFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
         return false;
     }
 
-    logger::info("{}: load akMap size = {}", __func__, size);
+    logger::debug("{}: load akMap size = {}", __func__, size);
 
     for (std::size_t i = 0; i < size; ++i) { //size = number of pairs in map 
 
@@ -1918,17 +1974,17 @@ bool LoadFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
             return false;
         }
 
-        //logger::info("{}: {}: formID[{:x}] loaded and resolved", __func__, i, formID);
+        //logger::trace("{}: {}: formID[{:x}] loaded and resolved", __func__, i, formID);
 
         RE::TESForm* akForm;
         if (formIdResolved) {
             akForm = RE::TESForm::LookupByID<RE::TESForm>(formID);
             if (!akForm) {
                 logger::error("{}: {}: error, failed to load akForm!", __func__, i);
-                //return false;
+                return false;
             }
             else {
-                logger::info("{}: {}: akForm[{}] loaded", __func__, i, formID);
+                logger::debug("{}: {}: akForm[{}] loaded", __func__, i, formID);
             }
         }
 
@@ -1939,7 +1995,7 @@ bool LoadFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
             return false;
         }
 
-        logger::error("{}: {}: handlesSize loaded. Size[{}]", __func__, i, handlesSize);
+        logger::debug("{}: {}: handlesSize loaded. Size[{}]", __func__, i, handlesSize);
 
         std::vector<RE::VMHandle> handles;
 
@@ -1962,7 +2018,7 @@ bool LoadFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
         if (handles.size() > 0 && akForm != nullptr) {
             akMap.insert(std::pair<RE::TESForm*, std::vector<RE::VMHandle>>(akForm, handles));
-            logger::info("{}: {}: record[{}] akForm[{}] formID[{:x}] loaded", __func__, i, record, GetFormName(akForm), formID);
+            logger::debug("{}: {}: record[{}] akForm[{}] formID[{:x}] loaded", __func__, i, record, GetFormName(akForm), formID);
         }
     }
     return true;
@@ -1977,30 +2033,45 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
     }
     else {
 
-        for (auto it : akMap)
-        {
-            auto formID = it.first->GetFormID();
+        //for (std::pair<RE::TESForm*, std::vector<RE::VMHandle>> it : akMap) //old loop
 
-            logger::info("{}: saving handles for ref[{}] formId[{:x}]", __func__, GetFormName(it.first), formID);
+        std::map<RE::TESForm*, std::vector<RE::VMHandle>>::iterator it;
+
+        for (it = akMap.begin(); it != akMap.end(); it++)
+        {
+            RE::FormID formID = -1;
+            if (it->first) {
+                formID = it->first->GetFormID();
+                logger::trace("{}: saving handles for ref[{}] formId[{:x}]", __func__, GetFormName(it->first), formID);
+            }
 
             if (!a_intfc->WriteRecordData(formID)) {
                 logger::error("{}: Failed to write formID[{:x}]", __func__, formID);
                 return false;
             }
 
-            logger::info("{}: formID[{:x}] written successfully", __func__, formID);
+            logger::trace("{}: formID[{:x}] written successfully", __func__, formID);
 
-            const std::size_t handlesSize = it.second.size();
+            const std::size_t handlesSize = it->second.size();
 
             if (!a_intfc->WriteRecordData(handlesSize)) {
-                logger::error("{} it.second (handles)", __func__);
+                logger::error("{} failed to write it.second handlesSize", __func__);
                 return false;
             }
 
-            for (const auto& handle : it.second) {
-                if (!a_intfc->WriteRecordData(handle)) {
-                    logger::error("{}: Failed to write data for handle[{}]", __func__, handle);
-                    return false;
+            for (const RE::VMHandle& handle : it->second) {
+                if (handle) {
+                    if (!a_intfc->WriteRecordData(handle)) {
+                        logger::error("{}: Failed to write data for handle[{}]", __func__, handle);
+                        return false;
+                    }
+                }
+                else {
+                    RE::VMHandle noHandle;
+                    if (!a_intfc->WriteRecordData(noHandle)) {
+                        logger::error("{}: Failed to write data for noHandle", __func__, handle);
+                        return false;
+                    }
                 }
             }
         }
@@ -2011,7 +2082,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(6.1);
+    return float(6.3);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2859,19 +2930,19 @@ std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
 bool IsMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     LogAndMessage("IsMapMarker function called");
     if (!mapMarker) {
-        LogAndMessage("IsMapMarker: mapMarker doesn't exist");
+        LogAndMessage("IsMapMarker: mapMarker doesn't exist", warn);
         return false;
     }
 
     auto* mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
-        LogAndMessage("map marker list not found.");
+        LogAndMessage("map marker list not found.", debug);
         return false;
     }
 
     if (!mapMarkerData->mapData) {
-        LogAndMessage("mapData not found.");
+        LogAndMessage("mapData not found.", debug);
         return false;
     }
 
@@ -2881,7 +2952,7 @@ bool IsMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
 bool SetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, std::string name) {
     LogAndMessage("Renaming map marker");
     if (!mapMarker) {
-        LogAndMessage("SetMapMarkerName: mapMarker doesn't exist", error);
+        LogAndMessage("SetMapMarkerName: mapMarker doesn't exist", warn);
         return false;
     }
 
@@ -2912,7 +2983,7 @@ bool SetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, std:
 std::string GetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     LogAndMessage("Getting Marker Name");
     if (!mapMarker) {
-        LogAndMessage("GetMapMarkerName: mapMarker doesn't exist", error);
+        LogAndMessage("GetMapMarkerName: mapMarker doesn't exist", warn);
         return "";
     }
 
@@ -2938,7 +3009,7 @@ std::string GetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarke
 
 bool SetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, int iconType) {
     if (!mapMarker) {
-        LogAndMessage("SetMapMarkerIconType: mapMarker doesn't exist", error);
+        LogAndMessage("SetMapMarkerIconType: mapMarker doesn't exist", warn);
         return false;
     }
 
@@ -2964,7 +3035,7 @@ bool SetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, 
 int GetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     LogAndMessage("Getting Map Marker Type");
     if (!mapMarker) {
-        LogAndMessage("GetMapMarkerIconType: mapMarker doesn't exist", error);
+        LogAndMessage("GetMapMarkerIconType: mapMarker doesn't exist", warn);
         return false;
     }
 
@@ -3011,7 +3082,7 @@ static inline void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_c
 
     const auto scriptFactory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::Script>();
     const auto script = scriptFactory ? scriptFactory->Create() : nullptr;
-    if (script) { 
+    if (script) {
         script->SetCommand(a_command);
 
         if (objRef) {
@@ -3022,7 +3093,7 @@ static inline void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_c
             //script->CompileAndRun(selectedRef.get());
             CompileAndRun(script, selectedRef.get());
         }
-        
+
         delete script;
     }
 }
@@ -3124,7 +3195,7 @@ std::vector<RE::EnchantmentItem*> GetKnownEnchantments(RE::StaticFunctionTag*) {
     RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
     RE::BSTArray<RE::TESForm*>::iterator itrEndType = enchantmentArray->end();
 
-    logger::info("{} enchantmentArray size[{}]", __func__, enchantmentArray->size());
+    logger::debug("{} enchantmentArray size[{}]", __func__, enchantmentArray->size());
 
     for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != itrEndType; it++) {
         RE::TESForm* baseForm = *it;
@@ -3149,7 +3220,7 @@ std::vector<RE::EnchantmentItem*> GetKnownEnchantments(RE::StaticFunctionTag*) {
 
 void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akList) {
     if (!akList) {
-        logger::error("{} akList doesn't exist", __func__);
+        logger::warn("{} akList doesn't exist", __func__);
     }
 
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
@@ -3157,7 +3228,7 @@ void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akL
     RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
     RE::BSTArray<RE::TESForm*>::iterator itrEndType = enchantmentArray->end();
 
-    logger::info("{} enchantmentArray size[{}]", __func__, enchantmentArray->size());
+    logger::debug("{} enchantmentArray size[{}]", __func__, enchantmentArray->size());
 
     for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != itrEndType; it++) {
         RE::TESForm* baseForm = *it;
@@ -3195,12 +3266,12 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
 
     player->AddShout(akShout);
 
-    logger::info("{} {} ID {:x}", __func__, akShout->GetName(), akShout->GetFormID());
+    logger::debug("{} {} ID {:x}", __func__, akShout->GetName(), akShout->GetFormID());
 
     RE::TESWordOfPower* word = akShout->variations[0].word;
     if (word) {
         //playerRef->UnlockWord(word);
-        logger::info("{} unlock word 1 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
+        logger::debug("{} unlock word 1 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + IntToHex(int(word->GetFormID())); //didn't find a teachword function in NG, so using console command as workaround. 
         ExecuteConsoleCommand(nullptr, command, nullptr);
         player->UnlockWord(word);
@@ -3209,7 +3280,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
     word = akShout->variations[1].word;
     if (word) {
         //playerRef->UnlockWord(word);
-        logger::info("{} unlock word 2 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
+        logger::debug("{} unlock word 2 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + IntToHex(int(word->GetFormID()));
         ExecuteConsoleCommand(nullptr, command, nullptr);
         player->UnlockWord(word);
@@ -3218,7 +3289,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
     word = akShout->variations[2].word;
     if (word) {
         //playerRef->UnlockWord(word);
-        logger::info("{} unlock word 3 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
+        logger::debug("{} unlock word 3 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + IntToHex(int(word->GetFormID()));
         ExecuteConsoleCommand(nullptr, command, nullptr);
         player->UnlockWord(word);
@@ -3266,7 +3337,7 @@ void AddAndUnlockAllShouts(RE::StaticFunctionTag*, int minNumberOfWordsWithTrans
 }
 
 void SetBookSpell(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, RE::SpellItem* akSpell) {
-    logger::info("{} called", __func__);
+    logger::debug("{} called", __func__);
 
     if (!akBook) {
         logger::warn("{} akBook doesn't exist.", __func__);
@@ -3275,7 +3346,7 @@ void SetBookSpell(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, RE::SpellIt
 
     if (!akSpell) {
         akBook->data.flags.reset(RE::OBJ_BOOK::Flag::kTeachesSpell);
-        logger::info("{} akSpell is none, removing teaches spell flag", __func__);
+        logger::debug("{} akSpell is none, removing teaches spell flag", __func__);
         return;
     }
 
@@ -3386,7 +3457,7 @@ void AddSpellTomesForSpellToList(RE::StaticFunctionTag*, RE::SpellItem* akSpell,
 }
 
 std::string GetBookSkill(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook) {
-    logger::info("{} called", __func__);
+    logger::debug("{} called", __func__);
 
     if (!akBook) {
         logger::warn("{} akBook doesn't exist.", __func__);
@@ -3406,11 +3477,11 @@ void SetBookSkillInt(RE::TESObjectBOOK* akBook, int value, std::string skill = "
         if (addToSkillBooksMap) {
             skillBooksMap[akBook] = value;
         }
-        logger::info("{} book[{}] ID[{:x}] no longer teaches skill", __func__, GetFormName(akBook), akBook->GetFormID());
+        logger::debug("{} book[{}] ID[{:x}] no longer teaches skill", __func__, GetFormName(akBook), akBook->GetFormID());
         return;
     }
     else if (value < -1 || value > 163) {
-        logger::info("{} skill[{}] value[{}] not recognized", __func__, skill, value);
+        logger::debug("{} skill[{}] value[{}] not recognized", __func__, skill, value);
         return;
     }
 
@@ -3423,7 +3494,7 @@ void SetBookSkillInt(RE::TESObjectBOOK* akBook, int value, std::string skill = "
 }
 
 void SetBookSkill(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, std::string actorValue) {
-    logger::info("{} called", __func__);
+    logger::debug("{} called", __func__);
 
     if (!akBook) {
         logger::warn("{} akBook doesn't exist.", __func__);
@@ -3438,7 +3509,7 @@ std::vector<RE::TESObjectBOOK*> GetSkillBooksForSkill(RE::StaticFunctionTag*, st
     std::vector<RE::TESObjectBOOK*> v;
 
     int value = GetActorValueInt(actorValue);
-    logger::info("{} actorValue = {} int value = {}", __func__, actorValue, value);
+    logger::debug("{} actorValue = {} int value = {}", __func__, actorValue, value);
 
     if (value < 0) {
         logger::warn("{} actorValue [{}] not recognized", __func__, actorValue);
@@ -3477,7 +3548,7 @@ void AddSkillBookForSkillToList(RE::StaticFunctionTag*, std::string actorValue, 
     }
 
     int value = GetActorValueInt(actorValue);
-    logger::info("{} actorValue = {} int value = {}", __func__, actorValue, value);
+    logger::debug("{} actorValue = {} int value = {}", __func__, actorValue, value);
 
     if (value < 0) {
         logger::warn("{} actorValue [{}] not recognized", __func__, actorValue);
@@ -3556,7 +3627,7 @@ void SetAllBooksRead(RE::StaticFunctionTag*, bool read) {
 
 RE::TESForm* GetActiveEffectSource(RE::StaticFunctionTag*, RE::ActiveEffect* akEffect) {
     if (!akEffect) {
-        logger::error("{} akEffect doesn't exist", __func__);
+        logger::warn("{} akEffect doesn't exist", __func__);
         return nullptr;
     }
 
@@ -3565,7 +3636,7 @@ RE::TESForm* GetActiveEffectSource(RE::StaticFunctionTag*, RE::ActiveEffect* akE
 
 int GetActiveEffectCastingSource(RE::StaticFunctionTag*, RE::ActiveEffect* akEffect) {
     if (!akEffect) {
-        logger::error("{} akEffect doesn't exist", __func__);
+        logger::warn("{} akEffect doesn't exist", __func__);
         return -1;
     }
 
@@ -3581,7 +3652,7 @@ std::vector<RE::EffectSetting*> GetMagicEffectsForForm(RE::StaticFunctionTag*, R
 
     RE::MagicItem* magicItem = akForm->As<RE::MagicItem>();
     if (!magicItem) {
-        logger::info("{} akForm name[{}] editorID[{}] formID[{}], is not a magic item", __func__, GetFormName(akForm), GetFormEditorId(nullptr, akForm, ""), akForm->GetFormID());
+        logger::warn("{} akForm name[{}] editorID[{}] formID[{}], is not a magic item", __func__, GetFormName(akForm), GetFormEditorId(nullptr, akForm, ""), akForm->GetFormID());
         return akEffects;
     }
 
@@ -3617,10 +3688,10 @@ bool IsFormMagicItem(RE::StaticFunctionTag*, RE::TESForm* akForm) {
 //kGreater = 4,
 //kGrand = 5
 void SetSoulGemSize(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, int level) {
-    logger::info("{} called", __func__);
+    logger::debug("{} called", __func__);
 
     if (!akGem) {
-        logger::error("{}: error akGem doesn't exist", __func__);
+        logger::warn("{}: error akGem doesn't exist", __func__);
         return;
     }
 
@@ -3635,10 +3706,10 @@ void SetSoulGemSize(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, int level) {
 }
 
 void SetSoulGemCanHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, bool canCarry) {
-    logger::info("{} called", __func__);
+    logger::debug("{} called", __func__);
 
     if (!akGem) {
-        logger::error("{}: error akGem doesn't exist", __func__);
+        logger::warn("{}: error akGem doesn't exist", __func__);
         return;
     }
 
@@ -3651,10 +3722,10 @@ void SetSoulGemCanHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, boo
 }
 
 bool CanSoulGemHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem) {
-    logger::info("{} called", __func__);
+    logger::debug("{} called", __func__);
 
     if (!akGem) {
-        logger::error("{}: error akGem doesn't exist", __func__);
+        logger::warn("{}: error akGem doesn't exist", __func__);
         return false;
     }
     return akGem->CanHoldNPCSoul();
@@ -3663,12 +3734,12 @@ bool CanSoulGemHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem) {
 RE::TESCondition* condition_isPowerAttacking;
 bool IsActorPowerAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_isPowerAttacking) {
-        logger::info("creating condition_isPowerAttacking condition");
+        logger::debug("creating condition_isPowerAttacking condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsPowerAttacking;
@@ -3683,12 +3754,12 @@ bool IsActorPowerAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_IsAttacking;
 bool IsActorAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_IsAttacking) {
-        logger::info("creating condition_IsAttacking condition");
+        logger::debug("creating condition_IsAttacking condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsAttacking;
@@ -3703,12 +3774,12 @@ bool IsActorAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_isActorSpeaking;
 bool IsActorSpeaking(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_isActorSpeaking) {
-        logger::info("creating condition_isActorSpeaking condition");
+        logger::debug("creating condition_isActorSpeaking condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsTalking;
@@ -3723,12 +3794,12 @@ bool IsActorSpeaking(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_IsBlocking;
 bool IsActorBlocking(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_IsBlocking) {
-        logger::info("creating condition_IsBlocking condition");
+        logger::debug("creating condition_IsBlocking condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsBlocking;
@@ -3743,12 +3814,12 @@ bool IsActorBlocking(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_IsCasting;
 bool IsActorCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_IsCasting) {
-        logger::info("creating condition_IsCasting condition");
+        logger::debug("creating condition_IsCasting condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsCasting;
@@ -3763,12 +3834,12 @@ bool IsActorCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_IsDualCasting;
 bool IsActorDualCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_IsDualCasting) {
-        logger::info("creating condition_IsDualCasting condition");
+        logger::debug("creating condition_IsDualCasting condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsDualCasting;
@@ -3783,12 +3854,12 @@ bool IsActorDualCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_IsStaggered;
 bool IsActorStaggered(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_IsStaggered) {
-        logger::info("creating condition_IsStaggered condition");
+        logger::debug("creating condition_IsStaggered condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsStaggered;
@@ -3803,12 +3874,12 @@ bool IsActorStaggered(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_IsRecoiling;
 bool IsActorRecoiling(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_IsRecoiling) {
-        logger::info("creating condition_IsRecoiling condition");
+        logger::debug("creating condition_IsRecoiling condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsRecoiling;
@@ -3823,12 +3894,12 @@ bool IsActorRecoiling(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_IsIgnoringCombat;
 bool IsActorIgnoringCombat(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_IsIgnoringCombat) {
-        logger::info("creating condition_IsIgnoringCombat condition");
+        logger::debug("creating condition_IsIgnoringCombat condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsIgnoringCombat;
@@ -3843,12 +3914,12 @@ bool IsActorIgnoringCombat(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_IsUndead;
 bool IsActorUndead(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_IsUndead) {
-        logger::info("creating condition_IsUndead condition");
+        logger::debug("creating condition_IsUndead condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsUndead;
@@ -3863,12 +3934,12 @@ bool IsActorUndead(RE::StaticFunctionTag*, RE::Actor* akActor) {
 RE::TESCondition* condition_IsOnFlyingMount;
 bool IsActorOnFlyingMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
 
     if (!condition_IsOnFlyingMount) {
-        logger::info("creating condition_IsOnFlyingMount condition");
+        logger::debug("creating condition_IsOnFlyingMount condition");
         auto* conditionItem = new RE::TESConditionItem;
         conditionItem->data.comparisonValue.f = 1.0f;
         conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsOnFlyingMount;
@@ -3882,7 +3953,7 @@ bool IsActorOnFlyingMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 bool IsActorAMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
     return akActor->IsAMount();
@@ -3890,7 +3961,7 @@ bool IsActorAMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 bool IsActorInMidAir(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
     return akActor->IsInMidair();
@@ -3898,7 +3969,7 @@ bool IsActorInMidAir(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 bool IsActorInRagdollState(RE::StaticFunctionTag*, RE::Actor* akActor) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
     return akActor->IsInRagdollState();
@@ -3906,19 +3977,19 @@ bool IsActorInRagdollState(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 int GetDetectionLevel(RE::StaticFunctionTag*, RE::Actor* akActor, RE::Actor* akTarget) {
     if (!akActor) {
-        logger::error("{}: error, akActor doesn't exist", __func__);
+        logger::warn("{}: error, akActor doesn't exist", __func__);
         return -1;
     }
 
     if (!akTarget) {
-        logger::error("{}: error, akTarget doesn't exist", __func__);
+        logger::warn("{}: error, akTarget doesn't exist", __func__);
         return -1;
     }
     return akActor->RequestDetectionLevel(akTarget);
 }
 
 std::string GetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword) {
-    logger::info("{}", __func__);
+    logger::trace("{}", __func__);
     if (!akKeyword) {
         logger::warn("{} akKeyword doesn't exist", __func__);
         return "";
@@ -3927,7 +3998,7 @@ std::string GetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword) 
 }
 
 void SetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword, std::string keywordString) {
-    logger::info("{} {}", __func__, keywordString);
+    logger::trace("{} {}", __func__, keywordString);
 
     //if (!savedFormIDs) { savedFormIDs = new SavedFormIDs(); }
 
@@ -3939,21 +4010,21 @@ void SetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword, std::st
 }
 
 RE::BGSKeyword* CreateKeyword(RE::StaticFunctionTag*) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSKeyword>()->Create();
     if (!newForm) {
-        logger::error("{} failed", __func__);
+        logger::warn("{} failed", __func__);
     }
     else {
-        logger::info("{} success, dynamic form[{}]", __func__, newForm->IsDynamicForm());
+        logger::debug("{} success, dynamic form[{}]", __func__, newForm->IsDynamicForm());
     }
 
     return newForm;
 }
 
 RE::BGSListForm* CreateFormList(RE::StaticFunctionTag*, RE::BGSListForm* formListFiller) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     //RE::BGS
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSListForm>()->Create();
@@ -3961,9 +4032,9 @@ RE::BGSListForm* CreateFormList(RE::StaticFunctionTag*, RE::BGSListForm* formLis
         logger::error("{} failed", __func__);
     }
     else {
-        logger::info("{} success", __func__);
+        logger::debug("{} success", __func__);
         if (formListFiller) {
-            logger::info("{} IsDynamicForm[{}]", __func__, formListFiller->IsDynamicForm());
+            logger::debug("{} IsDynamicForm[{}]", __func__, formListFiller->IsDynamicForm());
             int max = formListFiller->forms.size();
             for (int i = 0; i < max; i++) {
                 newForm->AddForm(formListFiller->forms[i]);
@@ -3974,14 +4045,14 @@ RE::BGSListForm* CreateFormList(RE::StaticFunctionTag*, RE::BGSListForm* formLis
 }
 
 RE::BGSColorForm* CreateColorForm(RE::StaticFunctionTag*, int color) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSColorForm>()->Create();
     if (!newForm) {
         logger::error("{} failed", __func__);
     }
     else {
-        logger::info("{} success", __func__);
+        logger::debug("{} success", __func__);
         newForm->color = color;
     }
 
@@ -3989,7 +4060,7 @@ RE::BGSColorForm* CreateColorForm(RE::StaticFunctionTag*, int color) {
 }
 
 RE::BGSConstructibleObject* CreateConstructibleObject(RE::StaticFunctionTag*) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     //RE::BGSConstructibleObject
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSConstructibleObject>()->Create();
@@ -3997,35 +4068,35 @@ RE::BGSConstructibleObject* CreateConstructibleObject(RE::StaticFunctionTag*) {
         logger::error("{} failed", __func__);
     }
     else {
-        logger::info("{} success", __func__);
+        logger::debug("{} success", __func__);
     }
 
     return newForm;
 }
 
 RE::BGSTextureSet* CreateTextureSet(RE::StaticFunctionTag*) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSTextureSet>()->Create();
     if (!newForm) {
         logger::error("{} failed", __func__);
     }
     else {
-        logger::info("{} success", __func__);
+        logger::debug("{} success", __func__);
     }
 
     return newForm;
 }
 
 RE::TESSound* CreateSoundMarker(RE::StaticFunctionTag*) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::TESSound>()->Create();
     if (!newForm) {
         logger::error("{} failed", __func__);
     }
     else {
-        logger::info("{} success", __func__);
+        logger::debug("{} success", __func__);
     }
 
     return newForm;
@@ -4048,15 +4119,15 @@ void CreateSoundEvent(RE::TESForm* soundOrDescriptor, RE::BSSoundHandle& soundHa
 int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* akSource, float volume,
     RE::TESForm* eventReceiverForm, RE::BGSBaseAlias* eventReceiverAlias, RE::ActiveEffect* eventReceiverActiveEffect) {
 
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!akSound) {
-        logger::error("{}: error, akSound doesn't exist", __func__);
+        logger::warn("{}: error, akSound doesn't exist", __func__);
         return -1;
     }
 
     if (!akSource) {
-        logger::error("{}: error, akSource doesn't exist", __func__);
+        logger::warn("{}: error, akSource doesn't exist", __func__);
         return -1;
     }
 
@@ -4101,15 +4172,15 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
 int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSoundDescriptor, RE::TESObjectREFR* akSource, float volume,
     RE::TESForm* eventReceiverForm, RE::BGSBaseAlias* eventReceiverAlias, RE::ActiveEffect* eventReceiverActiveEffect) {
 
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!akSoundDescriptor) {
-        logger::error("{}: error, akSoundDescriptor doesn't exist", __func__);
+        logger::warn("{}: error, akSoundDescriptor doesn't exist", __func__);
         return -1;
     }
 
     if (!akSource) {
-        logger::error("{}: error, akSource doesn't exist", __func__);
+        logger::warn("{}: error, akSource doesn't exist", __func__);
         return -1;
     }
 
@@ -4153,7 +4224,7 @@ int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSo
 
 RE::BGSSoundCategory* GetParentSoundCategory(RE::StaticFunctionTag*, RE::BGSSoundCategory* akSoundCategory) {
     if (!akSoundCategory) {
-        logger::error("{}: error, akSoundCategory doesn't exist", __func__);
+        logger::warn("{}: error, akSoundCategory doesn't exist", __func__);
         return nullptr;
     }
 
@@ -4162,12 +4233,12 @@ RE::BGSSoundCategory* GetParentSoundCategory(RE::StaticFunctionTag*, RE::BGSSoun
 
 RE::BGSSoundCategory* GetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSoundDescriptor) {
     if (!akSoundDescriptor) {
-        logger::error("{}: error, akSoundDescriptor doesn't exist", __func__);
+        logger::warn("{}: error, akSoundDescriptor doesn't exist", __func__);
         return nullptr;
     }
 
     if (!akSoundDescriptor->soundDescriptor) {
-        logger::error("{}: error, akSoundDescriptor->soundDescriptor doesn't exist", __func__);
+        logger::warn("{}: error, akSoundDescriptor->soundDescriptor doesn't exist", __func__);
         return nullptr;
     }
 
@@ -4176,12 +4247,12 @@ RE::BGSSoundCategory* GetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*,
 
 void SetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSoundDescriptor, RE::BGSSoundCategory* akSoundCategory) {
     if (!akSoundCategory) {
-        logger::error("{}: error, akSoundCategory doesn't exist", __func__);
+        logger::warn("{}: error, akSoundCategory doesn't exist", __func__);
         return;
     }
 
     if (!akSoundDescriptor) {
-        logger::error("{}: error, akSoundDescriptor doesn't exist", __func__);
+        logger::warn("{}: error, akSoundDescriptor doesn't exist", __func__);
         return;
     }
 
@@ -4195,7 +4266,7 @@ void SetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDesc
 
 float GetSoundCategoryVolume(RE::StaticFunctionTag*, RE::BGSSoundCategory* akCategory) {
     if (!akCategory) {
-        logger::error("{}: error, akCategory doesn't exist", __func__);
+        logger::warn("{}: error, akCategory doesn't exist", __func__);
         return -1.0;
     }
 
@@ -4204,7 +4275,7 @@ float GetSoundCategoryVolume(RE::StaticFunctionTag*, RE::BGSSoundCategory* akCat
 
 float GetSoundCategoryFrequency(RE::StaticFunctionTag*, RE::BGSSoundCategory* akCategory) {
     if (!akCategory) {
-        logger::error("{}: error, akCategory doesn't exist", __func__);
+        logger::warn("{}: error, akCategory doesn't exist", __func__);
         return -1.0;
     }
 
@@ -4315,7 +4386,7 @@ void EraseFinishedMenuModeTimers() {
                 RemoveFromVectorByValue(currentMenuModeTimers, timer);
                 delete timer;
                 timer = nullptr;
-                logger::info("erased menuModeTimer, Timers left = {}", currentMenuModeTimers.size());
+                logger::debug("erased menuModeTimer, Timers left = {}", currentMenuModeTimers.size());
             }
         }
         else {
@@ -5576,10 +5647,10 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
 
 //menuModeTimer=======================================================================================================================
 void StartMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -5593,7 +5664,7 @@ void StartMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver
     MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
     if (timer) {
         timer->cancelled = true;
-        logger::info("{} reset timer on form [{}] ID[{:x}] timerID[{}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID(), aiTimerID);
+        logger::debug("{} reset timer on form [{}] ID[{:x}] timerID[{}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID(), aiTimerID);
     }
 
     MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
@@ -5601,10 +5672,10 @@ void StartMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver
 }
 
 void CancelMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called, ID {}", __func__, aiTimerID);
+    logger::trace("{} called, ID {}", __func__, aiTimerID);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -5622,10 +5693,10 @@ void CancelMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceive
 }
 
 float GetTimeElapsedOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -5649,10 +5720,10 @@ float GetTimeElapsedOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eve
 }
 
 float GetTimeLeftOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -5677,10 +5748,10 @@ float GetTimeLeftOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventR
 
 //NoMenuModeTimer=======================================================================================================================
 void StartNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called, time: {}", __func__, afInterval);
+    logger::trace("{} called, time: {}", __func__, afInterval);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -5701,10 +5772,10 @@ void StartNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiv
 }
 
 void CancelNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -5723,10 +5794,10 @@ void CancelNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventRecei
 }
 
 float GetTimeElapsedOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -5750,10 +5821,10 @@ float GetTimeElapsedOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* e
 }
 
 float GetTimeLeftOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -5778,10 +5849,10 @@ float GetTimeLeftOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* even
 
 //timer=======================================================================================================================
 void StartTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called, time: {}", __func__, afInterval);
+    logger::trace("{} called, time: {}", __func__, afInterval);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -5802,10 +5873,10 @@ void StartTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float 
 }
 
 void CancelTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -5824,10 +5895,10 @@ void CancelTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int a
 }
 
 float GetTimeElapsedOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -5851,10 +5922,10 @@ float GetTimeElapsedOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiv
 }
 
 float GetTimeLeftOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -5879,10 +5950,10 @@ float GetTimeLeftOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver,
 
 //gametime timer===========================================================================================================================
 void StartGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -5903,10 +5974,10 @@ void StartGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, fl
 }
 
 void CancelGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -5925,10 +5996,10 @@ void CancelGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, i
 }
 
 float GetTimeElapsedOnGameTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -5952,10 +6023,10 @@ float GetTimeElapsedOnGameTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventRe
 }
 
 float GetTimeLeftOnGameTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -5982,10 +6053,10 @@ float GetTimeLeftOnGameTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventRecei
 
 //menu Mode Timer alias=======================================================================================================================
 void StartMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -5999,7 +6070,7 @@ void StartMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventRe
     MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
     if (timer) {
         timer->cancelled = true;
-        logger::info("{} reset timer on Alias [{}] ID[{:x}] timerID[{}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID, aiTimerID);
+        logger::debug("{} reset timer on Alias [{}] ID[{:x}] timerID[{}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID, aiTimerID);
     }
 
     MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
@@ -6007,10 +6078,10 @@ void StartMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventRe
 }
 
 void CancelMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called, ID {}", __func__, aiTimerID);
+    logger::trace("{} called, ID {}", __func__, aiTimerID);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6029,10 +6100,10 @@ void CancelMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventR
 }
 
 float GetTimeElapsedOnMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6056,10 +6127,10 @@ float GetTimeElapsedOnMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlia
 }
 
 float GetTimeLeftOnMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6084,10 +6155,10 @@ float GetTimeLeftOnMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* 
 
 //NoMenuModeTimer Alias=======================================================================================================================
 void StartNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called, time: {}", __func__, afInterval);
+    logger::trace("{} called, time: {}", __func__, afInterval);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6108,10 +6179,10 @@ void StartNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* event
 }
 
 void CancelNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6130,10 +6201,10 @@ void CancelNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* even
 }
 
 float GetTimeElapsedOnNoMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6157,10 +6228,10 @@ float GetTimeElapsedOnNoMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAl
 }
 
 float GetTimeLeftOnNoMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6185,10 +6256,10 @@ float GetTimeLeftOnNoMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias
 
 //timer alias=======================================================================================================================
 void StartTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6209,10 +6280,10 @@ void StartTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, 
 }
 
 void CancelTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6231,10 +6302,10 @@ void CancelTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver,
 }
 
 float GetTimeElapsedOnTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6258,10 +6329,10 @@ float GetTimeElapsedOnTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* event
 }
 
 float GetTimeLeftOnTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6286,10 +6357,10 @@ float GetTimeLeftOnTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventRec
 
 //gametime timer alias===========================================================================================================================
 void StartGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6310,10 +6381,10 @@ void StartGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiv
 }
 
 void CancelGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6332,10 +6403,10 @@ void CancelGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventRecei
 }
 
 float GetTimeElapsedOnGameTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6359,10 +6430,10 @@ float GetTimeElapsedOnGameTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* e
 }
 
 float GetTimeLeftOnGameTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6389,10 +6460,10 @@ float GetTimeLeftOnGameTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* even
 
 //menu Mode Timer ActiveMagicEffect=======================================================================================================================
 void StartMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6406,7 +6477,7 @@ void StartMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEff
     MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
     if (timer) {
         timer->cancelled = true;
-        logger::info("{} reset timer on ActiveMagicEffect [{}] ID[{:x}] timerID[{}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID, aiTimerID);
+        logger::debug("{} reset timer on ActiveMagicEffect [{}] ID[{:x}] timerID[{}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID, aiTimerID);
     }
 
     MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
@@ -6414,10 +6485,10 @@ void StartMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEff
 }
 
 void CancelMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called, ID {}", __func__, aiTimerID);
+    logger::trace("{} called, ID {}", __func__, aiTimerID);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6436,10 +6507,10 @@ void CancelMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEf
 }
 
 float GetTimeElapsedOnMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6464,10 +6535,10 @@ float GetTimeElapsedOnMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE:
 
 
 float GetTimeLeftOnMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6492,10 +6563,10 @@ float GetTimeLeftOnMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::Ac
 
 //NoMenuModeTimer ActiveMagicEffect=======================================================================================================================
 void StartNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called, time: {}", __func__, afInterval);
+    logger::trace("{} called, time: {}", __func__, afInterval);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6516,10 +6587,10 @@ void StartNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveE
 }
 
 void CancelNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6538,10 +6609,10 @@ void CancelNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::Active
 }
 
 float GetTimeElapsedOnNoMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6565,10 +6636,10 @@ float GetTimeElapsedOnNoMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, R
 }
 
 float GetTimeLeftOnNoMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6593,10 +6664,10 @@ float GetTimeLeftOnNoMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::
 
 //timer ActiveMagicEffect=======================================================================================================================
 void StartTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6617,10 +6688,10 @@ void StartTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eve
 }
 
 void CancelTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6639,10 +6710,10 @@ void CancelTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* ev
 }
 
 float GetTimeElapsedOnTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6666,10 +6737,10 @@ float GetTimeElapsedOnTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveE
 }
 
 float GetTimeLeftOnTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6694,10 +6765,10 @@ float GetTimeLeftOnTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffe
 
 //gametime timer ActiveMagicEffect===========================================================================================================================
 void StartGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, float afInterval, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6718,10 +6789,10 @@ void StartGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect*
 }
 
 void CancelGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
@@ -6740,10 +6811,10 @@ void CancelGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect
 }
 
 float GetTimeElapsedOnGameTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6767,10 +6838,10 @@ float GetTimeElapsedOnGameTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::Act
 }
 
 float GetTimeLeftOnGameTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
-    logger::info("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
@@ -6887,7 +6958,7 @@ struct EventData {
                 int handleIndex = GetIndexInVector(it->second, handle);
                 if (handleIndex == -1) { //handle not already added for this form (activator param)
                     it->second.push_back(handle);
-                    logger::info("{}: akForm[{}] ID[{:x}] found, handles sixe[{}]", __func__, GetFormName(akForm), akForm->GetFormID(), it->second.size());
+                    logger::debug("{}: akForm[{}] ID[{:x}] found, handles sixe[{}]", __func__, GetFormName(akForm), akForm->GetFormID(), it->second.size());
                 }
             }
             else { //form not found
@@ -6895,7 +6966,7 @@ struct EventData {
                 handles.push_back(handle);
                 eventFormHandles.insert(std::pair<RE::TESForm*, std::vector<RE::VMHandle>>(akForm, handles));
 
-                logger::info("{}: akForm[{}] ID[{:x}] doesn't already have handles, handles size[{}] eventFormHandles size[{}]", __func__, GetFormName(akForm), akForm->GetFormID(), handles.size(), eventFormHandles.size());
+                logger::debug("{}: akForm[{}] ID[{:x}] doesn't already have handles, handles size[{}] eventFormHandles size[{}]", __func__, GetFormName(akForm), akForm->GetFormID(), handles.size(), eventFormHandles.size());
             }
         }
     }
@@ -6951,11 +7022,11 @@ struct EventData {
             InsertIntoFormHandles(handle, paramFilter, eventParamMaps[paramFilterIndex]);
 
             if (eventSinkIndex == EventEnum_OnCombatStateChanged && paramFilterIndex == 0) {
-                logger::info("{}: adding handle for Combat State change", __func__);
+                logger::debug("{}: adding handle for Combat State change", __func__);
                 if (paramFilter->As<RE::Actor>() == playerRef) {
                     //playerForm = paramFilter;
                     bRegisteredForPlayerCombatChange = true;
-                    logger::info("{}: bRegisteredForPlayerCombatChange = true", __func__);
+                    logger::debug("{}: bRegisteredForPlayerCombatChange = true", __func__);
                 }
             }
         }
@@ -6978,7 +7049,7 @@ struct EventData {
             if (index < 0) {
                 index = 0;
             }
-            logger::info("{}: eventSinkIndex [{}] Index = [{}]", __func__, eventSinkIndex, index);
+            logger::debug("{}: eventSinkIndex [{}] Index = [{}]", __func__, eventSinkIndex, index);
             EraseFromFormHandles(handle, paramFilter, eventParamMaps[paramFilterIndex]);
         }
 
@@ -7071,6 +7142,7 @@ struct EventData {
 
 std::vector<EventData*> eventDataPtrs;
 
+
 struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* event, RE::BSTEventSource<RE::TESHitEvent>*/*source*/) {
 
@@ -7091,14 +7163,19 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_HitEvent]->globalHandles;
 
-        if (source) {
-            RE::TESObjectWEAP* weapon = source->As<RE::TESObjectWEAP>();
-            if (weapon) {
-                if (weapon->IsBow() || weapon->IsCrossbow()) {
-                    if (attacker) {
-                        RE::Actor* actorRef = attacker->As<RE::Actor>();
-                        if (actorRef) {
-                            ammo = actorRef->GetCurrentAmmo();
+        if (!bBashAttack) {
+            if (formIsBowOrCrossbow(source)) {
+                if (attacker) {
+                    RE::Actor* actorRef = attacker->As<RE::Actor>();
+                    if (actorRef) {
+                        ammo = actorRef->GetCurrentAmmo();
+                        auto it = trackedActorAmmoMap.find(attacker);
+                        if (it != trackedActorAmmoMap.end()) { //akActorRef found in trackedActorAmmoMap
+                            //ammo is now tracked from animation event "BowDraw"
+                            //it->second is the ammo the attacker had equipped the last time they drew a bow or crossbow 
+                            if (it->second) {
+                                ammo = it->second;
+                            }
                         }
                     }
                 }
@@ -7113,8 +7190,8 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
 
         RemoveDuplicates(handles);
 
-        logger::info("HitEvent: attacker[{}]  target[{}]  source[{}]  ammo[{}]  projectile[{}]", GetFormName(attacker), GetFormName(target), GetFormName(source), GetFormName(ammo), GetFormName(projectile));
-        logger::info("HitEvent: powerAttack[{}]  SneakAttack[{}]  BashAttack[{}]  HitBlocked[{}]  ", powerAttack, SneakAttack, bBashAttack, HitBlocked);
+        logger::trace("HitEvent: attacker[{}]  target[{}]  source[{}]  ammo[{}]  projectile[{}]", GetFormName(attacker), GetFormName(target), GetFormName(source), GetFormName(ammo), GetFormName(projectile));
+        logger::trace("HitEvent: powerAttack[{}]  SneakAttack[{}]  BashAttack[{}]  HitBlocked[{}]", powerAttack, SneakAttack, bBashAttack, HitBlocked);
 
         auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)attacker, (RE::TESObjectREFR*)target, (RE::TESForm*)source,
             (RE::TESAmmo*)ammo, (RE::BGSProjectile*)projectile, (bool)powerAttack, (bool)SneakAttack, (bool)bBashAttack, (bool)HitBlocked);
@@ -7126,7 +7203,7 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
 };
 
 void CheckForPlayerCombatStatusChange() {
-    logger::info("{}", __func__);
+    logger::trace("{}", __func__);
 
     bool playerInCombat = player->IsInCombat();
     if (bPlayerIsInCombat != playerInCombat) {
@@ -7147,7 +7224,7 @@ void CheckForPlayerCombatStatusChange() {
             }
         }
 
-        logger::info("{} target[{}]", __func__, GetFormName(target));
+        logger::debug("{} target[{}]", __func__, GetFormName(target));
 
         // RE::TESForm* Target = .attackedMember.get().get();
 
@@ -7174,7 +7251,7 @@ struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
         RE::TESObjectREFR* Target = event->targetActor.get();
         //RE::Actor* actorRef = actorObjRef->As<RE::Actor>();
         int combatState = static_cast<int>(event->newState.get());
-        //logger::info("Actor {} changed to combat state to {} with", GetFormName(actorObjRef), combatState);
+        //logger::trace("Actor {} changed to combat state to {} with", GetFormName(actorObjRef), combatState);
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->globalHandles;
         CombineEventHandles(handles, actorObjRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
@@ -7266,7 +7343,7 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::info("Death Event");
+        logger::trace("Death Event");
 
         RE::TESObjectREFR* victimRef;
         if (event->actorDying) {
@@ -7292,7 +7369,7 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
             }
             else {
                 victim = static_cast<RE::Actor*>(victimRef);
-                logger::info("death event: valid victimRef pointer");
+                logger::debug("death event: valid victimRef pointer");
             }
         }
 
@@ -7309,13 +7386,13 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
             }
             else {
                 killer = static_cast<RE::Actor*>(killerRef);
-                logger::info("death event: valid killerRef pointer");
+                logger::debug("death event: valid killerRef pointer");
             }
         }
 
         bool dead = event->dead;
 
-        logger::info("Death Event: victim[{}], Killer[{}], Dead[{}]", GetFormName(victim), GetFormName(killer), dead);
+        logger::trace("Death Event: victim[{}], Killer[{}], Dead[{}]", GetFormName(victim), GetFormName(killer), dead);
 
         RE::BSFixedString sEvent;
         int eventIndex;
@@ -7341,6 +7418,72 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
     }
 };
 
+//BSAnimationGraphEvent
+
+struct AnimationEventSink : public RE::BSTEventSink<RE::BSAnimationGraphEvent> {
+    RE::BSEventNotifyControl ProcessEvent(const RE::BSAnimationGraphEvent* event, RE::BSTEventSource<RE::BSAnimationGraphEvent>*/*source*/) {
+        if (!event) {
+            logger::error("AnimationEventSink event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        //no hit events registered, no need to track ammo
+        if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (event->tag == "bowDraw") {
+            if (event->holder) {
+                RE::TESBoundObject* boundObj = event->holder->data.objectReference;
+                if (boundObj) {
+                    RE::TESObjectREFR* ref = const_cast<RE::TESObjectREFR*>(event->holder);
+                    if (ref) {
+                        RE::Actor* actor = ref->As<RE::Actor>();
+                        if (actor) {
+                            auto* ammo = actor->GetCurrentAmmo();
+                            if (ammo) {
+                                auto it = trackedActorAmmoMap.find(actor);
+                                if (it != trackedActorAmmoMap.end()) { //akActorRef found in trackedActorAmmoMap
+                                    it->second = ammo;
+                                }
+                                else { //akActorRef not found in trackedActorAmmoMap
+                                    trackedActorAmmoMap.insert(std::pair<RE::TESObjectREFR*, RE::TESAmmo*>(ref, ammo));
+                                }
+                                logger::trace("Animation Event Tag[{}] Saved Ammo[{}] for Actor[{}] ", event->tag, GetFormName(ammo), GetFormName(actor));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+AnimationEventSink* animationEventSink;
+
+void RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
+    if (actorRef) {
+        RE::Actor* actor = actorRef->As<RE::Actor>();
+        if (actorHasBowEquipped(actor)) {
+            if (GetIndexInVector(actorsRegisteredForAnimationEvents, actor) == -1) {
+                actorsRegisteredForAnimationEvents.push_back(actorRef);
+                actor->AddAnimationGraphEventSink(animationEventSink);
+                logger::trace("{}: registering actor [{}] for animation events", __func__, GetFormName(actorRef));
+            }
+        }
+    }
+}
+
+//register all actors with bows or crossbows equipped for animation events to track equipped ammo with "bowDraw" event
+void RegisterActorsForBowDrawAnimEvents() {
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+    for (auto& [id, form] : *allForms) {
+        RE::TESObjectREFR* ref = form->AsReference();
+        RegisterActorForBowDrawAnimEvent(ref);
+    }
+}
+
 struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* event, RE::BSTEventSource<RE::TESEquipEvent>*/*source*/) {
 
@@ -7348,35 +7491,78 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
             logger::error("equip event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
-        logger::info("Equip Event");
 
         RE::TESObjectREFR* akActorRef = event->actor.get();
-        //RE::Actor* akActor = akActorRef->As<RE::Actor>();
+        RE::Actor* akActor = nullptr;
+
+        if (akActorRef) {
+            akActor = akActorRef->As<RE::Actor>();
+        }
+
         RE::TESForm* baseObject = RE::TESForm::LookupByID(event->baseObject);
-        RE::TESForm* ref = RE::TESForm::LookupByID(event->originalRefr);
         bool equipped = event->equipped;
-
-        logger::info("Equip Event: Actor[{}], BaseObject[{}], Ref[{}] Equipped[{}]", GetFormName(akActorRef), GetFormName(baseObject), GetFormName(ref), equipped);
-
         int eventIndex;
 
         if (equipped) {
-            eventIndex = EventEnum_OnObjectEquipped;
+            if (formIsBowOrCrossbow(baseObject)) {
+                if (akActor) {
+                    if (GetIndexInVector(actorsRegisteredForAnimationEvents, akActorRef) == -1) {
+                        akActor->AddAnimationGraphEventSink(animationEventSink);
+                        actorsRegisteredForAnimationEvents.push_back(akActorRef);
+                        logger::debug("equip event: registering actor [{}] for animation events", GetFormName(akActor));
+                    }
+                }
+            }
+
+            if (eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded) {
+                eventIndex = EventEnum_OnObjectEquipped;
+            }
+            else {
+                eventIndex = -1;
+            }
         }
         else {
-            eventIndex = EventEnum_OnObjectUnequipped;
+            if (formIsBowOrCrossbow(baseObject)) {
+                if (akActor) { //trackedActorAmmoMap
+                    if (!actorHasBowEquipped(akActor)) {
+                        if (GetIndexInVector(actorsRegisteredForAnimationEvents, akActorRef) != -1) {
+                            akActor->RemoveAnimationGraphEventSink(animationEventSink);
+                            RemoveFromVectorByValue(actorsRegisteredForAnimationEvents, akActorRef);
+                            auto it = trackedActorAmmoMap.find(akActorRef);
+                            if (it != trackedActorAmmoMap.end()) { //akActorRef found in trackedActorAmmoMap
+                                it->second = nullptr;
+                                trackedActorAmmoMap.erase(it);
+                            }
+                            logger::debug("{}: Unregistering actor [{}] for animation events", __func__, GetFormName(akActor));
+                        }
+                    }
+                }
+            }
+
+            if (eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded) {
+                eventIndex = EventEnum_OnObjectUnequipped;
+            }
+            else {
+                eventIndex = -1;
+            }
         }
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
+        if (eventIndex != -1) {
+            RE::TESForm* ref = RE::TESForm::LookupByID(event->originalRefr);
 
-        CombineEventHandles(handles, akActorRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
-        CombineEventHandles(handles, baseObject, eventDataPtrs[eventIndex]->eventParamMaps[1]);
-        CombineEventHandles(handles, ref, eventDataPtrs[eventIndex]->eventParamMaps[2]);
+            logger::trace("Equip Event: Actor[{}], BaseObject[{}], Ref[{}] Equipped[{}]", GetFormName(akActorRef), GetFormName(baseObject), GetFormName(ref), equipped);
 
-        RemoveDuplicates(handles);
+            std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
 
-        auto* args = RE::MakeFunctionArguments((RE::Actor*)akActorRef, (RE::TESForm*)baseObject, (RE::TESObjectREFR*)ref);
-        SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
+            CombineEventHandles(handles, akActorRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
+            CombineEventHandles(handles, baseObject, eventDataPtrs[eventIndex]->eventParamMaps[1]);
+            CombineEventHandles(handles, ref, eventDataPtrs[eventIndex]->eventParamMaps[2]);
+
+            RemoveDuplicates(handles);
+
+            auto* args = RE::MakeFunctionArguments((RE::Actor*)akActorRef, (RE::TESForm*)baseObject, (RE::TESObjectREFR*)ref);
+            SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
+        }
 
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -7390,7 +7576,7 @@ struct WaitStartEventSink : public RE::BSTEventSink<RE::TESWaitStartEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::info("Wait Start Event");
+        logger::trace("Wait Start Event");
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStart]->globalHandles;
 
@@ -7411,7 +7597,7 @@ struct WaitStopEventSink : public RE::BSTEventSink<RE::TESWaitStopEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::info("Wait Stop Event");
+        logger::trace("Wait Stop Event");
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStop]->globalHandles;
 
@@ -7432,7 +7618,7 @@ struct MagicEffectApplyEventSink : public RE::BSTEventSink<RE::TESMagicEffectApp
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::info("MagicEffectApply Event");
+        logger::trace("MagicEffectApply Event");
 
         RE::TESObjectREFR* caster = event->caster.get();
         RE::TESObjectREFR* target = event->target.get();
@@ -7461,7 +7647,7 @@ struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::info("Lock Changed Event");
+        logger::trace("Lock Changed Event");
 
         RE::TESObjectREFR* lockedObject = event->lockedObject.get();
 
@@ -7491,7 +7677,7 @@ struct OpenCloseEventSink : public RE::BSTEventSink<RE::TESOpenCloseEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::info("Open Close Event");
+        logger::trace("Open Close Event");
 
 
         RE::TESObjectREFR* activatorRef = event->activeRef.get();
@@ -7527,12 +7713,12 @@ struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::info("spell cast Event");
+        logger::trace("spell cast Event");
 
         RE::TESObjectREFR* caster = event->object.get();
         RE::TESForm* spell = RE::TESForm::LookupByID(event->spell);
 
-        //logger::info("spell cast: [{}] obj [{}]", GetFormName(spell), GetFormName(caster));
+        //logger::trace("spell cast: [{}] obj [{}]", GetFormName(spell), GetFormName(caster));
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnSpellCast]->globalHandles;
 
@@ -7559,12 +7745,12 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
         //logger::debug("Container Change Event");
 
         RE::TESForm* baseObj = RE::TESForm::LookupByID(event->baseObj);
-       
+
         RE::TESObjectREFR* itemReference = nullptr;
         auto refHandle = event->reference;
         if (refHandle) {
             //logger::debug("refHandle found");
-            
+
             RE::TESForm* refForm = RE::TESForm::LookupByID(refHandle.native_handle());
             if (refForm) {
                 //logger::debug("refForm found");
@@ -7626,7 +7812,7 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::info("Action Event");
+        logger::trace("Action Event");
 
         RE::Actor* akActor = event->actor;
 
@@ -7686,7 +7872,7 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
             break;
         }
 
-        logger::info("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", GetFormName(akActor), GetFormName(akSource),
+        logger::trace("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", GetFormName(akActor), GetFormName(akSource),
             actionTypeStrings[type], actionSlotStrings[slot]);
 
         if (eventIndex == -1) {
@@ -7719,7 +7905,7 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
                     auto* argsB = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESForm*)leftHandSource, (int)0);
                     SendEvents(handlesB, eventDataPtrs[eventIndex]->sEvent, argsB);
 
-                    logger::info("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", GetFormName(akActor), GetFormName(leftHandSource),
+                    logger::trace("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", GetFormName(akActor), GetFormName(leftHandSource),
                         actionTypeStrings[type], actionSlotStrings[0]);
                 }
             }
@@ -7745,7 +7931,7 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         //this sink is for managing timers and GetCurrentMenuOpen function.
 
         if (!event) {
-            logger::error("MenuOpenClose Event is nullptr");
+            logger::error("MenuOpenClose Event doesn't exist!");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -7757,13 +7943,13 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                 if (ui->GameIsPaused() && !gamePaused) {
                     gamePaused = true;
                     lastTimeGameWasPaused = std::chrono::system_clock::now();
-                    logger::debug("game was paused");
+                    logger::trace("game was paused");
                 }
 
                 if (!inMenuMode) { //opened menu
                     inMenuMode = true;
                     lastTimeMenuWasOpened = std::chrono::system_clock::now();
-                    logger::debug("inMenuMode = true");
+                    logger::trace("inMenuMode = true");
                 }
                 menusCurrentlyOpen.push_back(event->menuName);
             }
@@ -7772,19 +7958,19 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                     gamePaused = false;
                     auto now = std::chrono::system_clock::now();
                     UpdateTimers(timePointDiffToFloat(now, lastTimeGameWasPaused));
-                    logger::debug("game was unpaused");
+                    logger::trace("game was unpaused");
                 }
 
                 //menusCurrentlyOpen.erase(std::remove(menusCurrentlyOpen.begin(), menusCurrentlyOpen.end(), event->menuName), menusCurrentlyOpen.end());
                 RemoveFromVectorByValue(menusCurrentlyOpen, event->menuName);
                 CheckMenusCurrentlyOpen();
-                //logger::info("menu close, number of menusCurrentlyOpen = {}", menusCurrentlyOpen.size());
+                //logger::trace("menu close, number of menusCurrentlyOpen = {}", menusCurrentlyOpen.size());
 
                 if (menusCurrentlyOpen.size() == 0) { //closed menu
                     inMenuMode = false;
                     auto now = std::chrono::system_clock::now();
                     UpdateNoMenuModeTimers(timePointDiffToFloat(now, lastTimeMenuWasOpened));
-                    logger::debug("inMenuMode = false");
+                    logger::trace("inMenuMode = false");
                 }
             }
         }
@@ -7817,12 +8003,38 @@ bool ShouldActorActionEventSinkBeAdded() {
     return false;
 }
 
+//hit events use the equip event to track equipped ammo on actors
+bool AddEquipEventSink() {
+    logger::trace("{}", __func__);
+    if (!eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && !eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->sinkAdded){
+        if (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() || !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty() || !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
+            eventSourceholder->AddEventSink(equipEventSink); 
+            RegisterActorsForBowDrawAnimEvents();
+            logger::debug("{} Equip Event Sink Added", __func__);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool RemoveEquipEventSink() {
+    logger::trace("{}", __func__);
+    if (!eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && !eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
+        if (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() && !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty() && !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
+            eventSourceholder->RemoveEventSink(equipEventSink);
+            logger::debug("{} Equip Event Sink Removed", __func__);
+            return true;
+        }
+    }
+    return false;
+}
+
 void AddSink(int index) {
 
     switch (index) {
     case EventEnum_OnCombatStateChanged:
         if (!eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded && !eventDataPtrs[EventEnum_OnCombatStateChanged]->isEmpty()) {
-            logger::info("{}, EventEnum_OnCombatStateChanged sink added", __func__);
+            logger::debug("{}, EventEnum_OnCombatStateChanged sink added", __func__);
             eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded = true;
             eventSourceholder->AddEventSink(combatEventSink);
         }
@@ -7832,7 +8044,7 @@ void AddSink(int index) {
 
     case EventEnum_FurnitureExit:
         if (!eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded && (!eventDataPtrs[EventEnum_FurnitureEnter]->isEmpty() || !eventDataPtrs[EventEnum_FurnitureExit]->isEmpty())) {
-            logger::info("{}, EventEnum_FurnitureExit sink added", __func__);
+            logger::debug("{}, EventEnum_FurnitureExit sink added", __func__);
             eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded = true;
             eventSourceholder->AddEventSink(furnitureEventSink);
         }
@@ -7840,7 +8052,7 @@ void AddSink(int index) {
 
     case EventEnum_OnActivate:
         if (!eventDataPtrs[EventEnum_OnActivate]->sinkAdded && !eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
-            logger::info("{}, EventEnum_OnActivate sink added", __func__);
+            logger::debug("{}, EventEnum_OnActivate sink added", __func__);
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = true;
             eventSourceholder->AddEventSink(activateEventSink);
         }
@@ -7848,35 +8060,48 @@ void AddSink(int index) {
 
     case EventEnum_HitEvent:
         if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-            logger::info("{}, EventEnum_hitEvent sink added", __func__);
+            if (AddEquipEventSink()); {
+                logger::debug("{}, EventEnum_HitEvent Equip event sink added", __func__);
+            }
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = true;
             eventSourceholder->AddEventSink(hitEventSink);
-        }
+            logger::debug("{}, EventEnum_hitEvent sink added", __func__);
+        } 
         break;
 
     case EventEnum_DeathEvent:
 
     case EventEnum_DyingEvent:
         if (!eventDataPtrs[EventEnum_DeathEvent]->sinkAdded && (!eventDataPtrs[EventEnum_DeathEvent]->isEmpty() || !eventDataPtrs[EventEnum_DyingEvent]->isEmpty())) {
-            logger::info("{}, EventEnum_DyingEvent sink added", __func__);
+            logger::debug("{}, EventEnum_DyingEvent sink added", __func__);
             eventDataPtrs[EventEnum_DeathEvent]->sinkAdded = true;
             eventSourceholder->AddEventSink(deathEventSink);
         }
         break;
 
     case EventEnum_OnObjectEquipped:
+        if (!eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && !eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty()) {
+            if (AddEquipEventSink()) {
+                logger::debug("{}, EventEnum_OnObjectEquipped Equip event sink added", __func__);
+            }
+            eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = true;
+            logger::debug("{}, EventEnum_OnObjectEquipped sink added", __func__);
+        }
+        break;
 
     case EventEnum_OnObjectUnequipped:
-        if (!eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() || !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty())) {
-            logger::info("{}, EventEnum_OnObjectUnequipped sink added", __func__);
-            eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = true;
-            eventSourceholder->AddEventSink(equipEventSink);
+        if (!eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty()) {
+            if (AddEquipEventSink()) {
+                logger::debug("{}, EventEnum_OnObjectUnequipped Equip event sink added", __func__);
+            }
+            eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded = true;
+            logger::debug("{}, EventEnum_OnObjectUnequipped sink added", __func__);
         }
         break;
 
     case EventEnum_OnWaitStart:
         if (!eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded && !eventDataPtrs[EventEnum_OnWaitStart]->isEmpty()) {
-            logger::info("{}, EventEnum_OnWaitStart sink added", __func__);
+            logger::debug("{}, EventEnum_OnWaitStart sink added", __func__);
             eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded = true;
             eventSourceholder->AddEventSink(waitStartEventSink);
         }
@@ -7884,7 +8109,7 @@ void AddSink(int index) {
 
     case EventEnum_OnWaitStop:
         if (!eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded && !eventDataPtrs[EventEnum_OnWaitStop]->isEmpty()) {
-            logger::info("{}, EventEnum_OnWaitStop sink added", __func__);
+            logger::debug("{}, EventEnum_OnWaitStop sink added", __func__);
             eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded = true;
             eventSourceholder->AddEventSink(waitStopEventSink);
         }
@@ -7892,7 +8117,7 @@ void AddSink(int index) {
 
     case EventEnum_OnMagicEffectApply:
         if (!eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded && !eventDataPtrs[EventEnum_OnMagicEffectApply]->isEmpty()) {
-            logger::info("{}, EventEnum_OnMagicEffectApply sink added", __func__);
+            logger::debug("{}, EventEnum_OnMagicEffectApply sink added", __func__);
             eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded = true;
             eventSourceholder->AddEventSink(magicEffectApplyEventSink);
         }
@@ -7900,15 +8125,15 @@ void AddSink(int index) {
 
     case EventEnum_OnSpellCast:
         if (!eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded && !eventDataPtrs[EventEnum_OnSpellCast]->isEmpty()) {
-            logger::info("{}, EventEnum_OnSpellCast sink added", __func__);
+            logger::debug("{}, EventEnum_OnSpellCast sink added", __func__);
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = true;
             eventSourceholder->AddEventSink(spellCastEventSink);
         }
         break;
-    
+
     case EventEnum_OnContainerChanged:
         if (!eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded && !eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
-            logger::info("{}, EventEnum_OnContainerChanged sink added", __func__);
+            logger::debug("{}, EventEnum_OnContainerChanged sink added", __func__);
             eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = true;
             eventSourceholder->AddEventSink(containerChangedEventSink);
         }
@@ -7916,7 +8141,7 @@ void AddSink(int index) {
 
     case EventEnum_LockChanged:
         if (!eventDataPtrs[EventEnum_LockChanged]->sinkAdded && !eventDataPtrs[EventEnum_LockChanged]->isEmpty()) {
-            logger::info("{}, EventEnum_LockChanged sink added", __func__);
+            logger::debug("{}, EventEnum_LockChanged sink added", __func__);
             eventDataPtrs[EventEnum_LockChanged]->sinkAdded = true;
             eventSourceholder->AddEventSink(lockChangedEventSink);
         }
@@ -7926,7 +8151,7 @@ void AddSink(int index) {
 
     case EventEnum_OnClose:
         if (!eventDataPtrs[EventEnum_OnOpen]->sinkAdded && (!eventDataPtrs[EventEnum_OnOpen]->isEmpty() || !eventDataPtrs[EventEnum_OnClose]->isEmpty())) {
-            logger::info("{}, EventEnum_OnClose sink added", __func__);
+            logger::debug("{}, EventEnum_OnClose sink added", __func__);
             eventDataPtrs[EventEnum_OnOpen]->sinkAdded = true;
             eventSourceholder->AddEventSink(openCloseEventSink);
         }
@@ -7946,7 +8171,7 @@ void AddSink(int index) {
 
     case EventEnum_EndSheathe:
         if (!eventDataPtrs[EventEnum_EndSheathe]->sinkAdded && ShouldActorActionEventSinkBeAdded()) {
-            logger::info("{}, actorActionEventSink sink added", __func__);
+            logger::debug("{}, actorActionEventSink sink added", __func__);
             eventDataPtrs[EventEnum_EndSheathe]->sinkAdded = true;
             SKSE::GetActionEventSource()->AddEventSink(actorActionEventSink);
         }
@@ -7955,12 +8180,12 @@ void AddSink(int index) {
 }
 
 void RemoveSink(int index) {
-    logger::info("removing sink {}", index);
+    logger::debug("removing sink {}", index);
 
     switch (index) {
     case EventEnum_OnCombatStateChanged:
         if (eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded && eventDataPtrs[EventEnum_OnCombatStateChanged]->isEmpty()) {
-            logger::info("{}, EventEnum_OnCombatStateChanged sink removed", __func__);
+            logger::debug("{}, EventEnum_OnCombatStateChanged sink removed", __func__);
             eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(combatEventSink);
         }
@@ -7970,7 +8195,7 @@ void RemoveSink(int index) {
 
     case EventEnum_FurnitureExit:
         if (eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded && eventDataPtrs[EventEnum_FurnitureEnter]->isEmpty() && eventDataPtrs[EventEnum_FurnitureExit]->isEmpty()) {
-            logger::info("{}, EventEnum_FurnitureEnter sink removed", __func__);
+            logger::debug("{}, EventEnum_FurnitureEnter sink removed", __func__);
             eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(furnitureEventSink);
         }
@@ -7978,7 +8203,7 @@ void RemoveSink(int index) {
 
     case EventEnum_OnActivate:
         if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded && eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
-            logger::info("{}, EventEnum_OnActivate sink removed", __func__);
+            logger::debug("{}, EventEnum_OnActivate sink removed", __func__);
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(activateEventSink);
         }
@@ -7986,9 +8211,12 @@ void RemoveSink(int index) {
 
     case EventEnum_HitEvent:
         if (eventDataPtrs[EventEnum_HitEvent]->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-            logger::info("{}, EventEnum_hitEvent sink removed", __func__);
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(hitEventSink);
+            logger::debug("{}, EventEnum_hitEvent sink removed", __func__);
+            if (RemoveEquipEventSink()) {
+                logger::debug("{}, EventEnum_HitEvent equip event sink removed", __func__);
+            }
         }
         break;
 
@@ -7996,25 +8224,37 @@ void RemoveSink(int index) {
 
     case EventEnum_DyingEvent:
         if (eventDataPtrs[EventEnum_DeathEvent]->sinkAdded && eventDataPtrs[EventEnum_DeathEvent]->isEmpty() && eventDataPtrs[EventEnum_DyingEvent]->isEmpty()) {
-            logger::info("{}, EventEnum_DeathEvent sink removed", __func__);
+            logger::debug("{}, EventEnum_DeathEvent sink removed", __func__);
             eventDataPtrs[EventEnum_DeathEvent]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(deathEventSink);
         }
         break;
 
     case EventEnum_OnObjectEquipped:
+        if (eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty()) {
+            eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = false;
+            logger::debug("{}, EventEnum_OnObjectEquipped sink removed", __func__);
+
+            if (RemoveEquipEventSink()) {
+                logger::debug("{}, EventEnum_OnObjectEquipped equip event sink removed", __func__);
+            }
+        }
+        break;
 
     case EventEnum_OnObjectUnequipped:
-        if (eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() && eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty()) {
-            logger::info("{}, EventEnum_OnObjectEquipped sink removed", __func__);
-            eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(equipEventSink);
+        if (eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty()) {
+            eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded = false;
+            logger::debug("{}, EventEnum_OnObjectUnequipped sink removed", __func__);
+
+            if (RemoveEquipEventSink()) {
+                logger::debug("{}, EventEnum_OnObjectUnequipped equip event sink removed", __func__);
+            }
         }
         break;
 
     case EventEnum_OnWaitStart:
         if (eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded && eventDataPtrs[EventEnum_OnWaitStart]->isEmpty()) {
-            logger::info("{}, EventEnum_OnWaitStart sink removed", __func__);
+            logger::debug("{}, EventEnum_OnWaitStart sink removed", __func__);
             eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(waitStartEventSink);
         }
@@ -8022,7 +8262,7 @@ void RemoveSink(int index) {
 
     case EventEnum_OnWaitStop:
         if (eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded && eventDataPtrs[EventEnum_OnWaitStop]->isEmpty()) {
-            logger::info("{}, EventEnum_OnWaitStop sink removed", __func__);
+            logger::debug("{}, EventEnum_OnWaitStop sink removed", __func__);
             eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(waitStopEventSink);
         }
@@ -8030,7 +8270,7 @@ void RemoveSink(int index) {
 
     case EventEnum_OnMagicEffectApply:
         if (eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded && eventDataPtrs[EventEnum_OnMagicEffectApply]->isEmpty()) {
-            logger::info("{}, EventEnum_OnMagicEffectApply sink removed", __func__);
+            logger::debug("{}, EventEnum_OnMagicEffectApply sink removed", __func__);
             eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(magicEffectApplyEventSink);
         }
@@ -8038,7 +8278,7 @@ void RemoveSink(int index) {
 
     case EventEnum_OnSpellCast:
         if (eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded && eventDataPtrs[EventEnum_OnSpellCast]->isEmpty()) {
-            logger::info("{}, EventEnum_OnSpellCast sink removed", __func__);
+            logger::debug("{}, EventEnum_OnSpellCast sink removed", __func__);
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(spellCastEventSink);
         }
@@ -8046,7 +8286,7 @@ void RemoveSink(int index) {
 
     case EventEnum_OnContainerChanged:
         if (eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded && eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
-            logger::info("{}, EventEnum_OnContainerChanged sink removed", __func__);
+            logger::debug("{}, EventEnum_OnContainerChanged sink removed", __func__);
             eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(containerChangedEventSink);
         }
@@ -8054,7 +8294,7 @@ void RemoveSink(int index) {
 
     case EventEnum_LockChanged:
         if (eventDataPtrs[EventEnum_LockChanged]->sinkAdded && eventDataPtrs[EventEnum_LockChanged]->isEmpty()) {
-            logger::info("{}, EventEnum_LockChanged sink removed", __func__);
+            logger::debug("{}, EventEnum_LockChanged sink removed", __func__);
             eventDataPtrs[EventEnum_LockChanged]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(lockChangedEventSink);
         }
@@ -8064,7 +8304,7 @@ void RemoveSink(int index) {
 
     case EventEnum_OnClose:
         if (eventDataPtrs[EventEnum_OnOpen]->sinkAdded && eventDataPtrs[EventEnum_OnOpen]->isEmpty() && eventDataPtrs[EventEnum_OnClose]->isEmpty()) {
-            logger::info("{}, EventEnum_OnOpen sink removed", __func__);
+            logger::debug("{}, EventEnum_OnOpen sink removed", __func__);
             eventDataPtrs[EventEnum_OnOpen]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(openCloseEventSink);
         }
@@ -8084,7 +8324,7 @@ void RemoveSink(int index) {
 
     case EventEnum_EndSheathe:
         if (eventDataPtrs[EventEnum_EndSheathe]->sinkAdded && !ShouldActorActionEventSinkBeAdded()) {
-            logger::info("{}, actorActionEventSink sink removed", __func__);
+            logger::debug("{}, actorActionEventSink sink removed", __func__);
             eventDataPtrs[EventEnum_EndSheathe]->sinkAdded = false;
             SKSE::GetActionEventSource()->RemoveEventSink(actorActionEventSink);
         }
@@ -8115,14 +8355,14 @@ int GetEventIndex(std::vector<EventData*> v, RE::BSFixedString asEvent) {
 
 // is registered
 bool IsFormRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return false;
     }
 
-    logger::info("{} getting handle is registered for: {}", __func__, GetFormName(eventReceiver));
+    logger::trace("{} getting handle is registered for: {}", __func__, GetFormName(eventReceiver));
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8142,14 +8382,14 @@ bool IsFormRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString as
 }
 
 bool IsAliasRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::BGSBaseAlias* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return false;
     }
 
-    logger::info("{} getting handle is registered for: {}", __func__, eventReceiver->aliasName);
+    logger::trace("{} getting handle is registered for: {}", __func__, eventReceiver->aliasName);
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8169,14 +8409,14 @@ bool IsAliasRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString a
 }
 
 bool IsActiveMagicEffectRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::ActiveEffect* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return false;
     }
 
-    logger::info("{} getting handle is registered for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("{} getting handle is registered for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8197,14 +8437,14 @@ bool IsActiveMagicEffectRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSF
 
 //register
 void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::info("{} adding handle for: {}", __func__, GetFormName(eventReceiver));
+    logger::trace("{} adding handle for: {}", __func__, GetFormName(eventReceiver));
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8224,14 +8464,14 @@ void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEven
 }
 
 void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::BGSBaseAlias* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::info("{} adding handle for: {}", __func__, eventReceiver->aliasName);
+    logger::trace("{} adding handle for: {}", __func__, eventReceiver->aliasName);
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8251,14 +8491,14 @@ void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEve
 }
 
 void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::ActiveEffect* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::info("{} adding handle for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("{} adding handle for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8279,14 +8519,14 @@ void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixed
 
 //unregister
 void UnregisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::info("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
+    logger::trace("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8305,14 +8545,14 @@ void UnregisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEv
 }
 
 void UnregisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::BGSBaseAlias* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::info("{} removing handle for: {}", __func__, eventReceiver->aliasName);
+    logger::trace("{} removing handle for: {}", __func__, eventReceiver->aliasName);
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8331,14 +8571,14 @@ void UnregisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asE
 }
 
 void UnregisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::ActiveEffect* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::info("{} removing handle for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("{} removing handle for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8358,14 +8598,14 @@ void UnregisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFix
 
 //unregister all
 void UnregisterFormForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::info("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
+    logger::trace("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8384,14 +8624,14 @@ void UnregisterFormForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString 
 }
 
 void UnregisterAliasForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::BGSBaseAlias* eventReceiver) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::info("{} removing all handles for: {}", __func__, eventReceiver->aliasName);
+    logger::trace("{} removing all handles for: {}", __func__, eventReceiver->aliasName);
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8410,14 +8650,14 @@ void UnregisterAliasForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString
 }
 
 void UnregisterActiveMagicEffectForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::ActiveEffect* eventReceiver) {
-    logger::info("{} {}", __func__, asEvent);
+    logger::trace("{} {}", __func__, asEvent);
 
     if (!eventReceiver) {
-        logger::error("{}: eventReceiver not found", __func__);
+        logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::info("{} removing all handles for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("{} removing all handles for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
 
     RE::VMHandle handle = GetHandle(eventReceiver);
 
@@ -8490,17 +8730,16 @@ void CreateEventSinks() {
     if (!openCloseEventSink) { openCloseEventSink = new OpenCloseEventSink(); }
     if (!actorActionEventSink) { actorActionEventSink = new ActorActionEventSink(); }
     if (!menuOpenCloseEventSink) { menuOpenCloseEventSink = new MenuOpenCloseEventSink(); }
+    if (!animationEventSink) { animationEventSink = new AnimationEventSink(); }
 
-
-    //SKSE::GetActionEventSource()->AddEventSink(actorActionEventSink);
     ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
 
-    logger::info("Event Sinks Created");
+    logger::trace("Event Sinks Created");
 }
 
 bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     // vm->RegisterFunction("MyNativeFunction", "DbSkseFunctions", MyNativeFunction);
-    logger::info("Binding Papyrus Functions");
+    logger::trace("Binding Papyrus Functions");
 
     gvm = vm;
     svm = RE::SkyrimVM::GetSingleton();
@@ -8691,7 +8930,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetTimeElapsedOnGameTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnGameTimerActiveMagicEffect);
     vm->RegisterFunction("GetTimeLeftOnGameTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnGameTimerActiveMagicEffect);
 
-    logger::info("Papyrus Functions Bound");
+    logger::trace("Papyrus Functions Bound");
 
     return true;
 }
@@ -8753,7 +8992,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         CreateEventSinks();
         SetSettingsFromIniFile();
         SaveSkillBooks();
-        logger::info("kDataLoaded: sent after the data handler has loaded all its forms");
+        logger::trace("kDataLoaded: sent after the data handler has loaded all its forms");
         break;
 
         //default: //
@@ -8763,8 +9002,22 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 }
 
 void LoadCallback(SKSE::SerializationInterface* a_intfc) {
+    logger::trace("LoadCallback started");
+
     int max = EventEnum_Last + 1;
     std::uint32_t type, version, length;
+
+    if (!a_intfc) {
+        logger::error("{}: a_intfc doesn't exist, aborting load.", __func__);
+        return;
+    }
+
+    if (bIsLoadingSerialization || bIsSavingSerialization) {
+        logger::debug("{}: already loading or saving. loading = {} saving = {}, aborting load.", __func__, bIsLoadingSerialization, bIsSavingSerialization);
+        return;
+    }
+
+    bIsLoadingSerialization = true;
 
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
         if (type == 'DBT0') {
@@ -8780,12 +9033,13 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             loadTimers(currentGameTimeTimers, 'DBT3', a_intfc);
         }
         else {
-            for (int i = EventEnum_First; i < max; i++) {
+            //this is causing ctd on Skyrim AE when fast traveling too many times too quickly.
+            /*for (int i = EventEnum_First; i < max; i++) {
                 if (type == eventDataPtrs[i]->record) {
                     eventDataPtrs[i]->Load(a_intfc);
                     break;
                 }
-            }
+            }*/
         }
     }
 
@@ -8797,24 +9051,49 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
         AddSink(i);
     }
 
-    RemoveDuplicates(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles);
-
     auto* args = RE::MakeFunctionArguments();
-    SendEvents(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles, eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
 
-    logger::info("LoadCallback complete");
+    //now sending to all scripts with the OnLoadGameGlobal Event
+    //RemoveDuplicates(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles);
+    //SendEvents(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles, eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
+
+    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+    if (vm) {
+        vm->SendEventAll(eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
+    }
+
+    bIsLoadingSerialization = false;
+    logger::trace("LoadCallback complete");
 }
 
 void SaveCallback(SKSE::SerializationInterface* a_intfc) {
-    int max = EventEnum_Last + 1;
+    logger::trace("SaveCallback started");
+
+    if (!a_intfc) {
+        logger::error("{}: a_intfc doesn't exist, aborting load.", __func__);
+        return;
+    }
+
+    if (bIsLoadingSerialization || bIsSavingSerialization) {
+        logger::debug("{}: already loading or saving. loading = {} saving = {}, aborting load.", __func__, bIsLoadingSerialization, bIsSavingSerialization);
+        return;
+    }
+
+    bIsSavingSerialization = true;
+
+    //this is causing ctd on Skyrim AE when fast traveling too many times too quickly.
+    /*int max = EventEnum_Last + 1;
     for (int i = EventEnum_First; i < max; i++) {
         eventDataPtrs[i]->Save(a_intfc);
-    }
+    }*/
 
     SaveTimers(currentMenuModeTimers, 'DBT0', a_intfc);
     SaveTimers(currentNoMenuModeTimers, 'DBT1', a_intfc);
     SaveTimers(currentTimers, 'DBT2', a_intfc);
     SaveTimers(currentGameTimeTimers, 'DBT3', a_intfc);
+
+    bIsSavingSerialization = false;
+    logger::trace("SaveCallback complete");
 }
 
 //init================================================================================================================================================================
