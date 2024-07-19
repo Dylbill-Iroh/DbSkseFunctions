@@ -1,7 +1,6 @@
 Scriptname DbSkseFunctions Hidden 
 ;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
 
-;returns 5.9
 Float Function GetVersion() Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
@@ -153,6 +152,30 @@ ObjectReference[] function GetAllQuestObjectRefs() Global Native
 
 ;Get all quest object references in containerRef
 ObjectReference[] function GetQuestObjectRefsInContainer(ObjectReference containerRef) Global Native
+
+;Get arrow / bolt object references that recently hit the ref that match the only3dLoaded and onlyEnabled conditions
+;note only arrows or bolts that are fired from bows or crossbows are tracked
+ObjectReference[] function GetRecentHitArrowRefs(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true) Global Native
+
+;Get the arrow / bolt object reference that last hit the ref that matches the only3dLoaded and onlyEnabled conditions
+;note only arrows or bolts that are fired from bows or crossbows are tracked
+ObjectReference function GetLastHitArrowRef(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true) Global Native
+
+;Get arrow / bolt object references that the ref recently shot that match the only3dLoaded and onlyEnabled conditions
+;note only arrows or bolts that are fired from bows or crossbows are tracked
+ObjectReference[] function GetRecentShotArrowRefs(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true) Global Native
+
+;Get the arrow / bolt object reference that the ref last shot that matches the only3dLoaded and onlyEnabled conditions
+;note only arrows or bolts that are fired from bows or crossbows are tracked
+ObjectReference function GetLastShotArrowRef(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true) Global Native
+
+;Get the closest object reference in the refs array to the ref
+ObjectReference function GetClosestObjectFromRef(ObjectReference ref, ObjectReference[] refs) Global Native
+
+;Get the index of the closest object reference in the refs array to the ref
+int function GetClosestObjectIndexFromRef(ObjectReference ref, ObjectReference[] refs) Global Native
+
+float function GetGameHoursPassed() Global Native
 
 ;Calculate how many real time seconds it will take for gameHours to pass based on current time scale.
 ;Example - with default time scale (20), GameHoursToRealTimeSeconds(1) returns 180.0
@@ -501,6 +524,12 @@ int Function PlaySoundDescriptor(SoundDescriptor akSoundDescriptor, ObjectRefere
 ;sends the sound or soundDescriptor played and the instanceID
 Event OnSoundFinish(Form SoundOrDescriptor, int instanceID)
 EndEvent
+
+String[] Function GetSoundDescriptorSoundFileNames(SoundDescriptor akSoundDescriptor) Global Native
+
+;RE::TESForm* source = RE::TESForm::LookupByID(event->source);
+;static_cast<std::uint32_t>(std::stoul(mystring, nullptr, 16))
+
 
 SoundCategory Function GetParentSoundCategory(SoundCategory akSoundCategory) Global Native 
 SoundCategory Function GetSoundCategoryForSoundDescriptor(SoundDescriptor akSoundDescriptor) Global Native 

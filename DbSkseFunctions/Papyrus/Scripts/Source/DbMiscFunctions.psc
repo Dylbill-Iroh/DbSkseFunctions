@@ -1,5 +1,300 @@
 Scriptname DbMiscFunctions Hidden 
 
+;/
+Function MoveToLocalOffset(ObjectReference RefToMove, ObjectReference CenterRef, Float Angle, Float Distance, float afZOffset = 0.0, bool abMatchRotation = true)
+ObjectReference Function PlaceAndMoveToLocalOffset(ObjectReference PlaceAtMeRef, Form akFormToPlace, int aiCount = 1, bool abForcePersist = false, bool abInitiallyDisabled = false, \
+Float Angle = 0.0, Float Distance = 100.0, float afZOffset = 0.0, bool abMatchRotation = true)
+
+Function ApplyHavokImpulseLocal(ObjectReference Ref, Float Angle, float afZ, Float afMagnitude)
+Bool Function ToggleCreationKitMarkers(Bool ShowMarkers = true, ObjectReference MoveToRef = none)
+ObjectReference Function CreateXMarkerRef(Bool PersistentRef = false, ObjectReference PlaceAtMeRef = none)
+
+Function RemoveAllItems(ObjectReference Ref, ObjectReference otherContainer = none, bool abSilent = true, float delay = 0.01, \
+                        bool abNoEquipped = false, bool abNoFavorited = false, bool abNoQuestItem = true) Global
+
+Function DropAllItems(ObjectReference Ref, bool dropIndividual = false, float delay = 0.01)
+Function DropIndividualItems(ObjectReference Ref, Form Item, int NumOfItems = 0, float delay = 0.01)
+Function MovePlayerTo(ObjectReference Ref)
+Function UnlockShout(shout akShout)
+Function UnlockEquippedShout()
+Bool Function LocationOrParentsHasKeyword(Location akLocation, Keyword akKeyword)
+string Function GetStringIfNull(string s, string nullString = "null")
+string Function GetFormName(Form akForm, string nullString = "null", string NoNameString = "no name")
+Bool Function ModHasFormType(String modName, int type)
+Bool Function akFormHasKeywordString(Form akForm, String akString)
+Bool Function FormHasKeywordInFormList(Form akForm, Formlist akList, Bool AllKeywords = False)
+Bool Function FormHasKeywordInArray(Form akForm, Keyword[] akList, Bool AllKeywords = False)
+Bool Function FormHasKeywordInStorageUtilList(Form akForm, Form ObjKey, String ListKeyName, Bool AllKeywords = False)
+Bool Function FormHasKeywordInJsonUtilList(Form akForm, String JsonFilePath, String ListKeyName, Bool AllKeywords = False)
+Bool Function IsNumber(String akString, Bool AllowForDecimals = True, Bool AllowNegativeNumbers = True)
+Int Function ClampInt(Int i, Int Min, Int Max)
+Float Function ClampFloat(Float f, Float Min, Float Max)
+Bool Function IsIntInRange(Int i, Int Min, Int Max)
+Bool Function IsFloatInRange(Float f, Float Min, Float Max)
+Bool Function IsStringIndexBetween(String s, Int Index, String StartKey, String EndKey)
+String function ConvertIntToHex(int i, int minDigits = 8)
+Int function ConvertHexToInt(string hex, Bool TreatAsNegative = false)
+String Function GetFormIDHex(Form akForm)
+Int Function IntPow(Int x, Int y)
+Int Function IntSqrt(Int i)
+Int Function IntAbs(Int i)
+int function RoundAsInt(Float f)
+float function RoundAsFloat(Float f)
+Float Function RoundDownToDec(Float f, Int DecimalPlaces = 0)
+String Function RoundDownToDecString(Float f, Int DecimalPlaces = 0)
+Int Function CountDecimalPlaces(Float f)
+Float[] Function SplitAsFloat(String s, int Max = -1, String Divider = "||")
+Int[] Function SplitAsInt(String s, int Max = -1, String Divider = "||")
+String[] Function SortStringArray(String[] akArray, Bool Ascending = true, Bool Direct = true)
+String[] Function CopyStringArray(String[] akArray)
+String Function JoinStringArray(String[] akArray, String Divider = "||", Bool IgnoreDuplicates = false)
+String Function JoinFloatArray(Float[] akArray, String Divider = "||", Bool IgnoreDuplicates = false)
+String Function JoinIntArray(Int[] akArray, String Divider = "||", Bool IgnoreDuplicates = false)
+
+Function PrintT(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
+String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ", int aiSeverity = 0)
+
+Function PrintTU(string asUserLog = "", String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
+String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ", int aiSeverity = 0)
+
+Function PrintN(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
+String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ")
+
+Function PrintM(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
+String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ")
+
+Function PrintEvm(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
+String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ")
+
+Function PrintF(String FilePath, String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
+String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ")
+
+String Function JoinStrings(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
+String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ")
+
+Int[] Function GetGameActorSoulLevels()
+String[] Function GetGameSoulLevelNames()
+Int Function GetActorSoulSize(Actor akActor)
+String Function GetActorSoulSizeString(Actor akActor, String sBlackSize = "Black")
+Bool Function IsActorNPC(Actor akActor)
+Bool Function IsActorMoving(Actor akActor)
+Form Function GetRandomFormFromRef(ObjectReference Ref, Int[] TypeArrayFilter = None, Formlist ListFilter = None, Bool TypeFilterHasType = true, Bool akListHasForm = true)
+Form Function GetRandomFormFromRefA(ObjectReference Ref, Int[] TypeArrayFilter = None, Form[] ListFilter = None, Bool TypeFilterHasType = true, Bool akListHasForm = true)
+Form Function GetRandomFormFromRefS(ObjectReference Ref, Int[] TypeArrayFilter = None, Form ObjKey = None, String ListKeyName = "", Bool TypeFilterHasType = true, Bool akListHasForm = true)
+Form Function GetRandomFormFromRefJ(ObjectReference Ref, Int[] TypeArrayFilter = None, String JsonFilePath = "", String ListKeyName = "", Bool TypeFilterHasType = true, Bool akListHasForm = true)
+Function SortActorArrayByName(Actor[] akArray, Bool Ascending = true)
+Function SortObjectRefArrayByName(ObjectReference[] akArray, Bool Ascending = true)
+Function SortFormArrayByName(Form[] akArray, Bool Ascending = true)
+String[] Function GetActorNames(Actor[] akArray)
+String[] Function GetObjectRefNames(ObjectReference[] akArray)
+String[] Function GetFormNames(Form[] akArray)
+String[] Function GetFormNamesFromList(Formlist akList)
+String Function FormNamesInFormListToString(Formlist akList, string divider = "\n", string nullName = "null")
+Form[] Function FormlistToArray(Formlist akList)
+Function AddFormArrayFormsToList(Form[] akArray, Formlist akList)
+float function SecondsToMinutes(float seconds) Global
+float function SecondsToHours(float seconds) Global
+float function MinutesToSeconds(float minutes) Global
+float function MinutesToHours(float minutes) Global
+float function HoursToSeconds(float Hours) Global
+float function HoursToMinutes(float Hours) Global
+float function GetRealMinutesPassed() Global
+Bool Function WaitWhileKeyIsPressed(int keyCode, float secondsToWait) Global
+Bool Function WaitWhileKeyIsPressed_interval(int keyCode, int waitCount, float waitInterval = 0.01) Global
+Function RegisterFormForKeys(Form akForm, Int min = 1, Int Max = 281)
+Function RegisterAliasForKeys(Alias akAlias, Int min = 1, Int Max = 281)
+Function RegisterActiveMagicEffectForKeys(ActiveMagicEffect akActiveMagicEffect, Int min = 1, Int Max = 281)
+int[] function GetAllKeysPressed()
+Bool Function HotkeysPressed(int[] hotkeys, bool onlyTheseKeys = true)
+Function SwapStrings(String[] akArray, Int IndexA, Int IndexB)
+Function SwapStringsV(String[] akArray, Int IndexA, Int IndexB)
+Function SwapBools(Bool[] akArray, Int IndexA, Int IndexB)
+Function SwapBoolsV(Bool[] akArray, Int IndexA, Int IndexB)
+Function SwapInts(Int[] akArray, Int IndexA, Int IndexB)
+Function SwapIntsV(Int[] akArray, Int IndexA, Int IndexB)
+Function SwapFloats(Float[] akArray, Int IndexA, Int IndexB)
+Function SwapFloatsV(Float[] akArray, Int IndexA, Int IndexB)
+Function SwapActors(Actor[] akArray, Int IndexA, Int IndexB)
+Function SwapActorsV(Actor[] akArray, Int IndexA, Int IndexB)
+Function SwapObjectReferences(ObjectReference[] akArray, Int IndexA, Int IndexB)
+Function SwapObjectReferencesV(ObjectReference[] akArray, Int IndexA, Int IndexB)
+Function SwapForms(Form[] akArray, Int IndexA, Int IndexB)
+Function SwapFormsV(Form[] akArray, Int IndexA, Int IndexB)
+int function JsonIntListPluck(string FileName, string KeyName, int index, int default = 0)
+Float function JsonFloatListPluck(string FileName, string KeyName, int index, Float default = 0.0)
+string function JsonStringListPluck(string FileName, string KeyName, int index, string default = "")
+Form function JsonFormListPluck(String FileName, String KeyName, int index, Form default = none)
+int function JsonintListShift(string FileName, string KeyName, int default = 0)
+Float function JsonFloatListShift(string FileName, string KeyName, Float default = 0.0)
+String function JsonStringListShift(string FileName, string KeyName, String default = "")
+Form function JsonFormListShift(string FileName, string KeyName, Form default = none)
+Int function JsonIntListPop(string FileName, string KeyName, int default = 0)
+Float function JsonFloatListPop(string FileName, string KeyName, Float default = 0.0)
+String function JsonStringListPop(string FileName, string KeyName, String default = "")
+Form function JsonFormListPop(string FileName, string KeyName, Form default = none)
+Function JsonIntListRemoveAllDuplicates(string FileName, string KeyName, Bool Acending = True)
+Function JsonFloatListRemoveAllDuplicates(string FileName, string KeyName, Bool Acending = True)
+Function JsonStringListRemoveAllDuplicates(string FileName, string KeyName, Bool Acending = True)
+Function JsonFormListRemoveAllDuplicates(string FileName, string KeyName, Bool Acending = True)
+String Function JsonJoinIntList(string FileName, string KeyName, string Divider = "||")
+String Function JsonJoinFloatList(string FileName, string KeyName, string Divider = "||")
+String Function JsonJoinStringList(string FileName, string KeyName, string Divider = "||")
+String Function GetFormTypeString(Int Type, String sFilePath = "Data/interface/DbMiscFunctions/DbFormTypeStrings.txt")
+String[] Function GetFormTypeStrings(String sFilePath = "Data/interface/DbMiscFunctions/DbFormTypeStrings.txt", int startIndex = 0, int endIndex = 134)
+String Function GetKeyCodeString(Int keyCode, String sFilePath = "Data/interface/DbMiscFunctions/DbKeyCodeStrings.txt")
+String Function GetKeyCodeStrings(int[] keys, string startBracket = "[", string endBracket = "]", string divider = "\n", bool includeInts = true)
+String[] Function GetKeyCodeStringsInRange(int minKey = 1, int maxKey = 281, string startBracket = "[", string endBracket = "]", bool includeInts = true)
+String Function GetModOriginFromHexID(string FormID)
+String Function GetModOriginName(Form akForm)
+int Function GetActorFormType(Form F)
+int Function GetAudioFormType(Form F)
+int Function GetCharacterFormType(Form F)
+int Function GetItemFormType(Form F)
+int Function GetMagicFormType(Form F)
+int Function GetMiscFormType(Form F)
+int Function GetSpecialEffectFormType(Form F)
+int Function GetWorldDataFormType(Form F)
+int Function GetWorldObjectFormType(Form F)
+int Function GetInventoryItemFormType(Form F)
+Int Function GetFormTypeAll(Form F)
+String Function GetActorFormTypeString(Form F, String[] TypeStrings = none)
+String Function GetAudioFormTypeString(Form F, String[] TypeStrings = none)
+String Function GetCharacterFormTypeString(Form F, String[] TypeStrings = none)
+String Function GetItemFormTypeString(Form F, String[] TypeStrings = none)
+String Function GetMagicFormTypeString(Form F, String[] TypeStrings = none)
+String Function GetMiscFormTypeString(Form F, String[] TypeStrings = none)
+String Function GetSpecialEffectFormTypeString(Form F, String[] TypeStrings = none)
+String Function GetWorldDataFormTypeString(Form F, String[] TypeStrings = none)
+String Function GetWorldObjectFormTypeString(Form F, String[] TypeStrings = none)
+string Function GetInventoryItemFormTypeString(Form F, String[] TypeStrings = none)
+string Function GetFormTypeStringAll(Form F, String[] TypeStrings = none)
+Function DisableThenEnablePlayerControls(Float Delay = 1.0)
+Function UpdateActor(Actor akActor, Form akForm)
+Function SwapEquipment(Actor A, Actor B)
+Function SetActorValues(Actor akActor, String[] ActorValues, Float[] Values)
+Function ModActorValues(Actor akActor, String[] ActorValues, Float[] Values)
+Float[] Function GetActorValues(Actor akActor, String[] ActorValues, DynamicArrays DArrays = none)
+String[] Function GetActorValueStrings(Actor akActor, String[] ActorValues, String[] ActorValueStrings = none, DynamicArrays DArrays = none)
+String Function sGetActorValueStrings(Actor akActor, String[] ActorValues, String[] ActorValueStrings = none, String Divider = "||")
+Float[] Function GetBaseActorValues(Actor akActor, String[] ActorValues, DynamicArrays DArrays = none)
+String[] Function GetBaseActorValueStrings(Actor akActor, String[] ActorValues, String[] ActorValueStrings = none, DynamicArrays DArrays = none)
+String Function sGetBaseActorValueStrings(Actor akActor, String[] ActorValues, String[] ActorValueStrings = none, String Divider = "||")
+Float[] Function GetActorValuesFromFile(Actor akActor, String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt")
+String[] Function GetActorValueStringsFromFile(Actor akActor, String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt")
+String Function sGetActorValueStringsFromFile(Actor akActor, String Divider = "||", String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt")
+Float[] Function GetBaseActorValuesFromFile(Actor akActor, String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt")
+String[] Function GetBaseActorValueStringsFromFile(Actor akActor, String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt")
+String Function sGetBaseActorValueStringsFromFile(Actor akActor, String Divider = "||", String filePath = "Data/interface/DbMiscFunctions/DbActorValues.txt")
+Function AttachPapyrusScript(String akScript, ObjectReference Ref)
+Function OpenMenu(string menuName)
+Function CloseMenu(string menuName)
+string function GetStringBetweenOuterCharacters(String s, int startIndex = 0, String leftChar = "(", string rightChar = ")")
+int Function findNthInstanceInString(String s, String toFind, int nthInstance = -1, int startIndex = 0)
+Int Function FindLastStringIndex(String s, String ToFind)
+Int Function FindWholeWordString(String s, String ToFind, Int StartIndex = 0)
+Bool Function IsCharWhiteSpace(String C)
+String Function FindNextWordInString(String s, int startIndex = 0)
+String Function RFindNextWordInString(String s, int startIndex = -1)
+Int function FindNextNonWhiteSpaceCharIndexInString(String s, int startIndex = 0)
+Int function RFindNextNonWhiteSpaceCharIndexInString(String s, int startIndex = -1)
+Int Function FindNextWhiteSpaceCharIndexInString(String s, int startIndex = 0)
+Int Function RFindNextWhiteSpaceCharIndexInString(String s, int startIndex = -1)
+String Function FindNextNonWhiteSpaceCharInString(String s, int startIndex = 0)
+String Function RFindNextNonWhiteSpaceCharInString(String s, int startIndex = -1)
+String Function FindNextWhiteSpaceCharInString(String s, int startIndex = 0)
+String Function RFindNextWhiteSpaceCharInString(String s, int startIndex = -1)
+int Function RFindInString()
+String Function RemoveWhiteSpaces(String s, Bool IncludeSpaces = True, Bool IncludeTabs = true, Bool IncludeNewLines = true)
+Int Function CountWhiteSpaces(String s, Bool IncludeSpaces = True, Bool IncludeTabs = true, Bool IncludeNewLines = true)
+Int Function CountStringsInString(String s, String ToFind, Bool WholeWordsOnly = false)
+;string[] function SliceStringArray(string[] ArrayValues, int StartIndex, int EndIndex = -1)
+Int[] Function GetPositionsOfStringInStrings(String s, String ToFind, Bool WholeWordsOnly = false)
+
+String Function CreateRandomWord(int WordLength, string letters = "bcdfghjklmnpqrstvwxyz", string vowels = "aeiou", \
+								 string pairs = "st gr ea ie ei pr qw fr cr tr vr br pl cl ")
+
+String Function GetRandomWordFromString(String s, String Divider = " ")
+String Function GetRandomWordsFromString(String s, int numOfWords, String Divider = " ")
+String[] Function GetRandomWordsFromStringA(String s, int numOfWords, String Divider = " ")
+String Function GetLoremipsumNoPunctuation()
+String Function GetLoremipsum()
+String Function RemoveDuplicateStrings(String TargetStr, String SearchStr)
+String Function RemoveAllDuplicateStrings(String TargetStr, String Divider = "||", Bool IncludeDividersInResult = true)
+String Function StringReplace(String TargetStr, String SearchStr, String ReplaceStr, Int Count = 0, Int StartIndex = 0)
+String Function StringInsert(String TargetStr, String InsertStr, Int CharPosition = -1)
+String Function StringRemoveCharAt(String s, Int Index)
+String Function StringRemoveNonPrintableCharacters(String s)
+String Function StringRemovePrintableCharacters(String s)
+String Function AddPrefixToString(String s, String Prefix, Bool OnlyIfNotPresent = true)
+String[] Function AddPrefixToStrings(String[] s, String Prefix, Bool OnlyIfNotPresent = true)
+String Function RemovePrefixFromString(String s, String Prefix)
+String[] Function RemovePrefixFromStrings(String[] s, String Prefix)
+String Function AddSuffixToString(String s, String Suffix, Bool OnlyIfNotPresent = true)
+String[] Function AddSuffixToStrings(String[] s, String Suffix, Bool OnlyIfNotPresent = true)
+String Function RemoveSuffixFromString(String s, String Suffix)
+String[] Function RemoveSuffixFromStrings(String[] s, String Suffix)
+Function AddPrefixToFormName(Form akForm, String Prefix, Bool OnlyIfNotPresent = true)
+Function AddPrefixToFormNames(Form[] akForms, String Prefix, Bool OnlyIfNotPresent = true)
+Function RemovePrefixFromFormName(Form akForm, String Prefix)
+Function RemovePrefixFromFormNames(Form[] akForms, String Prefix, Bool OnlyIfNotPresent = true)
+Function AddSuffixToFormName(Form akForm, String Suffix, Bool OnlyIfNotPresent = true)
+Function AddSuffixToFormNames(Form[] akForms, String Suffix, Bool OnlyIfNotPresent = true)
+Function RemoveSuffixFromFormName(Form akForm, String Suffix)
+Function RemoveSuffixFromFormNames(Form[] akForms, String Suffix, Bool OnlyIfNotPresent = true)
+Bool Function StringHasPrefix(String s, String Prefix)
+Bool Function StringHasSuffix(String s, String Suffix)
+String Function GetStringFromFile(String StringKey, String FileContents = "", String FilePath = "", String StartKey = "[", String EndKey = "]", String Default = "", int StartIndex = 0)
+int Function GetIntFromFile(String StringKey, String FileContents = "", String FilePath = "", String StartKey = "[", String EndKey = "]", int Default = -1, int StartIndex = 0)
+Float Function GetFloatFromFile(String StringKey, String FileContents = "", String FilePath = "", String StartKey = "[", String EndKey = "]", Float Default = -1.0, int StartIndex = 0)
+String[] Function GetAllStringsFromFile(String FileContents = "", String FilePath = "", String RangeStart = "", String RangeEnd = "", String StartKey = "[", String EndKey = "]", String[] Default = None)
+Int[] Function GetAllIntsFromFile(String FileContents = "", String FilePath = "", String RangeStart = "", String RangeEnd = "", String StartKey = "[", String EndKey = "]", Int[] Default = None)
+Float[] Function GetAllFloatsFromFile(String FileContents = "", String FilePath = "", String RangeStart = "", String RangeEnd = "", String StartKey = "[", String EndKey = "]", Float[] Default = None)
+Bool Function PrintStringKeysToFile(String FilePathToSearch, String FilePathToPrintTo, String StartKey = "[", String EndKey = "]", String FinishedMsg = "Done Printing")
+Function PrintContainerItemsToFile(ObjectReference akContainer, String FilePath, String ConfirmMessage = "")
+Function WriteIDsInFormListToFile(Formlist akList, String FilePath, Bool IncludeNames = False, Bool ReplaceIdStartWith0x = true)
+Function WriteIDsInFormArrayToFile(Form[] akList, String FilePath, Bool IncludeNames = False, Bool ReplaceIdStartWith0x = true)
+Function WriteIDsInStorageUtilListToFile(Form ObjKey, String ListKeyName, String FilePath, Bool IncludeNames = False, Bool ReplaceIdStartWith0x = true)
+Function WriteIDsInJsonUtilListToFile(String JsonFilePath, String ListKeyName, String FilePath, Bool IncludeNames = False, Bool ReplaceIdStartWith0x = true)
+Function WriteAnimationVariableBoolsToFile(ObjectReference akRef, String OutputFilePath, String VariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableBools.txt")
+Function WriteAnimationVariableIntsToFile(ObjectReference akRef, String OutputFilePath, String VariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableInts.txt")
+Function WriteAnimationVariableFloatsToFile(ObjectReference akRef, String OutputFilePath, String VariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableFloats.txt")
+Function WriteAllAnimationVariablesToFile(ObjectReference akRef, String OutputFilePath, String BoolVariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableBools.txt", \
+                                                                                String IntVariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableInts.txt", \
+                                                                                String FloatVariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableFloats.txt")
+
+Function RegisterFormForAnimationEvents(Form akForm, ObjectReference akSender, String[] AnimationEvents)
+Function RegisterAliasForAnimationEvents(Alias akAlias, ObjectReference akSender, String[] AnimationEvents)
+Function RegisterActiveMagicEffectForAnimationEvents(ActiveMagicEffect akActiveMagicEffect, ObjectReference akSender, String[] AnimationEvents)
+Function RegisterFormForAnimationEventsFromFile(Form akForm, ObjectReference akSender, String FilePath = "Data/interface/DbMiscFunctions/DbAnimationEvents.txt")
+Function RegisterAliasForAnimationEventsFromFile(Alias akAlias, ObjectReference akSender, String FilePath = "Data/interface/DbMiscFunctions/DbAnimationEvents.txt")
+Function RegisterActiveMagicEffectForAnimationEventsFromFile(ActiveMagicEffect akActiveMagicEffect, ObjectReference akSender, String FilePath = "Data/interface/DbMiscFunctions/DbAnimationEvents.txt")
+Function RegisterFormForMenus(Form akForm, String[] Menus)
+Function RegisterAliasForMenus(Alias akAlias, String[] Menus)
+Function RegisterActiveMagicEffectForMenus(ActiveMagicEffect akActiveMagicEffect, String[] Menus)
+Function RegisterFormForMenusFromFile(Form akForm, String FilePath = "Data/interface/DbMiscFunctions/DbMenus.txt")
+Function RegisterAliasForMenusFromFile(Alias akAlias, String FilePath = "Data/interface/DbMiscFunctions/DbMenus.txt")
+Function RegisterActiveMagicEffectForMenusFromFile(ActiveMagicEffect akActiveMagicEffect, String FilePath = "Data/interface/DbMiscFunctions/DbMenus.txt")
+function WriteAllPscDataInFolderToFile(String SearchFolderPath, String TargetFilePath, String Divider = "\n", String DoneMessage = "Done Writing")
+String Function GetPscEventNamesFromFile(String SourceFilePath, String Divider = "\n", int StartIndex = 0)
+String Function GetPscFunctionNamesFromFile(String SourceFilePath, String Divider = "\n", int StartIndex = 0)
+String Function GetPscDataNamesFromFile(String SourceFilePath, String NameType, String Divider = "\n", int StartIndex = 0)
+String Function GetPscEventDefinitionsFromFile(String SourceFilePath, String Divider = "\n", int StartIndex = 0)
+String Function GetPscFunctionDefinitionsFromFile(String SourceFilePath, String Divider = "\n", int StartIndex = 0)
+
+String Function GetPscDataDefinitionsFromFile(String SourceFilePath, String NameType, String Divider = "\n", int StartIndex = 0)
+
+Function WriteJsonSaveAndLoadFunctionsToFile(String SourceFilePath, String DestinationFilePath = "", \
+    Bool GlobalVariablesToggle = true, Bool FloatsToggle = true, Bool StringsToggle = true, Bool IntsToggle = true, Bool BoolsToggle = true, \
+    Bool GlobalVariableArraysToggle = true, Bool FloatArraysToggle = true, Bool StringArraysToggle = true, Bool IntArraysToggle = true, Bool BoolArraysToggle = true, \
+    int Messages = 0, String ConfirmMessage = "Done Writing Json Functions", Bool UsePropertiesAsDefaults = True)
+    
+Function WriteDynamicArrayState(Int i)
+/; 
+
+;bool function IsIndexInBlockComment(string s, int index, string blockCommentStart = ";/", string blockCommentEnd = "/;") 
+
+
+
 ;Like MoveTo, but can specifify local angle / distance offset.
 ;If angle == 0.0, moves object in front of CenterRef by Distance
 ;If angle == 90.0 moves object the right of CenterRef by Distance
@@ -39,6 +334,45 @@ Function ApplyHavokImpulseLocal(ObjectReference Ref, Float Angle, float afZ, Flo
     Float afY = Math.Cos(A)
     
     Ref.ApplyHavokImpulse(afX, afY, afZ, afMagnitude)
+EndFunction 
+
+;Get the full Version Text displayed in the journal menu e.g "1.5.97.0.8 (SKSE64 2.0.20 rel 65)"
+;The Journal Menu system page must be open for this function to work. 
+;Use RegisterForMenu("Journal Menu") and the OnMenuOpen event to ensure the Journal Menu is open.
+;Or, if your mod has an MCM, this will work when the MCM Menu is open, so use OnConfigOpen in your MCM script. 
+;requires skse
+String Function GetSkyrimVersionFullString() Global
+    return UI.GetString("Journal Menu", "QuestJournalFader.Menu_mc.SystemFader.Page_mc.VersionText.text")
+EndFunction
+
+;Get the Skyrim Version Text displayed in the journal menu, e.g "1.5.97"
+;The Journal Menu system page must be open for this function to work. 
+;Use RegisterForMenu("Journal Menu") and the OnMenuOpen event to ensure the Journal Menu is open.
+;Or, if your mod has an MCM, this will work when the MCM Menu is open, so use OnConfigOpen in your MCM script. 
+;requires skse
+String Function GetSkyrimVersion() Global
+    string fullVersion = GetSkyrimVersionFullString()
+    int L = StringUtil.GetLength(fullVersion)
+    int iStart = 0 
+    string c = StringUtil.GetNthChar(fullVersion, iStart)
+    While !Stringutil.IsDigit(c) && iStart < L
+        iStart += 1 
+        c = StringUtil.GetNthChar(fullVersion, iStart)
+    EndWhile 
+
+    int iEnd = iStart 
+    c = StringUtil.GetNthChar(fullVersion, iEnd)
+    While (Stringutil.IsDigit(c) || c == ".") && iEnd < L
+        iEnd += 1 
+        c = StringUtil.GetNthChar(fullVersion, iEnd)
+    EndWhile 
+
+    Return StringUtil.SubString(fullVersion, iStart, (iEnd - iStart))
+EndFunction
+
+;requires skse
+String Function GetSKSEVersion() Global
+    return (skse.GetVersion() + "." + skse.GetVersionMinor() + "." + skse.GetVersionBeta())
 EndFunction 
 
 ;show or hide creation kit markers in Game 
@@ -99,6 +433,53 @@ ObjectReference Function CreateXMarkerRef(Bool PersistentRef = false, ObjectRefe
         Return xMarkerRef 
     Endif 
 EndFunction 
+
+;remove all items from ref which must be a container or actor to optional otherContainer
+;requires skse and papyrus extender and SSE 
+;use Form[] Items = PO3_SKSEFunctions.AddAllInventoryItemsToArray(Ref, abNoEquipped, abNoFavorited, abNoQuestItem) for LE
+Function RemoveAllItems(ObjectReference Ref, ObjectReference otherContainer = none, bool abSilent = true, float delay = 0.01, \
+                        bool abNoEquipped = false, bool abNoFavorited = false, bool abNoQuestItem = true) Global
+    if !ref 
+        return 
+    endif
+
+    Form[] Items = PO3_SKSEFunctions.AddAllItemsToArray(Ref, abNoEquipped, abNoFavorited, abNoQuestItem)
+    int L = Items.length 
+    int i = 0 
+
+    if otherContainer
+        while i < L 
+            if Items[i]
+                ObjectReference itemRef = Items[i] as objectReference 
+                if itemRef 
+                    itemRef.moveTo(otherContainer, 0.0, 0.0, -8000.0) ;remove itemRef from ref inventory 
+                    Utility.WaitMenuMode(delay)
+                    otherContainer.AddItem(itemRef)
+                Else 
+                    ref.RemoveItem(Items[i], ref.GetItemCount(Items[i]), abSilent, otherContainer)
+                    Utility.WaitMenuMode(delay)
+                Endif
+            Endif
+            i += 1
+        EndWhile
+    Else 
+        while i < L 
+            if Items[i]
+                ObjectReference itemRef = Items[i] as objectReference 
+                if itemRef 
+                    itemRef.moveTo(ref, 0.0, 0.0, -8000.0) ;remove itemRef from ref inventory 
+                    itemRef.disable()
+                    itemRef.Delete()
+                    Utility.WaitMenuMode(delay)
+                Else 
+                    ref.RemoveItem(Items[i], ref.GetItemCount(Items[i]), abSilent)
+                    Utility.WaitMenuMode(delay)
+                Endif
+            Endif
+            i += 1
+        EndWhile
+    Endif
+EndFunction
 
 ;Drop all items from ref, Ref must be a container or actor.
 ;If dropIndividual is true, drops multiple of the same item time individually so they don't stack. If false, items are dropped stacked. 
@@ -1078,6 +1459,17 @@ String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 =
     return s
 EndFunction
 
+;get the current screen resolution. 
+;[0] = X or width
+;[1] = Y or height
+;requires skse
+int[] Function GetScreenResolution() Global
+    int [] resolution = new int[2]
+    resolution[0] = Utility.GetIniInt("iSize W:Display")
+    resolution[1] = Utility.GetIniInt("iSize H:Display")
+    return resolution
+EndFunction
+
 ;Get game settings for soul levels
 ;no requirements
 Int[] Function GetGameActorSoulLevels() Global
@@ -1639,6 +2031,75 @@ Function AddFormArrayFormsToList(Form[] akArray, Formlist akList) Global
         i += 1 
     EndWhile
 EndFunction 
+
+;no requirements
+float function SecondsToMinutes(float seconds) Global
+    return (seconds / 60.0)
+EndFunction 
+
+;no requirements
+float function SecondsToHours(float seconds) Global
+    return ((seconds / 60.0) / 60.0)
+EndFunction
+
+;no requirements
+float function MinutesToSeconds(float minutes) Global
+    return (minutes * 60.0)
+EndFunction 
+
+;no requirements
+float function MinutesToHours(float minutes) Global
+    return (minutes / 60.0)
+EndFunction
+
+;no requirements
+float function HoursToSeconds(float Hours) Global
+    return ((Hours * 60.0) * 60.0)
+EndFunction
+
+;no requirements
+float function HoursToMinutes(float Hours) Global
+    return (Hours * 60.0)
+EndFunction
+
+float function GetRealSecondsPassed() Global
+    return hoursToSeconds(Game.GetRealHoursPassed())
+EndFunction
+
+float function GetRealMinutesPassed() Global
+    return hoursToMinutes(Game.GetRealHoursPassed())
+EndFunction
+
+;wait while the keyCode is pressed. 
+;If the key is released before the secondsToWait time has elapsed, returns false. 
+;If the secondsToWait time elapses and the keyCode is still pressed, returns true. 
+;Requires skse
+Bool Function WaitWhileKeyIsPressed(int keyCode, float secondsToWait) Global
+    float startTime = Game.GetRealHoursPassed()
+    float hourSeconds = secondsToHours(secondsToWait)
+    While input.IsKeyPressed(keyCode) && (Game.GetRealHoursPassed() - startTime) < hourSeconds
+        ;wait until secondsToWait time has elapsed
+    EndWhile 
+
+    return (input.IsKeyPressed(keyCode) && (Game.GetRealHoursPassed() - startTime) >= hourSeconds)
+EndFunction 
+
+;Like WaitWhileKeyIsPressed but this is an interval wait version.
+;Wait while the keyCode is pressed.
+;Returns true if the entire waitCount finishes. 
+;Returns false if the key was released before the waitCount is finished. 
+;The wait interval should be a small value (default is 0.01) for this function to be accurate. 
+;Requires skse
+Bool Function WaitWhileKeyIsPressed_interval(int keyCode, int waitCount, float waitInterval = 0.01) Global
+    int iCount = 0
+
+    While input.IsKeyPressed(keyCode) && iCount < waitCount
+        Utility.WaitMenuMode(waitInterval)
+        iCount += 1
+    EndWhile 
+
+    return (iCount == waitCount)
+Endfunction
 
 ;requires skse, register for all keys between min and max. Default is 1 to 281, or all keys.
 Function RegisterFormForKeys(Form akForm, Int min = 1, Int Max = 281) Global
@@ -3898,7 +4359,10 @@ EndFunction
 ;DbSkseFunctions (included with this mod) only works on SE and AE
 Function AttachPapyrusScript(String akScript, ObjectReference Ref) Global
     if Ref
-        if DbSkseFunctions.GetVersion() >= 4.7
+        if Ref == Game.GetPlayer()
+            ConsoleUtil.ExecuteCommand("Player.APS " + akScript)
+
+        Elseif DbSkseFunctions.GetVersion() >= 4.7
             DbSkseFunctions.ExecuteConsoleCommand(("APS " + akScript), ref)
             
         ElseIf ConsoleUtil.GetVersion() > 0
@@ -3923,6 +4387,78 @@ Function CloseMenu(string menuName) Global
     UI.InvokeString("HUD Menu", "_global.skse.CloseMenu", menuName)
     ;Debug.Notification("Closing " + menuName + " Menu")
 Endfunction
+
+;get the string between leftChar (outer) and rightChar (outer) strings.
+;leftChar and rightChar should both be a single character string.
+;For instance:
+;string sExample = "(A, (B + (C)), D)"
+;GetStringBetweenOuterCharacters(sExample) ;returns "A, (B + (C)), D"
+;GetStringBetweenOuterCharacters(sExample, 1) ;returns "B + (C)"
+;requires skse
+string function GetStringBetweenOuterCharacters(String s, int startIndex = 0, String leftChar = "(", string rightChar = ")") Global
+    int iStart = StringUtil.Find(s, leftChar, startIndex)
+    if iStart > -1 
+        int iEnd = StringUtil.Find(s, rightChar, iStart)
+        iStart += 1
+        if iEnd > -1 
+            if iEnd - iStart == 0 ;empty () found
+                return ""
+            Endif 
+
+            int leftCharCount = 1
+            int rightCharCount = 0 
+            int i = iStart 
+            int L = Stringutil.GetLength(s)
+            While i < L
+                String c = StringUtil.GetNthChar(s, i)
+                if c == rightChar 
+                    rightCharCount += 1 
+                    if rightCharCount == leftCharCount 
+                        iEnd = i 
+                        i = L ;stop the loop
+                    Endif
+                elseif c == leftChar 
+                    leftCharCount += 1
+                Endif
+                i += 1
+            EndWhile
+            return StringUtil.SubString(s, iStart, (iEnd - iStart))
+        Endif
+    Endif
+EndFunction
+
+;find the index of the nth instance of string toFind in string s
+;if nthInstance == -1 (default), finds the last instance in string s 
+;requires skse
+int Function findNthInstanceInString(String s, String toFind, int nthInstance = -1, int startIndex = 0) Global
+    int toFindLength = Stringutil.GetLength(toFind)
+    int i = StringUtil.Find(s, toFind, startIndex)
+    int ii = i
+    
+    if nthInstance == -1
+        while ii != -1 
+            ii = ii + toFindLength
+            ii = Stringutil.Find(s, toFind, ii)
+            if ii != -1 
+                i = ii
+            Endif
+        EndWhile
+
+        return i
+    Else 
+        int instanceCount = 1
+        while ii != -1 && instanceCount < nthInstance
+            instanceCount += 1
+            ii = ii + toFindLength
+            ii = Stringutil.Find(s, toFind, ii)
+            if ii != -1 
+                i = ii
+            Endif
+        EndWhile
+
+        return i
+    Endif
+EndFunction
 
 ;Finds the last index of String ToFind in string s
 ;Example: FindLastStringIndex("The dog is the coolest dog in the world", "The") returns 30, the last instance of "the" 
@@ -4138,6 +4674,9 @@ String Function RFindNextWhiteSpaceCharInString(String s, int startIndex = -1) g
     Endif
     
     return ""
+EndFunction
+
+int Function RFindInString()
 EndFunction
 
 ;requires skse
@@ -5739,18 +6278,32 @@ String Function GetPscFunctionDefinitionsFromFile(String SourceFilePath, String 
     return GetPscDataDefinitionsFromFile(SourceFilePath, "Function", Divider, StartIndex)
 EndFunction
 
+;is the index in string s between a block comment start and end
+;requires skse
+bool function IsIndexInBlockComment(string s, int index, string blockCommentStart = ";/", string blockCommentEnd = "/;") Global
+    int L = stringUtil.GetLength(s) 
+    int NextBlockCommentEnd = StringUtil.Find(s, blockCommentEnd, index)
+
+    if NextBlockCommentEnd > -1 ; block comment end char found after index
+        int NextBlockCommentStart = StringUtil.Find(s, blockCommentStart, index)
+        return (NextBlockCommentStart == -1 || NextBlockCommentStart > NextBlockCommentEnd)
+    Endif
+    
+    return false
+EndFunction 
+
 String Function GetPscDataDefinitionsFromFile(String SourceFilePath, String NameType, String Divider = "\n", int StartIndex = 0) Global
     String ReturnString = ""
     String Contents = MiscUtil.ReadFromFile(SourceFilePath) 
-    int i
-    int L
+
+    int i = DbMiscFunctions.FindWholeWordString(Contents, NameType, StartIndex)
+    int L = StringUtil.GetLength(Contents)
     
-    i = DbMiscFunctions.FindWholeWordString(Contents, NameType)
-    L = StringUtil.GetLength(Contents)
     int sL = StringUtil.GetLength(NameType)
     
+    bool currentIndexIsInBlockComment = false
+
     While i > -1 
-        
         Int LineStart = i - 1
         String Char = StringUtil.GetNthChar(Contents, LineStart)
         While LineStart > 0 && Char != "\n" 
@@ -5762,7 +6315,7 @@ String Function GetPscDataDefinitionsFromFile(String SourceFilePath, String Name
         If LineEnd == -1 
             LineEnd = L
         Endif 
-        
+
         int iStart = i - 1 
         Char = StringUtil.GetNthChar(Contents, iStart)
         While iStart > LineStart && DbMiscFunctions.IsCharWhiteSpace(Char) 
@@ -5778,29 +6331,38 @@ String Function GetPscDataDefinitionsFromFile(String SourceFilePath, String Name
         If DbMiscFunctions.IsCharWhiteSpace(Char) 
             iStart += 1 
         Endif
-        
-        int NextBlockCommentStart = StringUtil.Find(Contents, ";/", iStart)
-        int NextBlockCommentEnd   = StringUtil.Find(Contents, "/;", iStart)
-        
-        If (NextBlockCommentStart < NextBlockCommentEnd && NextBlockCommentStart > -1) || NextBlockCommentEnd == -1
-            int NextComment = StringUtil.Find(Contents, ";", LineStart)
-            Int iEnd = StringUtil.Find(Contents, ")", iStart)
-            
-            If iEnd > -1
-                If NextComment > iEnd || NextComment == -1
-                    iEnd += 1
-                    String Definition = (StringUtil.SubString(Contents, iStart, (iEnd - iStart)) + Divider)
-                    ReturnString += Definition
-                Endif
+
+        int NextComment = StringUtil.Find(Contents, ";", LineStart)
+
+        if (nextComment != -1 && iStart > nextComment) ;function or type is commented
+
+        Elseif IsIndexInBlockComment(contents, iStart) 
+            int NextBlockCommentEnd = StringUtil.Find(Contents, "/;", iStart)
+            if NextBlockCommentEnd > -1 
+                i = NextBlockCommentEnd 
+                currentIndexIsInBlockComment = true
+            Endif
+        Else 
+            int paramStartIndex = StringUtil.Find(contents, "(", iStart)
+            if paramStartIndex > -1 && paramStartIndex < LineEnd 
+                string sFunctionStart = StringUtil.SubString(contents, iStart, (paramStartIndex - iStart))
+                string params = DbMiscFunctions.GetStringBetweenOuterCharacters(contents, (paramStartIndex - 1))
+                string fullFunctionString = (sFunctionStart + "(" + params + ")" + Divider)
+                ReturnString += fullFunctionString
             Endif
         Endif
-        
-        i += sL
+
+        if currentIndexIsInBlockComment
+            currentIndexIsInBlockComment = false
+        Else 
+            i += sL
+        Endif
+
         i = DbMiscFunctions.FindWholeWordString(Contents, NameType, i)
-    EndWhile
-    
-    Return ReturnString
-EndFunction 
+    EndWhile 
+
+    return returnString
+Endfunction 
 
 ;Search the SournceFilePath for String / Int / Float / Global variables, if their toggles are enabled, (outside of any events or functions) 
 ;and write Json Save and Load functions to DestinationFilePath for said variables. 
@@ -6754,6 +7316,16 @@ Function WriteJsonSaveAndLoadFunctionsToFile(String SourceFilePath, String Desti
     Endif 
 EndFunction
 
+;writes the function definition headers from this file to this file
+;requires skse and papyrusUtil
+Function WriteFunctionDefinitionsFromThisFileToThisFile() Global 
+    MiscUtil.WriteToFile("Data/Scripts/Source/DbMiscFunctions.psc", "\n\n;/")
+	String dbMiscFunctionDefinitions = DbMiscFunctions.GetPscDataDefinitionsFromFile("Data/Scripts/Source/DbMiscFunctions.psc", "Function")
+	MiscUtil.WriteToFile("Data/Scripts/Source/DbMiscFunctions.psc", dbMiscFunctionDefinitions)
+	MiscUtil.WriteToFile("Data/Scripts/Source/DbMiscFunctions.psc", "/;")
+	Debug.MessageBox("Done Writing")
+EndFunction
+
 ;used to write the states in the DynamicArrays script. Saved here for posterity
 ;requires SKSE and PapyrusUtil. 
 Function WriteDynamicArrayState(int i) 
@@ -6796,6 +7368,4 @@ MiscUtil.WriteToFile(f, "State A" + i + "\n")
     MiscUtil.WriteToFile(f, "\t" + "EndFunction" + "\n")
 MiscUtil.WriteToFile(f, "EndState"+ "\n\n")
 EndFunction 
-
-
 

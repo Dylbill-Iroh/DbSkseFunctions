@@ -106,9 +106,13 @@ EndFunction
 
 
 ;events ===========================================================================================================================================================================
-;put these in a script that's attached to the registered eventReceiver
+;as of version 6.3 OnLoadGameGlobal doesn't have to be registered for, it is always sent.
 Event OnLoadGameGlobal()
 EndEvent 
+
+;put these in a script that's attached to the registered eventReceiver
+;as of version 6.3 these events aren't saved to your save file so you must re-register these events when loading a game. 
+;You can use OnLoadGameGlobal for maintenance
 
 Event OnWaitStartGlobal()
 EndEvent 
