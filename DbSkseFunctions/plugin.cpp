@@ -19,14 +19,15 @@ bool inMenuMode = false;
 bool gamePaused = false;
 bool bIsLoadingSerialization = false;
 bool bIsSavingSerialization = false;
+bool DbSkseCppCallbackEventsAttached = false;
 std::string lastMenuOpened;
 std::vector<RE::BSFixedString> menusCurrentlyOpen;
 std::chrono::system_clock::time_point lastTimeMenuWasOpened;
 std::chrono::system_clock::time_point lastTimeGameWasPaused;
-std::vector<RE::TESObjectREFR*> actorsRegisteredForAnimationEvents;
-std::map<RE::TESObjectREFR*, RE::TESAmmo*> trackedActorAmmoMap;
 std::map<RE::TESObjectBOOK*, int> skillBooksMap;
+std::map<RE::TESAmmo*, RE::BGSProjectile*> ammoProjectiles;
 int gameTimerPollingInterval = 1500; //in milliseconds
+int iMaxArrowsSavedPerReference = 2;
 float secondsPassedGameNotPaused = 0.0;
 float lastFrameDelta = 0.1;
 std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
@@ -41,10 +42,35 @@ RE::ScriptEventSourceHolder* eventSourceholder;
 //forward dec
 void AddSink(int index);
 void RemoveSink(int index);
+bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef);
+bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef);
 std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString);
 int GetIndexInVector(std::vector<RE::TESObjectREFR*> v, RE::TESObjectREFR* element);
-//general functions============================================================================================================================================================
 
+struct TrackedActorAmmoData {
+    RE::TESAmmo* ammo;
+    RE::TESObjectREFR* projectileRef;
+    float gameTimeStamp; //game time when the ammo was saved with the BowDraw animation event
+    bool ammoWasChanged = false; //if equipped ammo for actor was changed from bow draw to bow release, i.e they shot their last arrow of that type. 
+};
+
+struct TrackedProjectileRefData {
+    RE::TESObjectREFR* projectileRef;
+    float gameTimeStamp; //game time when the projectileRef was saved from the HitEvent
+};
+
+std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileRefData>> recentHitProjectileRefsMap;
+std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileRefData>> recentShotProjectileRefsMap;
+
+void CleanUpTrackedProjectileRefDataVector(std::vector<TrackedProjectileRefData>& v) {
+    int indexFromStartToRemove = (v.size() - 1) - iMaxArrowsSavedPerReference;
+
+    if (indexFromStartToRemove >= 0) {
+        v.erase(v.begin(), v.begin() + indexFromStartToRemove);
+    }
+}
+
+//general functions============================================================================================================================================================
 template< typename T >
 std::string IntToHex(T i)
 {
@@ -80,8 +106,12 @@ void String_ReplaceAll(std::string& s, std::vector<std::string> searchStrings, s
     }
 }
 
-RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString = "null", RE::BSFixedString noNameString = "", bool returnIdIfNull = false) {
+RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString = "null", RE::BSFixedString noNameString = "", bool returnIdIfNull = true) {
     if (!akForm) {
+        return nullString;
+    }
+
+    if (IsBadReadPtr(akForm, sizeof(akForm))) {
         return nullString;
     }
 
@@ -90,7 +120,10 @@ RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString 
     if (ref) {
         name = ref->GetDisplayFullName();
         if (name == "") {
-            name = ref->GetBaseObject()->GetName();
+            auto* baseForm = ref->GetBaseObject();
+            if (baseForm) {
+                name = baseForm->GetName();
+            }
         }
     }
     else {
@@ -99,7 +132,7 @@ RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString 
 
     if (name == "") {
         if (returnIdIfNull) {
-            name = IntToHex(akForm->GetFormID());
+            name = GetFormEditorId(nullptr, akForm, "");
         }
         else {
             name = noNameString;
@@ -107,6 +140,26 @@ RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString 
     }
     return name;
 }
+
+std::string GetFormDataString(RE::TESForm* akForm, std::string nullString = "null", std::string noNameString = "No Name") {
+    if (!akForm) {
+        return nullString;
+    }
+
+    if (IsBadReadPtr(akForm, sizeof(akForm))) {
+        return nullString;
+    }
+
+    std::string name = static_cast<std::string>(GetFormName(akForm, nullString, noNameString, false));
+
+    std::string editorID = GetFormEditorId(nullptr, akForm, "");
+
+    name = std::format("(name[{}] editorID[{}] formID[{}])", name, editorID, akForm->GetFormID());
+
+    return name;
+}
+
+
 
 void logFormMap(auto& map) {
     logger::trace("logging form map");
@@ -145,8 +198,6 @@ bool actorHasBowEquipped(RE::Actor* actor) {
     }
     return false;
 }
-
-
 
 //when reading a skill book in game, it removes the skill from the book, not just the TeachesSkill flag
 //this saves skill books and their respective skills for use with skill book functions below.
@@ -688,6 +739,40 @@ void RemoveDuplicates(std::vector<RE::VMHandle>& vec)
     vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
 }
 
+bool IsScriptAttachedToRef(RE::TESObjectREFR* ref, RE::BSFixedString sScriptName) {
+    if (!ref) {
+        return false;
+    }
+
+    RE::VMHandle handle = GetHandle(ref);
+    if (handle == NULL) {
+        return false;
+    }
+
+    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+    if (!vm) {
+        return false;
+    }
+
+    auto it = vm->attachedScripts.find(handle);
+    if (it != vm->attachedScripts.end()) {
+        for (auto& attachedScript : it->second) {
+            if (attachedScript) {
+                auto* script = attachedScript.get();
+                if (script) {
+                    auto info = script->GetTypeInfo();
+                    if (info) {
+                        if (info->name == sScriptName) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
 void SetSettingsFromIniFile() {
     // first, create a file instance
     mINI::INIFile file("Data/SKSE/Plugins/DbSkseFunctions.ini");
@@ -703,7 +788,15 @@ void SetSettingsFromIniFile() {
     if (gameTimerPollingInterval <= 0) {
         gameTimerPollingInterval = 100;
     }
-    logger::info("{} gameTimerPollingInterval set to {}", __func__, gameTimerPollingInterval);
+
+    std::string sMaxArrowsSavedPerReference = ini["Main"]["iMaxArrowsSavedPerReference"];
+    iMaxArrowsSavedPerReference = std::stoi(sMaxArrowsSavedPerReference);
+    if (iMaxArrowsSavedPerReference <= 0) {
+        iMaxArrowsSavedPerReference = 2;
+    }
+    
+    logger::info("{} gameTimerPollingInterval set to {} ", __func__, gameTimerPollingInterval);
+    logger::warn("{} iMaxArrowsSavedPerReference set to {} ", __func__, iMaxArrowsSavedPerReference);
 }
 
 void SetupLog() {
@@ -761,14 +854,14 @@ void LogAndMessage(std::string message, int logLevel = trace, int debugLevel = n
         break;
     }
 
-    /*switch (debugLevel) {
+    switch (debugLevel) {
     case notification:
         RE::DebugNotification(message.data());
         break;
     case messageBox:
         RE::DebugMessageBox(message.data());
         break;
-    }*/
+    }
 }
 
 void SendEvents(std::vector<RE::VMHandle> handles, RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args) {
@@ -2082,7 +2175,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(6.3);
+    return float(6.4);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2906,6 +2999,288 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
     }
     logger::debug("{} number of refs is {}", __func__, questItems.size());
     return questItems;
+}
+
+std::vector<RE::TESObjectREFR*> GetRecentHitArrowRefs(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
+    std::vector<RE::TESObjectREFR*> projectileRefs;
+    if (!ref) {
+        logger::warn("{} ref doesn't exist", __func__);
+        return projectileRefs;
+    }
+
+    auto it = recentHitProjectileRefsMap.find(ref);
+    if (it != recentHitProjectileRefsMap.end()) {
+        if (only3dLoaded && onlyEnabled) {
+            for (int i = 0; i < it->second.size(); i++) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && !ref->IsDisabled() && ref->Is3DLoaded()) {
+                        projectileRefs.push_back(ref);
+                    }
+                }
+            }
+        }
+        else if (onlyEnabled){
+            for (int i = 0; i < it->second.size(); i++) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && !ref->IsDisabled()) {
+                        projectileRefs.push_back(ref);
+                    }
+                }
+            }
+        }
+        else if (only3dLoaded) {
+            for (int i = 0; i < it->second.size(); i++) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && ref->Is3DLoaded()) {
+                        projectileRefs.push_back(ref);
+                    }
+                }
+            }
+        }
+        else {
+            for (int i = 0; i < it->second.size(); i++) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted()) {
+                        projectileRefs.push_back(ref);
+                    }
+                }
+            }
+        }
+    } 
+    
+    return projectileRefs;
+}
+
+RE::TESObjectREFR* GetLastHitArrowRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
+    RE::TESObjectREFR* returnRef = nullptr;
+    if (!ref) {
+        logger::warn("{} ref doesn't exist", __func__);
+        return returnRef;
+    }
+    
+    auto it = recentHitProjectileRefsMap.find(ref);
+    if (it != recentHitProjectileRefsMap.end()) {
+        if (only3dLoaded && onlyEnabled) {
+            for (int i = it->second.size() - 1; i >= 0 && returnRef == nullptr; --i) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && !ref->IsDisabled() && ref->Is3DLoaded()) {
+                        returnRef = ref;
+                    }
+                }
+            }
+        }
+        else if (onlyEnabled) {
+            for (int i = it->second.size(); i > 0 && returnRef == nullptr; --i) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && !ref->IsDisabled()) {
+                        returnRef = ref;
+                    }
+                }
+            }
+        }
+        else if (only3dLoaded) {
+            for (int i = it->second.size(); i > 0 && returnRef == nullptr; --i) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && ref->Is3DLoaded()) {
+                        returnRef = ref;
+                    }
+                }
+            }
+        }
+        else {
+            for (int i = it->second.size(); i > 0 && returnRef == nullptr; --i) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted()) {
+                        returnRef = ref;
+                    }
+                }
+            }
+        }
+    }
+
+    return returnRef;
+}
+
+std::vector<RE::TESObjectREFR*> GetRecentShotArrowRefs(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
+    std::vector<RE::TESObjectREFR*> projectileRefs;
+    if (!ref) {
+        logger::warn("{} ref doesn't exist", __func__);
+        return projectileRefs;
+    }
+
+    auto it = recentShotProjectileRefsMap.find(ref);
+    if (it != recentShotProjectileRefsMap.end()) {
+        if (only3dLoaded && onlyEnabled) {
+            for (int i = 0; i < it->second.size(); i++) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && !ref->IsDisabled() && ref->Is3DLoaded()) {
+                        projectileRefs.push_back(ref);
+                    }
+                }
+            }
+        }
+        else if (onlyEnabled) {
+            for (int i = 0; i < it->second.size(); i++) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && !ref->IsDisabled()) {
+                        projectileRefs.push_back(ref);
+                    }
+                }
+            }
+        }
+        else if (only3dLoaded) {
+            for (int i = 0; i < it->second.size(); i++) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && ref->Is3DLoaded()) {
+                        projectileRefs.push_back(ref);
+                    }
+                }
+            }
+        }
+        else {
+            for (int i = 0; i < it->second.size(); i++) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted()) {
+                        projectileRefs.push_back(ref);
+                    }
+                }
+            }
+        }
+    }
+
+    return projectileRefs;
+}
+
+RE::TESObjectREFR* GetLastShotArrowRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
+    RE::TESObjectREFR* returnRef = nullptr;
+    if (!ref) {
+        logger::warn("{} ref doesn't exist", __func__);
+        return returnRef;
+    }
+
+    auto it = recentShotProjectileRefsMap.find(ref);
+    if (it != recentShotProjectileRefsMap.end()) {
+        if (only3dLoaded && onlyEnabled) {
+            for (int i = it->second.size() - 1; i >= 0 && returnRef == nullptr; --i) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && !ref->IsDisabled() && ref->Is3DLoaded()) {
+                        returnRef = ref;
+                    }
+                }
+            }
+        }
+        else if (onlyEnabled) {
+            for (int i = it->second.size(); i > 0 && returnRef == nullptr; --i) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && !ref->IsDisabled()) {
+                        returnRef = ref;
+                    }
+                }
+            }
+        }
+        else if (only3dLoaded) {
+            for (int i = it->second.size(); i > 0 && returnRef == nullptr; --i) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted() && ref->Is3DLoaded()) {
+                        returnRef = ref;
+                    }
+                }
+            }
+        }
+        else {
+            for (int i = it->second.size(); i > 0 && returnRef == nullptr; --i) {
+                RE::TESObjectREFR* ref = it->second[i].projectileRef;
+                if (ref) {
+                    if (!ref->IsDeleted()) {
+                        returnRef = ref;
+                    }
+                }
+            }
+        }
+    }
+
+    return returnRef;
+}
+
+RE::TESObjectREFR* GetClosestObjectFromRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, std::vector<RE::TESObjectREFR*> refs) {
+    if (!ref) {
+        return nullptr;
+    }
+
+    RE::TESObjectREFR* returnRef = nullptr;
+    const auto refPosition = ref->GetPosition();
+    float distance;
+    int i = 0;
+
+    while (i < refs.size() && returnRef == nullptr) { //find first valid ref and distance
+        if (refs[i]) {
+            distance = refPosition.GetDistance(refs[i]->GetPosition());
+            returnRef = refs[i];
+        }
+        i++;
+    }
+
+    while (i < refs.size()) {
+        if (refs[i]) {
+            float refDistance = refPosition.GetDistance(refs[i]->GetPosition());
+            if (refDistance < distance) {
+                distance = refDistance;
+                returnRef = refs[i];
+            }
+        }
+        i++;
+    }
+    return returnRef;
+}
+
+int GetClosestObjectIndexFromRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, std::vector<RE::TESObjectREFR*> refs) {
+    int iReturn = -1;
+    if (!ref) {
+        return iReturn;
+    }
+
+    const auto refPosition = ref->GetPosition();
+    float distance;
+    int i = 0;
+
+    while (i < refs.size() && iReturn == -1) { //find first valid ref and distance
+        if (refs[i]) {
+            distance = refPosition.GetDistance(refs[i]->GetPosition());
+            iReturn = i;
+        }
+        i++;
+    }
+
+    while (i < refs.size()) {
+        if (refs[i]) {
+            float refDistance = refPosition.GetDistance(refs[i]->GetPosition());
+            if (refDistance < distance) {
+                distance = refDistance;
+                iReturn = i;
+            }
+        }
+        i++;
+    }
+    return iReturn;
+}
+
+float GetGameHoursPassed(RE::StaticFunctionTag*) {
+    return calendar->GetHoursPassed();
 }
 
 float GameHoursToRealTimeSeconds(RE::StaticFunctionTag*, float gameHours) {
@@ -4280,6 +4655,60 @@ float GetSoundCategoryFrequency(RE::StaticFunctionTag*, RE::BGSSoundCategory* ak
     }
 
     return akCategory->GetCategoryFrequency();
+}
+
+//event callbacks from papyrus=========================================================================================================================
+
+//from papyrus
+void SaveProjectileForAmmo(RE::StaticFunctionTag*, RE::TESAmmo* akAmmo, RE::BGSProjectile* akProjectile) {
+    if (akAmmo && akProjectile) {
+        RE::TESForm* ammoProjectileForm = RE::TESForm::LookupByID(akAmmo->data.projectile->GetFormID());
+        if (!ammoProjectileForm) { //projectile for ammo not set correctly
+            akAmmo->data.projectile = akProjectile;
+            logger::debug("ammo {} projectile {} saved from papyrus", GetFormDataString(akAmmo), GetFormDataString(akAmmo->data.projectile));
+        }
+    }
+}
+
+//initially ammo->data.projectile is not set correctly and causes CTDs if trying to access. 
+//This saves ammo projectiles from papyrus if necessarry so they are set correctly
+void SaveAllAmmoProjectilesFromPapyrus() { 
+    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+    if (!vm) {
+        return;
+    }
+
+    std::vector<RE::TESAmmo*> allAmmos;
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+    for (auto& [id, form] : *allForms) {
+        if (form) {
+            RE::TESAmmo* ammo = form->As<RE::TESAmmo>();
+            if (ammo) {
+                allAmmos.push_back(ammo);
+            }
+        }
+    }
+    auto* args = RE::MakeFunctionArguments((std::vector<RE::TESAmmo*>)allAmmos);
+    RE::BSFixedString sEvent = "DbSkseFunctions_OnSaveAllAmmoProjectiles";
+    vm->SendEventAll(sEvent, args);
+    logger::debug("{} sending event to papyrus to save ammo projectiles. Size of ammos = {}", __func__, allAmmos.size());
+}
+
+//called from DbSkseCppCallbackEvents papyrus script on init and game load
+void SetDbSkseCppCallbackEventsAttached(RE::StaticFunctionTag*) {
+    DbSkseCppCallbackEventsAttached = true;
+    logger::trace("{} called", __func__);
+    SaveAllAmmoProjectilesFromPapyrus();
+}
+
+void DbSkseCppCallbackLoad() {
+    if (!IsScriptAttachedToRef(playerRef, "DbSkseCppCallbackEvents")) {
+        logger::debug("{} attaching DbSkseCppCallbackEvents script to the player.", __func__);
+        ExecuteConsoleCommand(nullptr, "player.aps DbSkseCppCallbackEvents", nullptr);
+    }
+    else {
+        logger::debug("{} DbSkseCppCallbackEvents script already attached to the player", __func__);
+    }
 }
 
 //menu mode timer ===================================================================================================================================
@@ -7142,6 +7571,168 @@ struct EventData {
 
 std::vector<EventData*> eventDataPtrs;
 
+inline RE::BGSProjectile* GetProjectileForAmmo(RE::TESAmmo* ammo) {
+    if (ammo) {
+        return ammo->data.projectile;
+    }
+    return nullptr;
+}
+
+struct ObjectInitEventSink : public RE::BSTEventSink<RE::TESInitScriptEvent> {
+    RE::Actor* actor; //actor that's registered for animation events
+    std::chrono::system_clock::time_point lastReleaseTime; //last time actor released their bow
+    float lastReleaseGameTime; 
+    RE::TESAmmo* lastDrawnAmmo;
+
+    std::vector<TrackedActorAmmoData> releasedAmmoDatas;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESInitScriptEvent* event, RE::BSTEventSource<RE::TESInitScriptEvent>* source) {
+        if (!actor) {
+            source->RemoveEventSink(this);
+            delete this;
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        
+        if (!event) {
+            logger::error("AnimationEventSink event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (event->objectInitialized) {
+            RE::TESObjectREFR* loadedRef = event->objectInitialized.get();
+            if (loadedRef) {
+                const auto refPosition = loadedRef->GetPosition();
+                const auto actorPosition = actor->GetPosition();
+                std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+                const float timeDiff = timePointDiffToFloat(now, lastReleaseTime);
+
+                //const auto refheading = loadedRef->GetHeadingAngle(actorPosition, false);
+                //const auto actorHeading = loadedRef->GetHeadingAngle(refPosition, false);
+
+                logger::trace("init event: {}", GetFormDataString(loadedRef));
+                //RE::NiPoint3 refVelocity;
+                //loadedRef->GetLinearVelocity(refVelocity);
+
+                //RE::NiPoint3 actorVelocity;
+                //actor->GetLinearVelocity(actorVelocity);
+
+                RE::TESForm* baseObj = loadedRef->GetBaseObject();
+                if (baseObj) {
+                    RE::BGSProjectile* projectile = baseObj->As<RE::BGSProjectile>();
+                    if (projectile) {
+                        if (loadedRef->Is3DLoaded()) {
+                            RE::TESAmmo* aklastDrawnAmmo = lastDrawnAmmo;
+
+                            const float distance = refPosition.GetDistance(actorPosition);
+                            logger::trace("init event projectile[{}] distance from actor[{}] = [{}]", GetFormName(projectile), GetFormName(actor), distance);
+
+                            if (aklastDrawnAmmo->data.projectile == projectile) {
+
+                                if (timeDiff <= 0.2 && distance <= 300.0) {
+                                    source->RemoveEventSink(this);
+                                    TrackedActorAmmoData data;
+                                    data.ammo = aklastDrawnAmmo;
+                                    data.projectileRef = loadedRef;
+                                    data.gameTimeStamp = calendar->GetHoursPassed();
+                                    data.ammoWasChanged = (actor->GetCurrentAmmo() != aklastDrawnAmmo);
+                                    releasedAmmoDatas.push_back(data);
+                                    logger::debug("initEvent ammo[{}] projectileRef[{}] saved for actor[{}]. ammoWasChanged[{}]", GetFormName(data.ammo), GetFormName(data.projectileRef), GetFormName(actor), data.ammoWasChanged);
+                                    
+                                    //const float headingDiff = abs(refheading - actorHeading);
+                                    //logger::warn("ObjectInitEventSink ref{} is a projectile. lastDrawnAmmo[{}]. Distance for actor {} = [{}].", GetFormName(loadedRef), GetFormName(lastDrawnAmmo), GetFormName(actor), distance);
+                                    //logger::warn("refheading[{}] actorHeading[{}] headingdiff[{}] timeDiff[{}]", refheading, actorHeading, headingDiff, timeDiff);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (timeDiff > 1.0) {
+                    source->RemoveEventSink(this);
+                }
+            }
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+//one event sink per actor
+//track ammo
+struct AnimationEventSink : public RE::BSTEventSink<RE::BSAnimationGraphEvent> {
+    RE::Actor* actor; //actor that's registered for animation events
+    ObjectInitEventSink* objectInitEventSink;
+    RE::TESObjectREFR* lastHitTarget;
+    RE::TESAmmo* lastHitAmmo;
+    std::chrono::system_clock::time_point lastHitTime;
+    int bowReleaseCount = 0;
+    int hitCount = 0;
+    bool bInitSinkAdded = false;
+
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::BSAnimationGraphEvent* event, RE::BSTEventSource<RE::BSAnimationGraphEvent>* source) {
+        if (!actor) {
+            source->RemoveEventSink(this);
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (!event) {
+            logger::error("AnimationEventSink event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (event->tag == "BowRelease") {
+            eventSourceholder->AddEventSink(objectInitEventSink);
+            bowReleaseCount += 1;
+            objectInitEventSink->lastReleaseTime = std::chrono::system_clock::now();
+            objectInitEventSink->lastReleaseGameTime = calendar->GetHoursPassed();
+        }
+        else if (event->tag == "bowDraw") {
+            objectInitEventSink->lastDrawnAmmo = actor->GetCurrentAmmo();
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+std::map<RE::TESObjectREFR*, AnimationEventSink*> animationEventActorsMap;
+
+float hitAmmodDetectionMaxTimeDiff = 0.2;
+
+int GetClosestObjectIndexFromRefInTrackedActorAmmoData(RE::TESObjectREFR* ref, std::vector<TrackedActorAmmoData>& datas, float maxDistance = -1.0) {
+    int iReturn = -1;
+    if (!ref) {
+        return iReturn;
+    }
+
+    const auto refPosition = ref->GetPosition();
+    float distance = 0.0;
+    int i = 0;
+
+    while (i < datas.size() && iReturn == -1) { //find first valid ref and distance
+        if (datas[i].projectileRef) {
+            distance = refPosition.GetDistance(datas[i].projectileRef->GetPosition());
+            iReturn = i;
+        }
+        i++;
+    }
+
+    while (i < datas.size()) {
+        if (datas[i].projectileRef) {
+            float refDistance = refPosition.GetDistance(datas[i].projectileRef->GetPosition());
+            if (refDistance < distance) {
+                distance = refDistance;
+                iReturn = i;
+            }
+        }
+        i++;
+    } 
+
+    //logger::trace("{} distance from ref is [{}]", __func__, distance);
+
+    if (distance > maxDistance && maxDistance >= 0.0) {
+        iReturn = -1;
+    }
+    return iReturn;
+}
 
 struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* event, RE::BSTEventSource<RE::TESHitEvent>*/*source*/) {
@@ -7150,6 +7741,8 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
             logger::error("hit event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
+
+        std::chrono::system_clock::time_point hitTime = std::chrono::system_clock::now();
 
         RE::TESObjectREFR* attacker = event->cause.get();
         RE::TESObjectREFR* target = event->target.get();
@@ -7165,18 +7758,104 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
 
         if (!bBashAttack) {
             if (formIsBowOrCrossbow(source)) {
-                if (attacker) {
-                    RE::Actor* actorRef = attacker->As<RE::Actor>();
-                    if (actorRef) {
-                        ammo = actorRef->GetCurrentAmmo();
-                        auto it = trackedActorAmmoMap.find(attacker);
-                        if (it != trackedActorAmmoMap.end()) { //akActorRef found in trackedActorAmmoMap
-                            //ammo is now tracked from animation event "BowDraw"
-                            //it->second is the ammo the attacker had equipped the last time they drew a bow or crossbow 
+                if (attacker && target) {
+                    RE::Actor* actor = attacker->As<RE::Actor>();
+                    if (actor) {
+                        ammo = actor->GetCurrentAmmo();
+                        auto it = animationEventActorsMap.find(attacker);
+                        if (it != animationEventActorsMap.end()) { //akactor found in animationEventActorsMap
+                            float fTime = calendar->GetHoursPassed();
                             if (it->second) {
-                                ammo = it->second;
+                                float hitTimeDiff = timePointDiffToFloat(hitTime, it->second->lastHitTime);
+                                it->second->lastHitTime = hitTime;
+                                logger::trace("hit event: found ammo tracking data for [{}] hitTimeDiff = [{}]", GetFormName(attacker), hitTimeDiff);
+                                bool bSetAmmoToLastHitAmmo = false;
+
+                                if (hitTimeDiff <= 0.1 && target == it->second->lastHitTarget) { //assume this is the same hit event run again (for enchantments ect) 
+                                    it->second->hitCount -= 1;
+                                    if (it->second->lastHitAmmo) {
+                                        logger::debug("hit event multiple, setting ammo for attacker [{}] from [{}] to [{}]", GetFormName(attacker), GetFormName(ammo), GetFormName(it->second->lastHitAmmo));
+                                        ammo = it->second->lastHitAmmo;
+                                        bSetAmmoToLastHitAmmo = true;
+                                    }
+                                }
+
+                                it->second->lastHitTarget = target;
+
+                                if (!bSetAmmoToLastHitAmmo) {
+                                    int index = -1;
+                                    int max = it->second->objectInitEventSink->releasedAmmoDatas.size();
+                                    if (max > 0) {
+                                        int objectRefAndIndex = GetClosestObjectIndexFromRefInTrackedActorAmmoData(target, it->second->objectInitEventSink->releasedAmmoDatas);
+                                        if (objectRefAndIndex > -1) {
+                                            index = objectRefAndIndex;
+                                            const auto ammoData = it->second->objectInitEventSink->releasedAmmoDatas[index];
+                                            if (ammoData.ammoWasChanged) {
+                                                logger::debug("hit event changed ammo from [{}] to [{}]", GetFormName(ammo), GetFormName(it->second->objectInitEventSink->releasedAmmoDatas[index].ammo));
+                                                ammo = ammoData.ammo;
+                                            } 
+
+                                            float gameHoursPassed = calendar->GetHoursPassed();
+
+                                            auto recentHitIt = recentHitProjectileRefsMap.find(target); 
+                                            TrackedProjectileRefData hitRefData;
+                                            hitRefData.gameTimeStamp = gameHoursPassed;
+                                            hitRefData.projectileRef = ammoData.projectileRef;
+
+                                            if (recentHitIt != recentHitProjectileRefsMap.end()) {
+                                                recentHitIt->second.push_back(hitRefData);
+                                                CleanUpTrackedProjectileRefDataVector(recentHitIt->second);
+                                            }
+                                            else {
+                                                std::vector<TrackedProjectileRefData> hitProjectileRefsData;
+                                                hitProjectileRefsData.push_back(hitRefData);
+                                                recentHitProjectileRefsMap.insert(std::pair<RE::TESObjectREFR*, std::vector<TrackedProjectileRefData>>(target, hitProjectileRefsData));
+                                            } 
+
+                                            auto recentShotIt = recentShotProjectileRefsMap.find(attacker);
+                                            TrackedProjectileRefData shotrefData;
+                                            shotrefData.gameTimeStamp = gameHoursPassed;
+                                            shotrefData.projectileRef = ammoData.projectileRef;
+
+                                            if (recentShotIt != recentShotProjectileRefsMap.end()) {
+                                                recentShotIt->second.push_back(shotrefData);
+                                                CleanUpTrackedProjectileRefDataVector(recentShotIt->second);
+                                            }
+                                            else {
+                                                std::vector<TrackedProjectileRefData> shotProjectileRefs;
+                                                shotProjectileRefs.push_back(shotrefData);
+                                                recentShotProjectileRefsMap.insert(std::pair<RE::TESObjectREFR*, std::vector<TrackedProjectileRefData>>(attacker, shotProjectileRefs));
+                                            }
+                                        }
+                                        if (index == -1) {
+                                            if (calendar->GetHoursPassed() - it->second->objectInitEventSink->releasedAmmoDatas[0].gameTimeStamp > 1.0) {
+                                                index = 0;
+                                            }
+                                        }
+                                        if (index > -1) {
+                                            it->second->objectInitEventSink->releasedAmmoDatas[index].ammo = nullptr;
+                                            it->second->objectInitEventSink->releasedAmmoDatas[index].projectileRef = nullptr;
+                                            auto itt = it->second->objectInitEventSink->releasedAmmoDatas.begin();
+                                            std::advance(itt, index);
+                                            it->second->objectInitEventSink->releasedAmmoDatas.erase(itt);
+                                            logger::trace("hit event releasedAmmoDatas index {} erased", index);
+                                        }
+                                    }
+                                }
+                                it->second->lastHitAmmo = ammo;
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        if (ammo) {
+            if (!projectile) {
+                if (ammo->data.projectile) {
+                    RE::TESForm* projectileForm = RE::TESForm::LookupByID(ammo->data.projectile->GetFormID());
+                    if (projectileForm) { //check if data.projectile is valid. This form will exist if it is. If not, can't set projectile cause it will cause ctd. 
+                        projectile = ammo->data.projectile;
                     }
                 }
             }
@@ -7418,61 +8097,65 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
     }
 };
 
-//BSAnimationGraphEvent
-
-struct AnimationEventSink : public RE::BSTEventSink<RE::BSAnimationGraphEvent> {
-    RE::BSEventNotifyControl ProcessEvent(const RE::BSAnimationGraphEvent* event, RE::BSTEventSource<RE::BSAnimationGraphEvent>*/*source*/) {
-        if (!event) {
-            logger::error("AnimationEventSink event doesn't exist");
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-        //no hit events registered, no need to track ammo
-        if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-        if (event->tag == "bowDraw") {
-            if (event->holder) {
-                RE::TESBoundObject* boundObj = event->holder->data.objectReference;
-                if (boundObj) {
-                    RE::TESObjectREFR* ref = const_cast<RE::TESObjectREFR*>(event->holder);
-                    if (ref) {
-                        RE::Actor* actor = ref->As<RE::Actor>();
-                        if (actor) {
-                            auto* ammo = actor->GetCurrentAmmo();
-                            if (ammo) {
-                                auto it = trackedActorAmmoMap.find(actor);
-                                if (it != trackedActorAmmoMap.end()) { //akActorRef found in trackedActorAmmoMap
-                                    it->second = ammo;
-                                }
-                                else { //akActorRef not found in trackedActorAmmoMap
-                                    trackedActorAmmoMap.insert(std::pair<RE::TESObjectREFR*, RE::TESAmmo*>(ref, ammo));
-                                }
-                                logger::trace("Animation Event Tag[{}] Saved Ammo[{}] for Actor[{}] ", event->tag, GetFormName(ammo), GetFormName(actor));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return RE::BSEventNotifyControl::kContinue;
-    }
-};
-
-AnimationEventSink* animationEventSink;
-
-void RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
+bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
     if (actorRef) {
         RE::Actor* actor = actorRef->As<RE::Actor>();
         if (actorHasBowEquipped(actor)) {
-            if (GetIndexInVector(actorsRegisteredForAnimationEvents, actor) == -1) {
-                actorsRegisteredForAnimationEvents.push_back(actorRef);
-                actor->AddAnimationGraphEventSink(animationEventSink);
-                logger::trace("{}: registering actor [{}] for animation events", __func__, GetFormName(actorRef));
+            auto it = animationEventActorsMap.find(actorRef);
+            if (it == animationEventActorsMap.end()) { //actorRef not already registered
+                AnimationEventSink* animEventSink = new AnimationEventSink();
+                ObjectInitEventSink* objectInitEventSink = new ObjectInitEventSink();
+                animEventSink->actor = actor;
+                objectInitEventSink->actor = actor;
+                animEventSink->objectInitEventSink = objectInitEventSink;
+                animationEventActorsMap.insert(std::pair<RE::TESObjectREFR*, AnimationEventSink*>(actorRef, animEventSink));
+                actor->AddAnimationGraphEventSink(animEventSink);
+                logger::info("{}: actor [{}]", __func__, GetFormName(actorRef));
+                return true;
             }
         }
     }
+    return false;
+}
+
+bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
+    bool bUnregistered = false;
+    if (actorRef) {
+        auto it = animationEventActorsMap.find(actorRef);
+        if (it != animationEventActorsMap.end()) { //actorRef registered
+            if (it->second) {
+                if (it->second->actor) {
+                    if (!actorHasBowEquipped(it->second->actor)) {
+                        it->second->actor->RemoveAnimationGraphEventSink(it->second);
+                        it->second->actor = nullptr;
+                        it->second->objectInitEventSink->actor = nullptr;
+                        //it->second->bowReleasedTrackedAmmoDatas.clear();
+                        delete it->second->objectInitEventSink;
+                        it->second->objectInitEventSink = nullptr;
+                        delete it->second;
+                        it->second = nullptr;
+                        animationEventActorsMap.erase(it);
+                        logger::debug("{}: actor [{}]", __func__, GetFormName(actorRef));
+                        bUnregistered = true;
+                    }
+                }
+                else {
+                    //it->second->bowReleasedTrackedAmmoDatas.clear();
+                    delete it->second;
+                    it->second = nullptr;
+                    animationEventActorsMap.erase(it);
+                    logger::debug("{}: actor [{}]", __func__, GetFormName(actorRef));
+                    bUnregistered = true;
+                }
+            }
+            else { //animation event doesn't exist
+                animationEventActorsMap.erase(it);
+                logger::debug("{}: actor [{}]", __func__, GetFormName(actorRef));
+                bUnregistered = true;
+            }
+        }
+    }
+    return bUnregistered;
 }
 
 //register all actors with bows or crossbows equipped for animation events to track equipped ammo with "bowDraw" event
@@ -7486,7 +8169,6 @@ void RegisterActorsForBowDrawAnimEvents() {
 
 struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* event, RE::BSTEventSource<RE::TESEquipEvent>*/*source*/) {
-
         if (!event) {
             logger::error("equip event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
@@ -7501,51 +8183,31 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
 
         RE::TESForm* baseObject = RE::TESForm::LookupByID(event->baseObject);
         bool equipped = event->equipped;
-        int eventIndex;
+        int eventIndex = -1;
 
         if (equipped) {
             if (formIsBowOrCrossbow(baseObject)) {
-                if (akActor) {
-                    if (GetIndexInVector(actorsRegisteredForAnimationEvents, akActorRef) == -1) {
-                        akActor->AddAnimationGraphEventSink(animationEventSink);
-                        actorsRegisteredForAnimationEvents.push_back(akActorRef);
-                        logger::debug("equip event: registering actor [{}] for animation events", GetFormName(akActor));
-                    }
-                }
+                logger::trace("equip event registering actor [{}] for animation events", GetFormName(akActorRef));
+                RegisterActorForBowDrawAnimEvent(akActorRef);
             }
 
             if (eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded) {
                 eventIndex = EventEnum_OnObjectEquipped;
             }
-            else {
-                eventIndex = -1;
-            }
         }
         else {
+            float fTime = calendar->GetHoursPassed();
             if (formIsBowOrCrossbow(baseObject)) {
-                if (akActor) { //trackedActorAmmoMap
-                    if (!actorHasBowEquipped(akActor)) {
-                        if (GetIndexInVector(actorsRegisteredForAnimationEvents, akActorRef) != -1) {
-                            akActor->RemoveAnimationGraphEventSink(animationEventSink);
-                            RemoveFromVectorByValue(actorsRegisteredForAnimationEvents, akActorRef);
-                            auto it = trackedActorAmmoMap.find(akActorRef);
-                            if (it != trackedActorAmmoMap.end()) { //akActorRef found in trackedActorAmmoMap
-                                it->second = nullptr;
-                                trackedActorAmmoMap.erase(it);
-                            }
-                            logger::debug("{}: Unregistering actor [{}] for animation events", __func__, GetFormName(akActor));
-                        }
-                    }
-                }
+                logger::trace("equip event Unregistering actor [{}] for animation events", GetFormName(akActorRef));
+                UnRegisterActorForBowDrawAnimEvent(akActorRef);
             }
 
             if (eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded) {
                 eventIndex = EventEnum_OnObjectUnequipped;
             }
-            else {
-                eventIndex = -1;
-            }
         }
+
+        //logger::trace("Equip Event: Actor[{}], BaseObject[{}], Equipped[{}]", GetFormName(akActorRef), GetFormName(baseObject), equipped);
 
         if (eventIndex != -1) {
             RE::TESForm* ref = RE::TESForm::LookupByID(event->originalRefr);
@@ -8006,10 +8668,10 @@ bool ShouldActorActionEventSinkBeAdded() {
 //hit events use the equip event to track equipped ammo on actors
 bool AddEquipEventSink() {
     logger::trace("{}", __func__);
-    if (!eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && !eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->sinkAdded){
+    if (!eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && !eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
         if (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() || !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty() || !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-            eventSourceholder->AddEventSink(equipEventSink); 
-            RegisterActorsForBowDrawAnimEvents();
+            //eventSourceholder->AddEventSink(equipEventSink); //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
+            //RegisterActorsForBowDrawAnimEvents(); 
             logger::debug("{} Equip Event Sink Added", __func__);
             return true;
         }
@@ -8021,7 +8683,7 @@ bool RemoveEquipEventSink() {
     logger::trace("{}", __func__);
     if (!eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && !eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
         if (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() && !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty() && !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-            eventSourceholder->RemoveEventSink(equipEventSink);
+            //eventSourceholder->RemoveEventSink(equipEventSink); //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
             logger::debug("{} Equip Event Sink Removed", __func__);
             return true;
         }
@@ -8064,9 +8726,9 @@ void AddSink(int index) {
                 logger::debug("{}, EventEnum_HitEvent Equip event sink added", __func__);
             }
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = true;
-            eventSourceholder->AddEventSink(hitEventSink);
+            //eventSourceholder->AddEventSink(hitEventSink); //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
             logger::debug("{}, EventEnum_hitEvent sink added", __func__);
-        } 
+        }
         break;
 
     case EventEnum_DeathEvent:
@@ -8212,7 +8874,7 @@ void RemoveSink(int index) {
     case EventEnum_HitEvent:
         if (eventDataPtrs[EventEnum_HitEvent]->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(hitEventSink);
+            //eventSourceholder->RemoveEventSink(hitEventSink); //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
             logger::debug("{}, EventEnum_hitEvent sink removed", __func__);
             if (RemoveEquipEventSink()) {
                 logger::debug("{}, EventEnum_HitEvent equip event sink removed", __func__);
@@ -8730,7 +9392,14 @@ void CreateEventSinks() {
     if (!openCloseEventSink) { openCloseEventSink = new OpenCloseEventSink(); }
     if (!actorActionEventSink) { actorActionEventSink = new ActorActionEventSink(); }
     if (!menuOpenCloseEventSink) { menuOpenCloseEventSink = new MenuOpenCloseEventSink(); }
-    if (!animationEventSink) { animationEventSink = new AnimationEventSink(); }
+
+    //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
+    eventSourceholder->AddEventSink(hitEventSink);
+
+    //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
+    eventSourceholder->AddEventSink(equipEventSink);
+    RegisterActorsForBowDrawAnimEvents(); 
+
 
     ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
 
@@ -8747,6 +9416,10 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     calendar = RE::Calendar::GetSingleton();
 
     //functions 
+    vm->RegisterFunction("SaveProjectileForAmmo", "DbSkseCppCallbackEvents", SaveProjectileForAmmo);
+    vm->RegisterFunction("SetDbSkseCppCallbackEventsAttached", "DbSkseCppCallbackEvents", SetDbSkseCppCallbackEventsAttached);
+
+
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
     vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
     vm->RegisterFunction("SetClipBoardText", "DbSkseFunctions", SetClipBoardText);
@@ -8774,6 +9447,17 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetAllRefaliases", "DbSkseFunctions", GetAllRefaliases);
     vm->RegisterFunction("GetAllQuestObjectRefs", "DbSkseFunctions", GetAllQuestObjectRefs);
     vm->RegisterFunction("GetQuestObjectRefsInContainer", "DbSkseFunctions", GetQuestObjectRefsInContainer);
+
+    //GetRecentHitArrowRefs GetLastHitArrowRef GetClosestObjectFromRef GetClosestObjectIndexFromRef GetGameHoursPassed
+
+    vm->RegisterFunction("GetRecentHitArrowRefs", "DbSkseFunctions", GetRecentHitArrowRefs);
+    vm->RegisterFunction("GetLastHitArrowRef", "DbSkseFunctions", GetLastHitArrowRef);
+    vm->RegisterFunction("GetRecentShotArrowRefs", "DbSkseFunctions", GetRecentShotArrowRefs);
+    vm->RegisterFunction("GetLastShotArrowRef", "DbSkseFunctions", GetLastShotArrowRef);
+    vm->RegisterFunction("GetClosestObjectFromRef", "DbSkseFunctions", GetClosestObjectFromRef);
+    vm->RegisterFunction("GetClosestObjectIndexFromRef", "DbSkseFunctions", GetClosestObjectIndexFromRef);
+    vm->RegisterFunction("GetGameHoursPassed", "DbSkseFunctions", GetGameHoursPassed);
+
     vm->RegisterFunction("GameHoursToRealTimeSeconds", "DbSkseFunctions", GameHoursToRealTimeSeconds);
     vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused);
     vm->RegisterFunction("IsInMenu", "DbSkseFunctions", IsInMenu);
@@ -8960,31 +9644,35 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         // as there is a chance that after that callback is invoked the game will encounter an error
         // while loading the saved game (eg. corrupted save) which may require you to reset some of your
         // plugin state.
-        //logger::info("kPostLoadGame: sent after an attempt to load a saved game has finished");
         //SendLoadGameEvent();
         //CreateEventSinks();
         bPlayerIsInCombat = player->IsInCombat();
-
+        
+        logger::trace("kPostLoadGame: sent after an attempt to load a saved game has finished");
         break;
 
-        //case SKSE::MessagingInterface::kSaveGame:
-            //    logger::info("kSaveGame");
-            //    break;
-
-        //case SKSE::MessagingInterface::kDeleteGame:
-            //    // message->dataLen: length of file path, data: char* file path of .ess savegame file
-            //    logger::info("kDeleteGame: sent right before deleting the .skse cosave and the .ess save");
-            //    break;
-
-        //case SKSE::MessagingInterface::kInputLoaded:
-            //    logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
-            //    break;
-
-        //case SKSE::MessagingInterface::kNewGame:
-        //    // message-data: CharGen TESQuest pointer (Note: I haven't confirmed the usefulness of this yet!)
-        //    //CreateEventSinks();
-        //    logger::info("kNewGame: sent after a new game is created, before the game has loaded");
+    //case SKSE::MessagingInterface::kSaveGame:
+        //    logger::info("kSaveGame");
         //    break;
+
+    //case SKSE::MessagingInterface::kDeleteGame:
+        //    // message->dataLen: length of file path, data: char* file path of .ess savegame file
+        //    logger::info("kDeleteGame: sent right before deleting the .skse cosave and the .ess save");
+        //    break;
+
+    //case SKSE::MessagingInterface::kInputLoaded:
+        //    logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
+        //    break;
+
+    case SKSE::MessagingInterface::kNewGame:
+        //logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
+
+        DbSkseCppCallbackEventsAttached = false;
+        DbSkseCppCallbackLoad(); //attach papyrus DbSkseCppCallbackEvents script to the player and save all ammo projectiles
+        RegisterActorsForBowDrawAnimEvents();
+
+        //LogAndMessage("kNewGame: sent after a new game is created, before the game has loaded", trace);
+        break;
 
     case SKSE::MessagingInterface::kDataLoaded:
         // RE::ConsoleLog::GetSingleton()->Print("DbSkseFunctions Installed");
@@ -9064,6 +9752,12 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
 
     bIsLoadingSerialization = false;
     logger::trace("LoadCallback complete");
+
+    //delay DbSkseCppCallbackLoad to let the papyrus DbSkseCppCallbackEvents script run the 
+    //SetDbSkseCppCallbackEventsAttached function to set DbSkseCppCallbackEventsAttached to true.
+
+    DelayedFunction(&DbSkseCppCallbackLoad, 1200);
+    RegisterActorsForBowDrawAnimEvents();
 }
 
 void SaveCallback(SKSE::SerializationInterface* a_intfc) {
