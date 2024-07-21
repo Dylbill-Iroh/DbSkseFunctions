@@ -153,21 +153,13 @@ ObjectReference[] function GetAllQuestObjectRefs() Global Native
 ;Get all quest object references in containerRef
 ObjectReference[] function GetQuestObjectRefsInContainer(ObjectReference containerRef) Global Native
 
-;Get arrow / bolt object references that recently hit the ref that match the only3dLoaded and onlyEnabled conditions
-;note only arrows or bolts that are fired from bows or crossbows are tracked
-ObjectReference[] function GetRecentHitArrowRefs(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true) Global Native
+;get all projectile object references that hit the ref that match the conditions. 
+;projectileTypes are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow.
+ObjectReference[] function GetAllHitProjectileRefsOfType(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true, int projectileType = 7) Global Native
 
-;Get the arrow / bolt object reference that last hit the ref that matches the only3dLoaded and onlyEnabled conditions
-;note only arrows or bolts that are fired from bows or crossbows are tracked
-ObjectReference function GetLastHitArrowRef(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true) Global Native
-
-;Get arrow / bolt object references that the ref recently shot that match the only3dLoaded and onlyEnabled conditions
-;note only arrows or bolts that are fired from bows or crossbows are tracked
-ObjectReference[] function GetRecentShotArrowRefs(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true) Global Native
-
-;Get the arrow / bolt object reference that the ref last shot that matches the only3dLoaded and onlyEnabled conditions
-;note only arrows or bolts that are fired from bows or crossbows are tracked
-ObjectReference function GetLastShotArrowRef(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true) Global Native
+;get all projectile object references that were shot by the ref that match the conditions.
+;projectileTypes are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow.
+ObjectReference[] function GetAllShotProjectileRefsOfType(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true, int projectileType = 7) Global Native
 
 ;Get the closest object reference in the refs array to the ref
 ObjectReference function GetClosestObjectFromRef(ObjectReference ref, ObjectReference[] refs) Global Native
