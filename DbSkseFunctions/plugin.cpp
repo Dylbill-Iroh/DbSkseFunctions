@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <string>
 #include "mini/ini.h"
+#include "UIEventHooks/Hooks.h"
 #include "editorID.hpp"
+#include "GeneralFunctions.h"
 #include "STLThunk.h"
 
 namespace logger = SKSE::log;
@@ -22,20 +24,31 @@ bool bIsSavingSerialization = false;
 bool DbSkseCppCallbackEventsAttached = false;
 std::string lastMenuOpened;
 std::vector<RE::BSFixedString> menusCurrentlyOpen;
+std::vector<RE::BSFixedString> refActivatedMenus = {
+    RE::DialogueMenu::MENU_NAME,
+    RE::BarterMenu::MENU_NAME,
+    RE::GiftMenu::MENU_NAME,
+    RE::LockpickingMenu::MENU_NAME,
+    RE::ContainerMenu::MENU_NAME,
+    RE::BookMenu::MENU_NAME,
+    RE::CraftingMenu::MENU_NAME
+};
 std::chrono::system_clock::time_point lastTimeMenuWasOpened;
 std::chrono::system_clock::time_point lastTimeGameWasPaused;
 std::map<RE::TESObjectBOOK*, int> skillBooksMap;
 int gameTimerPollingInterval = 1500; //in milliseconds
+int iMaxArrowsSavedPerReference = 0;
 float secondsPassedGameNotPaused = 0.0;
 float lastFrameDelta = 0.1;
 std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
 RE::PlayerCharacter* player;
 RE::Actor* playerRef;
 RE::BSScript::IVirtualMachine* gvm;
-RE::SkyrimVM* svm;
+//RE::SkyrimVM* gfuncs::svm;
 RE::UI* ui;
 RE::Calendar* calendar;
 RE::ScriptEventSourceHolder* eventSourceholder;
+const SKSE::LoadInterface* skseLoadInterface;
 
 //forward dec
 void AddSink(int index);
@@ -43,158 +56,61 @@ void RemoveSink(int index);
 bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef);
 bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef);
 std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString);
-int GetIndexInVector(std::vector<RE::TESObjectREFR*> v, RE::TESObjectREFR* element);
+int gfuncs::GetIndexInVector(std::vector<RE::TESObjectREFR*> v, RE::TESObjectREFR* element);
 float GameHoursToRealTimeSeconds(RE::StaticFunctionTag*, float gameHours);
-
-
-template <class T>
-void RemoveFromVectorByValue(std::vector<T>& v, T value) {
-    v.erase(std::remove(v.begin(), v.end(), value), v.end());
-}
 
 struct TrackedActorAmmoData {
     RE::TESAmmo* ammo;
     float gameTimeStamp; //game time when the ammo was saved with the BowReleased animation event (if the ammo changed between BowDraw and BowReleased)
-    std::chrono::system_clock::time_point timeStamp; //time when the ammo was saved with the BowReleased animation event  (if the ammo changed between BowDraw and BowReleased)
+    std::chrono::system_clock::time_point timeStamp; //time point when the ammo was saved with the BowReleased animation event  (if the ammo changed between BowDraw and BowReleased)
 };
 
-bool TrackedActorAmmoDataHasAmmo(RE::TESAmmo* akAmmo, std::vector<TrackedActorAmmoData>& v) {
-    for (auto& data : v) {
-        if (data.ammo == akAmmo) {
+
+struct TrackedProjectileData {
+    RE::Projectile* projectile;
+    RE::TESObjectREFR* shooter;
+    RE::TESObjectREFR* target;
+    RE::TESAmmo* ammo;
+    float gameTimeStamp; //game time when the projectile last had an impact event
+    float lastImpactEventGameTimeStamp; //last time a projectile impact event was sent for this data
+    RE::BGSProjectile* projectileBase;
+    int impactResult;
+    int collidedLayer;
+    float distanceTraveled;
+    std::string hitPartNodeName;
+
+    //std::chrono::system_clock::time_point timeStamp;
+    //uint32_t runTimeStamp;
+};
+
+std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentHitProjectiles;
+std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentShotProjectiles;
+
+//general functions============================================================================================================================================================
+
+bool formIsBowOrCrossbow(RE::TESForm* akForm) {
+    if (!gfuncs::IsFormValid(akForm)) {
+        return false;
+    }
+    RE::TESObjectWEAP* weapon = akForm->As<RE::TESObjectWEAP>();
+    if (gfuncs::IsFormValid(weapon)) {
+        if (weapon->IsBow() || weapon->IsCrossbow()) {
             return true;
         }
     }
     return false;
 }
 
-//general functions============================================================================================================================================================
-template< typename T >
-std::string IntToHex(T i)
-{
-    std::stringstream stream;
-    stream << ""
-        << std::setfill('0') << std::setw(sizeof(T) * 2)
-        << std::hex << i;
-    return stream.str();
-}
-
-void String_ReplaceAll(std::string& s, std::string searchString, std::string replaceString) {
-    if (s == "" || searchString == "") {
-        return;
-    }
-
-    int sSize = searchString.size();
-    std::size_t index = s.find(searchString);
-
-    while (index != std::string::npos)
-    {
-        s.replace(index, sSize, replaceString);
-        index = s.find(searchString);
-    }
-}
-
-void String_ReplaceAll(std::string& s, std::vector<std::string> searchStrings, std::vector<std::string> replaceStrings) {
-    int m = searchStrings.size();
-    if (replaceStrings.size() < m) {
-        m = replaceStrings.size();
-    }
-    for (int i = 0; i < m; i++) {
-        String_ReplaceAll(s, searchStrings[i], replaceStrings[i]);
-    }
-}
-
-RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString = "null", RE::BSFixedString noNameString = "", bool returnIdIfNull = true) {
-    if (!akForm) {
-        return nullString;
-    }
-
-    if (IsBadReadPtr(akForm, sizeof(akForm))) {
-        return nullString;
-    }
-
-    RE::TESObjectREFR* ref = akForm->As<RE::TESObjectREFR>();
-    RE::BSFixedString name;
-    if (ref) {
-        name = ref->GetDisplayFullName();
-        if (name == "") {
-            auto* baseForm = ref->GetBaseObject();
-            if (baseForm) {
-                name = baseForm->GetName();
-            }
-        }
-    }
-    else {
-        name = akForm->GetName();
-    }
-
-    if (name == "") {
-        if (returnIdIfNull) {
-            name = GetFormEditorId(nullptr, akForm, "");
-        }
-        else {
-            name = noNameString;
-        }
-    }
-    return name;
-}
-
-std::string GetFormDataString(RE::TESForm* akForm, std::string nullString = "null", std::string noNameString = "No Name") {
-    if (!akForm) {
-        return nullString;
-    }
-
-    if (IsBadReadPtr(akForm, sizeof(akForm))) {
-        return nullString;
-    }
-
-    std::string name = static_cast<std::string>(GetFormName(akForm, nullString, noNameString, false));
-
-    std::string editorID = GetFormEditorId(nullptr, akForm, "");
-
-    name = std::format("(name[{}] editorID[{}] formID[{}])", name, editorID, akForm->GetFormID());
-
-    return name;
-}
-
-
-
-void logFormMap(auto& map) {
-    logger::trace("logging form map");
-    for (auto const& x : map)
-    {
-        RE::TESForm* akForm = x.first;
-        if (akForm) {
-            logger::trace("Form[{}] ID[{:x}] value[{}]", GetFormName(akForm), akForm->GetFormID(), x.second);
-        }
-    }
-}
-
-bool formIsBowOrCrossbow(RE::TESForm* akForm) {
-    if (akForm) {
-        if (!IsBadReadPtr(akForm, sizeof(akForm))) {
-            RE::TESObjectWEAP* weapon = akForm->As<RE::TESObjectWEAP>();
-            if (weapon) {
-                if (weapon->IsBow() || weapon->IsCrossbow()) {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
 bool actorHasBowEquipped(RE::Actor* actor) {
-    if (actor) {
-        if (!IsBadReadPtr(actor, sizeof(actor))) {
-            RE::TESForm* equippedObj = actor->GetEquippedObject(false); //right hand
-            if (formIsBowOrCrossbow(equippedObj)) {
-                return true;
-            }
+    if (gfuncs::IsFormValid(actor)) {
+        RE::TESForm* equippedObj = actor->GetEquippedObject(false); //right hand
+        if (formIsBowOrCrossbow(equippedObj)) {
+            return true;
+        }
 
-            equippedObj = actor->GetEquippedObject(true); //left hand
-            if (formIsBowOrCrossbow(equippedObj)) {
-                return true;
-            }
+        equippedObj = actor->GetEquippedObject(true); //left hand
+        if (formIsBowOrCrossbow(equippedObj)) {
+            return true;
         }
     }
     return false;
@@ -212,9 +128,9 @@ void SaveSkillBooks() {
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
-                if (akBook) {
+                if (gfuncs::IsFormValid(akBook)) {
                     if (akBook->TeachesSkill()) {
                         skillBooksMap[akBook] = static_cast<int>(akBook->GetSkill());
                     }
@@ -222,7 +138,7 @@ void SaveSkillBooks() {
             }
         }
     }
-    //logFormMap(skillBooksMap);
+    //gfuncs::logFormMap(skillBooksMap);
 }
 
 std::map<int, std::string>ActorValueIntsMap = {
@@ -574,175 +490,7 @@ int GetActorValueInt(std::string actorValue) {
     }
 }
 
-//call the function after delay (milliseconds)
-void DelayedFunction(auto function, int delay) {
-    std::thread t([=]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-        function();
-        });
-    t.detach();
-}
-
-float timePointDiffToFloat(std::chrono::system_clock::time_point end, std::chrono::system_clock::time_point start) {
-    std::chrono::duration<float> timeElapsed = end - start;
-    return timeElapsed.count();
-}
-
-RE::VMHandle GetHandle(RE::TESForm* akForm) {
-    if (!akForm) {
-        logger::warn("{}: akForm doesn't exist", __func__);
-        return NULL;
-    }
-
-    RE::VMTypeID id = static_cast<RE::VMTypeID>(akForm->GetFormType());
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, akForm);
-
-    if (handle == NULL) {
-        return NULL;
-    }
-
-    return handle;
-}
-
-RE::VMHandle GetHandle(RE::BGSBaseAlias* akAlias) {
-    if (!akAlias) {
-        logger::warn("{}: akAlias doesn't exist", __func__);
-        return NULL;
-    }
-
-    RE::VMTypeID id = akAlias->GetVMTypeID();
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, akAlias);
-
-    if (handle == NULL) {
-        return NULL;
-    }
-    return handle;
-}
-
-RE::VMHandle GetHandle(RE::ActiveEffect* akEffect) {
-    if (!akEffect) {
-        logger::warn("{}: akEffect doesn't exist", __func__);
-        return NULL;
-    }
-
-    RE::VMTypeID id = akEffect->VMTYPEID;
-    RE::VMHandle handle = svm->handlePolicy.GetHandleForObject(id, akEffect);
-
-    if (handle == NULL) {
-        return NULL;
-    }
-    return handle;
-}
-
-
-
-int GetIndexInVector(std::vector<RE::FormID>& v, RE::FormID element) {
-    if (element == NULL) {
-        return -1;
-    }
-
-    if (v.size() == 0) {
-        return -1;
-    }
-
-    int m = v.size();
-    for (int i = 0; i < m; i++) {
-        if (v[i] == element) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-int GetIndexInVector(std::vector<RE::TESForm*>& v, RE::TESForm* element) {
-    if (!element) {
-        return -1;
-    }
-
-    if (v.size() == 0) {
-        return -1;
-    }
-
-    int m = v.size();
-    for (int i = 0; i < m; i++) {
-        if (v[i] == element) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-int GetIndexInVector(std::vector<RE::BSSoundHandle*>& v, RE::BSSoundHandle* element) {
-    if (!element) {
-        return -1;
-    }
-
-    if (v.size() == 0) {
-        return -1;
-    }
-
-    int m = v.size();
-    for (int i = 0; i < m; i++) {
-        if (v[i] == element) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-int GetIndexInVector(std::vector<RE::VMHandle> v, RE::VMHandle element) {
-    if (element == NULL) {
-        return -1;
-    }
-
-    if (v.size() == 0) {
-        return -1;
-    }
-
-    int m = v.size();
-    for (int i = 0; i < m; i++) {
-        if (v[i] == element) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-int GetIndexInVector(std::vector<RE::TESObjectREFR*> v, RE::TESObjectREFR* element) {
-    if (!element) {
-        return -1;
-    }
-
-    if (v.size() == 0) {
-        return -1;
-    }
-
-    int m = v.size();
-    for (int i = 0; i < m; i++) {
-        if (v[i] == element) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-void RemoveDuplicates(std::vector<RE::VMHandle>& vec)
-{
-    std::sort(vec.begin(), vec.end());
-    vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
-}
-
-bool IsScriptAttachedToRef(RE::TESObjectREFR* ref, RE::BSFixedString sScriptName) {
-    if (!ref) {
-        return false;
-    }
-
-    RE::VMHandle handle = GetHandle(ref);
+bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName) {
     if (handle == NULL) {
         return false;
     }
@@ -771,6 +519,24 @@ bool IsScriptAttachedToRef(RE::TESObjectREFR* ref, RE::BSFixedString sScriptName
     return false;
 }
 
+bool IsScriptAttachedToRef(RE::TESObjectREFR* ref, RE::BSFixedString sScriptName) {
+    if (!gfuncs::IsFormValid(ref)) {
+        return false;
+    }
+
+    RE::VMHandle handle = gfuncs::GetHandle(ref);
+    return IsScriptAttachedToHandle(handle, sScriptName);
+}
+
+bool IsScriptAttachedToForm(RE::TESForm* akForm, RE::BSFixedString sScriptName) {
+    if (!gfuncs::IsFormValid(akForm)) {
+        return false;
+    }
+
+    RE::VMHandle handle = gfuncs::GetHandle(akForm);
+    return IsScriptAttachedToHandle(handle, sScriptName);
+}
+
 void SetSettingsFromIniFile() {
     // first, create a file instance
     mINI::INIFile file("Data/SKSE/Plugins/DbSkseFunctions.ini");
@@ -787,7 +553,11 @@ void SetSettingsFromIniFile() {
         gameTimerPollingInterval = 100;
     }
 
+    std::string sMaxArrowsSavedPerReference = ini["Main"]["iMaxArrowsSavedPerReference"];
+    iMaxArrowsSavedPerReference = std::stoi(sMaxArrowsSavedPerReference);
+
     logger::info("{} gameTimerPollingInterval set to {} ", __func__, gameTimerPollingInterval);
+    logger::info("{} iMaxArrowsSavedPerReference set to {} ", __func__, iMaxArrowsSavedPerReference);
 }
 
 void SetupLog() {
@@ -845,14 +615,14 @@ void LogAndMessage(std::string message, int logLevel = trace, int debugLevel = n
         break;
     }
 
-    switch (debugLevel) {
+    /*switch (debugLevel) {
     case notification:
         RE::DebugNotification(message.data());
         break;
     case messageBox:
         RE::DebugMessageBox(message.data());
         break;
-    }
+    }*/
 }
 
 void SendEvents(std::vector<RE::VMHandle> handles, RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args) {
@@ -863,7 +633,7 @@ void SendEvents(std::vector<RE::VMHandle> handles, RE::BSFixedString& sEvent, RE
     }
 
     for (int i = 0; i < max; i++) {
-        svm->SendAndRelayEvent(handles[i], &sEvent, args, nullptr);
+        gfuncs::svm->SendAndRelayEvent(handles[i], &sEvent, args, nullptr);
     }
 
     delete args; //args is created using makeFunctionArguments. Delete as it's no longer needed.
@@ -874,19 +644,19 @@ void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm
         return;
     }
 
-    if (!akForm) {
+    if (!gfuncs::IsFormValid(akForm)) {
         return;
     }
 
     auto it = formHandles.find(akForm);
 
     if (it != formHandles.end()) {
-        logger::debug("{}: events for form: [{}] ID[{:x}] found", __func__, GetFormName(akForm), akForm->GetFormID());
+        logger::trace("{}: events for form: [{}] ID[{:x}] found", __func__, gfuncs::GetFormName(akForm), akForm->GetFormID());
         handles.reserve(handles.size() + it->second.size());
         handles.insert(handles.end(), it->second.begin(), it->second.end());
     }
     else {
-        logger::debug("{}: events for form: [{}] ID[{:x}] not found", __func__, GetFormName(akForm), akForm->GetFormID());
+        logger::trace("{}: events for form: [{}] ID[{:x}] not found", __func__, gfuncs::GetFormName(akForm), akForm->GetFormID());
     }
 }
 
@@ -898,13 +668,13 @@ std::vector<std::string> GetFormDescriptionsAsStrings(std::vector<RE::TESForm*> 
 
     if (noneStringType == 2 && maxCharacters > 0) {
         for (auto* akForm : akForms) {
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
             std::string description = GetDescription(akForm, newLineReplacer);
             if (description == "" && akForm) {
-                description = IntToHex(akForm->GetFormID());
+                description = gfuncs::IntToHex(akForm->GetFormID());
             }
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
@@ -914,7 +684,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(std::vector<RE::TESForm*> 
     }
     else if (noneStringType == 1 && maxCharacters > 0) {
         for (auto* akForm : akForms) {
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
@@ -930,20 +700,20 @@ std::vector<std::string> GetFormDescriptionsAsStrings(std::vector<RE::TESForm*> 
     }
     else if (noneStringType == 2) {
         for (auto* akForm : akForms) {
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
             std::string description = GetDescription(akForm, newLineReplacer);
             if (description == "" && akForm) {
-                description = IntToHex(akForm->GetFormID());
+                description = gfuncs::IntToHex(akForm->GetFormID());
             }
             descriptions.push_back(description);
         }
     }
     else if (noneStringType == 1) {
         for (auto* akForm : akForms) {
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
@@ -956,7 +726,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(std::vector<RE::TESForm*> 
     }
     else if (maxCharacters > 0) {
         for (auto* akForm : akForms) {
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
@@ -969,7 +739,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(std::vector<RE::TESForm*> 
     }
     else {
         for (auto* akForm : akForms) {
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
@@ -995,13 +765,13 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
     if (noneStringType == 2 && maxCharacters > 0) {
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
             std::string description = GetDescription(akForm, newLineReplacer);
             if (description == "" && akForm) {
-                description = IntToHex(akForm->GetFormID());
+                description = gfuncs::IntToHex(akForm->GetFormID());
             }
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
@@ -1012,7 +782,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
     else if (noneStringType == 1 && maxCharacters > 0) {
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
@@ -1029,13 +799,13 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
     else if (noneStringType == 2) {
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
             std::string description = GetDescription(akForm, newLineReplacer);
             if (description == "" && akForm) {
-                description = IntToHex(akForm->GetFormID());
+                description = gfuncs::IntToHex(akForm->GetFormID());
             }
             descriptions.push_back(description);
         }
@@ -1043,7 +813,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
     else if (noneStringType == 1) {
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
@@ -1057,7 +827,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
     else if (maxCharacters > 0) {
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
@@ -1071,7 +841,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
     else {
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 descriptions.push_back(nullFormString);
                 continue;
             }
@@ -1096,12 +866,12 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(std::vector<RE::TE
         for (auto* akForm : akForms) {
             std::string description = GetDescription(akForm, newLineReplacer);
             if (description == "" && akForm) {
-                description = IntToHex(akForm->GetFormID());
+                description = gfuncs::IntToHex(akForm->GetFormID());
             }
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1114,7 +884,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(std::vector<RE::TE
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1122,9 +892,9 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(std::vector<RE::TE
         for (auto* akForm : akForms) {
             std::string description = GetDescription(akForm, newLineReplacer);
             if (description == "" && akForm) {
-                description = IntToHex(akForm->GetFormID());
+                description = gfuncs::IntToHex(akForm->GetFormID());
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1134,7 +904,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(std::vector<RE::TE
             if (description == "" && akForm) {
                 description = GetFormEditorId(nullptr, akForm, "");
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1144,14 +914,14 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(std::vector<RE::TE
             if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
     else {
         for (auto* akForm : akForms) {
             std::string description = GetDescription(akForm, newLineReplacer);
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1167,7 +937,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(std::vector<RE::TE
 
 std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* akFormlist, int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer, int noneStringType, std::string nullFormString) {
     std::vector<std::string> formNamesAndDescriptions;
-    /*std::string name = static_cast<std::string>(GetFormName(akForm, "", "", false));
+    /*std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, "", "", false));
     formNamesAndDescriptions.push_back(name + "||" + description);*/
     int m = akFormlist->forms.size();
 
@@ -1177,12 +947,12 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             RE::TESForm* akForm = akFormlist->forms[i];
             std::string description = GetDescription(akForm, newLineReplacer);
             if (description == "" && akForm) {
-                description = IntToHex(akForm->GetFormID());
+                description = gfuncs::IntToHex(akForm->GetFormID());
             }
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1196,7 +966,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1205,9 +975,9 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             RE::TESForm* akForm = akFormlist->forms[i];
             std::string description = GetDescription(akForm, newLineReplacer);
             if (description == "" && akForm) {
-                description = IntToHex(akForm->GetFormID());
+                description = gfuncs::IntToHex(akForm->GetFormID());
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1218,7 +988,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             if (description == "" && akForm) {
                 description = GetFormEditorId(nullptr, akForm, "");
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1229,7 +999,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1237,7 +1007,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
             std::string description = GetDescription(akForm, newLineReplacer);
-            std::string name = static_cast<std::string>(GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
         }
     }
@@ -1257,24 +1027,24 @@ std::vector<std::string> GetFormNamesAsStrings(std::vector<RE::TESForm*> akForms
     if (noneStringType == 2) {
         for (auto* akForm : akForms) {
             std::string noName = "";
-            if (akForm) {
-                noName = IntToHex(akForm->GetFormID());
+            if (gfuncs::IsFormValid(akForm)) {
+                noName = gfuncs::IntToHex(akForm->GetFormID());
             }
-            formNames.push_back(static_cast<std::string>(GetFormName(akForm, nullFormString, noName)));
+            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, noName)));
         }
     }
     else if (noneStringType == 1) {
         for (auto* akForm : akForms) {
             std::string noName = "";
-            if (akForm) {
+            if (gfuncs::IsFormValid(akForm)) {
                 noName = GetFormEditorId(nullptr, akForm, "");
             }
-            formNames.push_back(static_cast<std::string>(GetFormName(akForm, nullFormString, noName)));
+            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, noName)));
         }
     }
     else {
         for (auto* akForm : akForms) {
-            formNames.push_back(static_cast<std::string>(GetFormName(akForm, nullFormString, "")));
+            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "")));
         }
     }
 
@@ -1296,26 +1066,26 @@ std::vector<std::string> GetFormNamesAsStrings(RE::BGSListForm* akFormlist, int 
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
             std::string noName = "";
-            if (akForm) {
-                noName = IntToHex(akForm->GetFormID());
+            if (gfuncs::IsFormValid(akForm)) {
+                noName = gfuncs::IntToHex(akForm->GetFormID());
             }
-            formNames.push_back(static_cast<std::string>(GetFormName(akForm, nullFormString, noName)));
+            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, noName)));
         }
     }
     else if (noneStringType == 1) {
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
             std::string noName = "";
-            if (akForm) {
+            if (gfuncs::IsFormValid(akForm)) {
                 noName = GetFormEditorId(nullptr, akForm, "");
             }
-            formNames.push_back(static_cast<std::string>(GetFormName(akForm, nullFormString, noName)));
+            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, noName)));
         }
     }
     else {
         for (int i = 0; i < m; i++) {
             RE::TESForm* akForm = akFormlist->forms[i];
-            formNames.push_back(static_cast<std::string>(GetFormName(akForm, nullFormString, "")));
+            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "")));
         }
     }
 
@@ -1336,7 +1106,7 @@ std::vector<std::string> GetFormEditorIdsAsStrings(std::vector<RE::TESForm*> akF
     for (int i = 0; i < m; i++) {
         RE::TESForm* akForm = akForms[i];
         std::string name = nullFormString;
-        if (akForm) {
+        if (gfuncs::IsFormValid(akForm)) {
             name = GetFormEditorId(nullptr, akForm, "");
         }
         formNames.push_back(name);
@@ -1359,7 +1129,7 @@ std::vector<std::string> GetFormEditorIdsAsStrings(RE::BGSListForm* akFormlist, 
     for (int i = 0; i < m; i++) {
         RE::TESForm* akForm = akFormlist->forms[i];
         std::string name = nullFormString;
-        if (akForm) {
+        if (gfuncs::IsFormValid(akForm)) {
             name = GetFormEditorId(nullptr, akForm, "");
         }
         formNames.push_back(name);
@@ -1430,8 +1200,8 @@ std::vector<std::string> GetLoadedModDescriptionsAsStrings(int sortOption, int m
                 auto* file = dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
 
                     if (description.size() > maxCharacters) {
                         description = (description.substr(0, maxCharacters) + overMaxCharacterSuffix);
@@ -1457,8 +1227,8 @@ std::vector<std::string> GetLoadedModDescriptionsAsStrings(int sortOption, int m
                 auto* file = dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
                     sfileDescriptions.push_back(description);
                 }
             }
@@ -1494,8 +1264,8 @@ std::vector<std::string> GetLoadedModNamesAndDescriptionsAsStrings(int sortOptio
                 auto* file = dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
 
                     if (description.size() > maxCharacters) {
                         description = (description.substr(0, maxCharacters) + overMaxCharacterSuffix);
@@ -1521,8 +1291,8 @@ std::vector<std::string> GetLoadedModNamesAndDescriptionsAsStrings(int sortOptio
                 auto* file = dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
                     sfileDescriptions.push_back(static_cast<std::string>(file->GetFilename()) + "||" + description);
                 }
             }
@@ -1558,8 +1328,8 @@ std::vector<std::string> GetLoadedLightModDescriptionsAsStrings(int sortOption, 
                 auto* file = dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
 
                     if (description.size() > maxCharacters) {
                         description = (description.substr(0, maxCharacters) + overMaxCharacterSuffix);
@@ -1585,8 +1355,8 @@ std::vector<std::string> GetLoadedLightModDescriptionsAsStrings(int sortOption, 
                 auto* file = dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
                     sfileDescriptions.push_back(description);
                 }
             }
@@ -1622,8 +1392,8 @@ std::vector<std::string> GetLoadedLightModNamesAndDescriptionsAsStrings(int sort
                 auto* file = dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
 
                     if (description.size() > maxCharacters) {
                         description = (description.substr(0, maxCharacters) + overMaxCharacterSuffix);
@@ -1649,8 +1419,8 @@ std::vector<std::string> GetLoadedLightModNamesAndDescriptionsAsStrings(int sort
                 auto* file = dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
                     sfileDescriptions.push_back(static_cast<std::string>(file->GetFilename()) + "||" + description);
                 }
             }
@@ -1687,8 +1457,8 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
                 auto* file = dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
 
                     if (description.size() > maxCharacters) {
                         description = (description.substr(0, maxCharacters) + overMaxCharacterSuffix);
@@ -1701,8 +1471,8 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
                 auto* file = dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
 
                     if (description.size() > maxCharacters) {
                         description = (description.substr(0, maxCharacters) + overMaxCharacterSuffix);
@@ -1739,8 +1509,8 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
                 auto* file = dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
                     sfileDescriptions.push_back(description);
                 }
             }
@@ -1749,8 +1519,8 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
                 auto* file = dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
                     sfileDescriptions.push_back(description);
                 }
             }
@@ -1797,8 +1567,8 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
                 auto* file = dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
 
                     if (description.size() > maxCharacters) {
                         description = (description.substr(0, maxCharacters) + overMaxCharacterSuffix);
@@ -1811,8 +1581,8 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
                 auto* file = dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
 
                     if (description.size() > maxCharacters) {
                         description = (description.substr(0, maxCharacters) + overMaxCharacterSuffix);
@@ -1849,8 +1619,8 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
                 auto* file = dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
                     sfileDescriptions.push_back(static_cast<std::string>(file->GetFilename()) + "||" + description);
                 }
             }
@@ -1859,8 +1629,8 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
                 auto* file = dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
-                    String_ReplaceAll(description, "\r", newLineReplacer);
-                    String_ReplaceAll(description, "\n", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
+                    gfuncs::String_ReplaceAll(description, "\n", newLineReplacer);
                     sfileDescriptions.push_back(static_cast<std::string>(file->GetFilename()) + "||" + description);
                 }
             }
@@ -1908,7 +1678,7 @@ RE::TESForm* LoadForm(SKSE::SerializationInterface* a_intfc) {
 
     RE::TESForm* akForm = RE::TESForm::LookupByID(formID);
 
-    if (!akForm) {
+    if (!gfuncs::IsFormValid(akForm, false)) {
         logger::error("{} failed to load", __func__);
         return nullptr;
     }
@@ -2063,7 +1833,7 @@ bool LoadFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
         RE::TESForm* akForm;
         if (formIdResolved) {
             akForm = RE::TESForm::LookupByID<RE::TESForm>(formID);
-            if (!akForm) {
+            if (!gfuncs::IsFormValid(akForm, false)) {
                 logger::error("{}: {}: error, failed to load akForm!", __func__, i);
                 return false;
             }
@@ -2102,7 +1872,7 @@ bool LoadFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
         if (handles.size() > 0 && akForm != nullptr) {
             akMap.insert(std::pair<RE::TESForm*, std::vector<RE::VMHandle>>(akForm, handles));
-            logger::debug("{}: {}: record[{}] akForm[{}] formID[{:x}] loaded", __func__, i, record, GetFormName(akForm), formID);
+            logger::debug("{}: {}: record[{}] akForm[{}] formID[{:x}] loaded", __func__, i, record, gfuncs::GetFormName(akForm), formID);
         }
     }
     return true;
@@ -2126,7 +1896,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
             RE::FormID formID = -1;
             if (it->first) {
                 formID = it->first->GetFormID();
-                logger::trace("{}: saving handles for ref[{}] formId[{:x}]", __func__, GetFormName(it->first), formID);
+                logger::trace("{}: saving handles for ref[{}] formId[{:x}]", __func__, gfuncs::GetFormName(it->first), formID);
             }
 
             if (!a_intfc->WriteRecordData(formID)) {
@@ -2166,7 +1936,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(6.6);
+    return float(6.7);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2260,7 +2030,7 @@ bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType) {
     for (RE::BSTArray<RE::TESForm*>::iterator it = formArray->begin(); it != itrEndType; it++) {
         RE::TESForm* akForm = *it;
 
-        if (akForm) {
+        if (gfuncs::IsFormValid(akForm)) {
             if (modFile->IsFormInMod(akForm->GetFormID())) {
                 return true;
             }
@@ -2270,7 +2040,7 @@ bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType) {
 }
 
 std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString) {
-    if (!akForm) {
+    if (!gfuncs::IsFormValid(akForm)) {
         return nullFormString;
     }
     else {
@@ -2322,7 +2092,7 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
 
         for (int i = 0; i < numOfForms; i++) {
             auto* akForm = akForms[i];
-            std::string formName = static_cast<std::string>(GetFormName(akForm, "", "", false));
+            std::string formName = static_cast<std::string>(gfuncs::GetFormName(akForm, "", "", false));
             formNames.push_back(formName);
             auto it = formNamesMap.find(formName);
             if (it == formNamesMap.end()) {
@@ -2467,7 +2237,7 @@ void AddFormsToList(RE::StaticFunctionTag*, std::vector<RE::TESForm*> akForms, R
     }
 
     for (auto* akForm : akForms) {
-        if (akForm) {
+        if (gfuncs::IsFormValid(akForm, false)) {
             akFormlist->AddForm(akForm);
         }
     }
@@ -2486,7 +2256,7 @@ std::string GetEffectsDescriptions(RE::BSTArray<RE::Effect*> effects) {
                 std::format("{:.0f}", float(effect->GetDuration())),
                 std::format("{:.0f}", float(effect->GetArea()))
             };
-            String_ReplaceAll(s, magicDescriptionTags, values);
+            gfuncs::String_ReplaceAll(s, magicDescriptionTags, values);
             description += (s + " ");
         }
     }
@@ -2494,7 +2264,7 @@ std::string GetEffectsDescriptions(RE::BSTArray<RE::Effect*> effects) {
 }
 
 std::string GetMagicItemDescription(RE::MagicItem* magicItem) {
-    if (magicItem) {
+    if (gfuncs::IsFormValid(magicItem)) {
         logger::debug("{} {}", __func__, magicItem->GetName());
         return GetEffectsDescriptions(magicItem->effects);
     }
@@ -2502,8 +2272,8 @@ std::string GetMagicItemDescription(RE::MagicItem* magicItem) {
 }
 
 std::string GetDescription(RE::TESForm* akForm, std::string newLineReplacer) {
-    if (!akForm) {
-        logger::warn("{}: akForm doesn't exist", __func__);
+    if (!gfuncs::IsFormValid(akForm)) {
+        logger::warn("{}: akForm doesn't exist or isn't valid", __func__);
         return "";
     }
 
@@ -2512,7 +2282,7 @@ std::string GetDescription(RE::TESForm* akForm, std::string newLineReplacer) {
     auto description = akForm->As<RE::TESDescription>();
 
     if (description == NULL) {
-        logger::warn("{} couldn't cast form[{}] ID[{}] as description", __func__, GetFormName(akForm), akForm->GetFormID());
+        logger::warn("{} couldn't cast form[{}] ID[{}] as description", __func__, gfuncs::GetFormName(akForm), akForm->GetFormID());
         // return "";
     }
     else {
@@ -2529,9 +2299,9 @@ std::string GetDescription(RE::TESForm* akForm, std::string newLineReplacer) {
         RE::TESEnchantableForm* enchantForm = akForm->As<RE::TESEnchantableForm>();
         if (enchantForm) {
             RE::EnchantmentItem* enchantment = enchantForm->formEnchanting;
-            if (enchantment) {
+            if (gfuncs::IsFormValid(enchantment)) {
                 RE::MagicItem* magicItem = enchantment->As<RE::MagicItem>();
-                if (magicItem) {
+                if (gfuncs::IsFormValid(magicItem)) {
                     s = GetMagicItemDescription(magicItem);
                 }
             }
@@ -2539,14 +2309,14 @@ std::string GetDescription(RE::TESForm* akForm, std::string newLineReplacer) {
     }
 
     if (newLineReplacer != "") {
-        String_ReplaceAll(s, "\r", newLineReplacer);
-        String_ReplaceAll(s, "\n", newLineReplacer);
+        gfuncs::String_ReplaceAll(s, "\r", newLineReplacer);
+        gfuncs::String_ReplaceAll(s, "\n", newLineReplacer);
     }
     return s;
 }
 
 std::string GetFormDescription(RE::StaticFunctionTag*, RE::TESForm* akForm, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer, int noneStringType, std::string nullFormString) {
-    if (!akForm) {
+    if (!gfuncs::IsFormValid(akForm)) {
         return nullFormString;
     }
 
@@ -2555,7 +2325,7 @@ std::string GetFormDescription(RE::StaticFunctionTag*, RE::TESForm* akForm, int 
     if (s == "") {
         if (noneStringType == 2) {
             if (akForm) {
-                s = IntToHex(akForm->GetFormID());
+                s = gfuncs::IntToHex(akForm->GetFormID());
             }
         }
         else if (noneStringType == 1) {
@@ -2783,11 +2553,373 @@ std::vector<RE::TESQuest*> GetAllActiveQuests(RE::StaticFunctionTag*) {
 
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                if (quest) {
+                if (gfuncs::IsFormValid(quest)) {
                     if (quest->IsActive()) {
                         questItems.push_back(quest);
+                    }
+                }
+            }
+        }
+    }
+    return questItems;
+}
+
+bool FormNameMatches(RE::TESForm* akForm, std::string& sFormName) {
+    bool nameMatches = false;
+    if (gfuncs::IsFormValid(akForm)) {
+        auto* ref = akForm->AsReference();
+        if (gfuncs::IsFormValid(ref)) {
+            nameMatches = (ref->GetDisplayFullName() == sFormName);
+            if (!nameMatches) {
+                RE::TESForm* baseForm = ref->GetBaseObject();
+                if (gfuncs::IsFormValid(baseForm)) {
+                    nameMatches = (baseForm->GetName() == sFormName);
+                }
+            }
+        }
+        else {
+            nameMatches = (akForm->GetName() == sFormName);
+        }
+    }
+    return nameMatches;
+}
+
+bool FormNameContains(RE::TESForm* akForm, std::string& sFormName) {
+    std::string akFormName = "";
+    bool akFormNameContainsSFormName = false;
+    if (gfuncs::IsFormValid(akForm)) {
+        auto* ref = akForm->AsReference();
+        if (gfuncs::IsFormValid(ref)) {
+            akFormName = (ref->GetDisplayFullName());
+            if (akFormName != "") {
+                akFormNameContainsSFormName = (akFormName.find(sFormName) != std::string::npos);
+            }
+            if (!akFormNameContainsSFormName) {
+                RE::TESForm* baseForm = ref->GetBaseObject();
+                if (gfuncs::IsFormValid(baseForm)) {
+                    akFormName = baseForm->GetName();
+                    akFormNameContainsSFormName = (akFormName.find(sFormName) != std::string::npos);
+                }
+            }
+        }
+        else {
+            akFormName = akForm->GetName();
+            akFormNameContainsSFormName = (akFormName.find(sFormName) != std::string::npos);
+        }
+    }
+    return akFormNameContainsSFormName;
+}
+
+std::vector<RE::TESForm*> GetAllConstructibleObjects(RE::StaticFunctionTag*, RE::TESForm* createdObject) {
+    std::vector<RE::TESForm*> forms;
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+
+    if (gfuncs::IsFormValid(createdObject, false)) {
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false)) {
+                RE::BGSConstructibleObject* object = form->As<RE::BGSConstructibleObject>(); 
+                if (gfuncs::IsFormValid(object, false)) {
+                    if (object->createdItem == createdObject) {
+                        forms.push_back(form);
+                    }
+                }
+            }
+        }
+    }
+    else {
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false)) {
+                RE::BGSConstructibleObject* object = form->As<RE::BGSConstructibleObject>();
+                if (gfuncs::IsFormValid(object, false)) {
+                    forms.push_back(form);
+                }
+            }
+        }
+    }
+    return forms;
+}
+
+
+std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::string sFormName, int nameMatchMode, std::vector<int> formTypes, int formTypeMatchMode) {
+    std::vector<RE::TESForm*> forms;
+    if (sFormName == "") {
+        logger::warn("{} sFormName is empty", __func__);
+        return forms;
+    }
+
+    if (nameMatchMode == 0) {
+        if (formTypes.size() == 0 || formTypeMatchMode == -1) {
+            const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+            for (auto& [id, form] : *allForms) {
+                if (FormNameMatches(form, sFormName)) {
+                    forms.push_back(form);
+                }
+            }
+        }
+        else if (formTypes.size() > 0 && formTypeMatchMode == 1) {
+            const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+            for (auto& [id, form] : *allForms) {
+                if (FormNameMatches(form, sFormName)) {
+                    int formType = static_cast<int>(form->GetFormType());
+                    for (int& i : formTypes) {
+                        if (i == formType) {
+                            forms.push_back(form);
+                        }
+                    }
+                }
+            }
+        }
+        else if (formTypes.size() > 0 && formTypeMatchMode == 0) {
+            const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+            for (auto& [id, form] : *allForms) {
+                if (FormNameMatches(form, sFormName)) {
+                    int formType = static_cast<int>(form->GetFormType());
+                    bool matchedType = false;
+                    for (int& i : formTypes) {
+                        if (i == formType) {
+                            matchedType = true;
+                            break;
+                        }
+                    }
+                    if (!matchedType) {
+                        forms.push_back(form);
+                    }
+                }
+            }
+        }
+    }
+    else {
+        if (formTypes.size() == 0 || formTypeMatchMode == -1) {
+            const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+            for (auto& [id, form] : *allForms) {
+                if (FormNameContains(form, sFormName)) {
+                    forms.push_back(form);
+                }
+            }
+        }
+        else if (formTypes.size() > 0 && formTypeMatchMode == 1) {
+            const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+            for (auto& [id, form] : *allForms) {
+                if (FormNameContains(form, sFormName)) {
+                    int formType = static_cast<int>(form->GetFormType());
+                    for (int& i : formTypes) {
+                        if (i == formType) {
+                            forms.push_back(form);
+                        }
+                    }
+                }
+            }
+        }
+        else if (formTypes.size() > 0 && formTypeMatchMode == 0) {
+            const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+            for (auto& [id, form] : *allForms) {
+                if (FormNameContains(form, sFormName)) {
+                    int formType = static_cast<int>(form->GetFormType());
+                    bool matchedType = false;
+                    for (int& i : formTypes) {
+                        if (i == formType) {
+                            matchedType = true;
+                            break;
+                        }
+                    }
+                    if (!matchedType) {
+                        forms.push_back(form);
+                    }
+                }
+            }
+        }
+    }
+    gfuncs::RemoveDuplicates(forms);
+    return forms;
+}
+
+std::vector<RE::TESForm*> GetAllFormsWithScriptAttached(RE::StaticFunctionTag*, RE::BSFixedString sScriptName, std::vector<int> formTypes, int formTypeMatchMode) {
+    std::vector<RE::TESForm*> forms;
+    if (formTypes.size() == 0 || formTypeMatchMode == -1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (IsScriptAttachedToForm(form, sScriptName)) {
+                forms.push_back(form);
+            }
+        }
+    }
+    else if (formTypes.size() > 0 && formTypeMatchMode == 1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (IsScriptAttachedToForm(form, sScriptName)) {
+                int formType = static_cast<int>(form->GetFormType());
+                for (int& i : formTypes) {
+                    if (i == formType) {
+                        forms.push_back(form);
+                    }
+                }
+            }
+        }
+    }
+    else if (formTypes.size() > 0 && formTypeMatchMode == 0) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (IsScriptAttachedToForm(form, sScriptName)) {
+                int formType = static_cast<int>(form->GetFormType());
+                bool matchedType = false;
+                for (int& i : formTypes) {
+                    if (i == formType) {
+                        matchedType = true;
+                        break;
+                    }
+                }
+                if (!matchedType) {
+                    forms.push_back(form);
+                }
+            }
+        }
+    }
+    gfuncs::RemoveDuplicates(forms);
+    return forms;
+}
+
+std::vector<RE::BGSBaseAlias*> GetAllAliasesWithScriptAttached(RE::StaticFunctionTag*, RE::BSFixedString sScriptName) {
+    logger::debug("{} called", __func__);
+
+    std::vector<RE::BGSBaseAlias*> questItems;
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            RE::TESForm* baseForm = *itr;
+            if (gfuncs::IsFormValid(baseForm)) {
+                RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                if (gfuncs::IsFormValid(quest)) {
+                    if (quest->aliases.size() > 0) {
+                        for (int i = 0; i < quest->aliases.size(); i++) {
+                            if (quest->aliases[i]) {
+                                RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
+                                if (IsScriptAttachedToHandle(handle, sScriptName)) {
+                                    questItems.push_back(quest->aliases[i]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return questItems;
+}
+
+std::vector<RE::BGSRefAlias*> GetAllRefAliasesWithScriptAttached(RE::StaticFunctionTag*, RE::BSFixedString sScriptName, bool onlyQuestObjects, bool onlyFilled) {
+    logger::debug("{} called", __func__);
+
+    std::vector<RE::BGSRefAlias*> questItems;
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+
+        if (onlyQuestObjects && onlyFilled) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+                RE::TESForm* baseForm = *itr;
+                if (gfuncs::IsFormValid(baseForm)) {
+                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                    if (gfuncs::IsFormValid(quest)) {
+                        if (quest->aliases.size() > 0) {
+                            for (int i = 0; i < quest->aliases.size(); i++) {
+                                if (quest->aliases[i]) {
+                                    if (quest->aliases[i]->IsQuestObject()) {
+                                        RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
+                                        if (IsScriptAttachedToHandle(handle, sScriptName)) {
+                                            RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                            if (refAlias) {
+                                                RE::TESObjectREFR* akRef = refAlias->GetReference();
+                                                if (gfuncs::IsFormValid(akRef)) {
+                                                    questItems.push_back(refAlias);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else if (onlyQuestObjects) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+                RE::TESForm* baseForm = *itr;
+                if (gfuncs::IsFormValid(baseForm)) {
+                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                    if (gfuncs::IsFormValid(quest)) {
+                        if (quest->aliases.size() > 0) {
+                            for (int i = 0; i < quest->aliases.size(); i++) {
+                                if (quest->aliases[i]) {
+                                    if (quest->aliases[i]->IsQuestObject()) {
+                                        RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
+                                        if (IsScriptAttachedToHandle(handle, sScriptName)) {
+                                            RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                            if (refAlias) {
+                                                questItems.push_back(refAlias);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else if (onlyFilled) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+                RE::TESForm* baseForm = *itr;
+                if (gfuncs::IsFormValid(baseForm)) {
+                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                    if (gfuncs::IsFormValid(quest)) {
+                        if (quest->aliases.size() > 0) {
+                            for (int i = 0; i < quest->aliases.size(); i++) {
+                                if (quest->aliases[i]) {
+                                    RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
+                                    if (IsScriptAttachedToHandle(handle, sScriptName)) {
+                                        RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                        if (refAlias) {
+                                            RE::TESObjectREFR* akRef = refAlias->GetReference();
+                                            if (gfuncs::IsFormValid(akRef)) {
+                                                questItems.push_back(refAlias);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+                RE::TESForm* baseForm = *itr;
+                if (gfuncs::IsFormValid(baseForm)) {
+                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
+                    if (gfuncs::IsFormValid(quest)) {
+                        if (quest->aliases.size() > 0) {
+                            for (int i = 0; i < quest->aliases.size(); i++) {
+                                if (quest->aliases[i]) {
+                                    RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
+                                    if (IsScriptAttachedToHandle(handle, sScriptName)) {
+                                        RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
+                                        if (refAlias) {
+                                            questItems.push_back(refAlias);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2809,9 +2941,9 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
         if (onlyQuestObjects && onlyFilled) {
             for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
                 RE::TESForm* baseForm = *itr;
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                    if (quest) {
+                    if (gfuncs::IsFormValid(quest)) {
                         if (quest->aliases.size() > 0) {
                             for (int i = 0; i < quest->aliases.size(); i++) {
                                 if (quest->aliases[i]) {
@@ -2819,7 +2951,7 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
                                         RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
                                         if (refAlias) {
                                             RE::TESObjectREFR* akRef = refAlias->GetReference();
-                                            if (akRef) {
+                                            if (gfuncs::IsFormValid(akRef)) {
                                                 questItems.push_back(refAlias);
                                             }
                                         }
@@ -2834,9 +2966,9 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
         else if (onlyQuestObjects) {
             for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
                 RE::TESForm* baseForm = *itr;
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                    if (quest) {
+                    if (gfuncs::IsFormValid(quest)) {
                         if (quest->aliases.size() > 0) {
                             for (int i = 0; i < quest->aliases.size(); i++) {
                                 if (quest->aliases[i]) {
@@ -2856,16 +2988,16 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
         else if (onlyFilled) {
             for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
                 RE::TESForm* baseForm = *itr;
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                    if (quest) {
+                    if (gfuncs::IsFormValid(quest)) {
                         if (quest->aliases.size() > 0) {
                             for (int i = 0; i < quest->aliases.size(); i++) {
                                 if (quest->aliases[i]) {
                                     RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
                                     if (refAlias) {
                                         RE::TESObjectREFR* akRef = refAlias->GetReference();
-                                        if (akRef) {
+                                        if (gfuncs::IsFormValid(akRef)) {
                                             questItems.push_back(refAlias);
                                         }
                                     }
@@ -2879,9 +3011,9 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
         else {
             for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
                 RE::TESForm* baseForm = *itr;
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                    if (quest) {
+                    if (gfuncs::IsFormValid(quest)) {
                         if (quest->aliases.size() > 0) {
                             for (int i = 0; i < quest->aliases.size(); i++) {
                                 if (quest->aliases[i]) {
@@ -2912,9 +3044,9 @@ std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                if (quest) {
+                if (gfuncs::IsFormValid(quest)) {
                     if (quest->aliases.size() > 0) {
                         for (int i = 0; i < quest->aliases.size(); i++) {
                             if (quest->aliases[i]) {
@@ -2923,7 +3055,7 @@ std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {
                                     RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
                                     if (refAlias) {
                                         RE::TESObjectREFR* akRef = refAlias->GetReference();
-                                        if (akRef) {
+                                        if (gfuncs::IsFormValid(akRef)) {
                                             questItems.push_back(akRef);
                                         }
                                     }
@@ -2944,7 +3076,7 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
     std::vector<RE::TESObjectREFR*> questItems;
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
-    if (!ref) {
+    if (!gfuncs::IsFormValid(ref)) {
         logger::warn("{} ref doesn't exist", __func__);
         return questItems;
     }
@@ -2952,7 +3084,7 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
     auto inventory = ref->GetInventory();
 
     if (inventory.size() == 0) {
-        logger::warn("{} {} ref doesn't contain any items", __func__, GetFormName(ref, "", "", true));
+        logger::warn("{} {} ref doesn't contain any items", __func__, gfuncs::GetFormName(ref, "", "", true));
         return questItems;
     }
 
@@ -2964,9 +3096,9 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                if (quest) {
+                if (gfuncs::IsFormValid(quest)) {
                     if (quest->aliases.size() > 0) {
                         for (int i = 0; i < quest->aliases.size(); i++) {
                             if (quest->aliases[i]) {
@@ -2974,7 +3106,7 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
                                     RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
                                     if (refAlias) {
                                         RE::TESObjectREFR* akRef = refAlias->GetReference();
-                                        if (akRef) {
+                                        if (gfuncs::IsFormValid(akRef)) {
                                             if (inventory.contains(akRef->GetObjectReference())) {
                                                 questItems.push_back(akRef);
                                             }
@@ -2992,22 +3124,30 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
     return questItems;
 }
 
+//general projectile functions==========================================================================================================================
+
+bool DidShooterHitRefWithProjectile(RE::TESObjectREFR* shooter, RE::TESObjectREFR* ref, TrackedProjectileData& data) {
+    return (shooter == data.shooter && ref == data.target);
+}
+
 bool DidProjectileHitRef(RE::Projectile* akProjectile, RE::TESObjectREFR* ref) {
-    if (akProjectile && ref) {
+    if (gfuncs::IsFormValid(akProjectile) && gfuncs::IsFormValid(ref)) {
+
         //logger::trace("akProjectile[{}] found", akProjectile->GetDisplayFullName());
         auto impacts = akProjectile->GetProjectileRuntimeData().impacts;
-        for (auto* impactData : impacts) {
-            if (impactData) {
-                auto hitRef = impactData->collidee;
-                if (hitRef) {
-                    //logger::trace("hitRef found");
-                    auto hitRefPtr = hitRef.get();
-                    if (hitRefPtr) {
-                        //logger::trace("hitRefPtr found");
-                        auto* hitRefRef = hitRefPtr.get();
-                        if (hitRefRef == ref) {
-                            logger::trace("projectile*[{}] hit [{}]", akProjectile->GetDisplayFullName(), hitRefRef->GetDisplayFullName());
-                            return true;
+        if (!impacts.empty()) {
+            for (auto* impactData : impacts) {
+                if (impactData) {
+                    auto hitRef = impactData->collidee;
+                    if (hitRef) {
+                        //logger::trace("hitRef found");
+                        auto hitRefPtr = hitRef.get();
+                        if (hitRefPtr) {
+                            //logger::trace("hitRefPtr found");
+                            auto* hitRefRef = hitRefPtr.get();
+                            if (gfuncs::IsFormValid(hitRefRef)) {
+                                return (hitRefRef == ref);
+                            }
                         }
                     }
                 }
@@ -3018,22 +3158,27 @@ bool DidProjectileHitRef(RE::Projectile* akProjectile, RE::TESObjectREFR* ref) {
 }
 
 bool DidRefShootProjectile(RE::Projectile* akProjectile, RE::TESObjectREFR* ref) {
-    if (akProjectile && ref) {
+    if (gfuncs::IsFormValid(akProjectile) && gfuncs::IsFormValid(ref)) {
         auto shooterHandle = akProjectile->GetProjectileRuntimeData().shooter;
         if (shooterHandle) {
             auto shooterRefPtr = shooterHandle.get();
             if (shooterRefPtr) {
-                return (shooterRefPtr.get() == ref);
+                auto* shooter = shooterRefPtr.get();
+                if (gfuncs::IsFormValid(shooter)) {
+                    return (shooter == ref);
+                }
             }
         }
     }
     return false;
 }
 
-bool DidProjectileHitRefWithAmmoFromShooter(RE::TESObjectREFR* shooter, RE::TESObjectREFR* ref, RE::Projectile* akProjectile, RE::TESAmmo* akAmmo) {
-    if (shooter && ref && akProjectile && akAmmo) {
-        logger::trace("akProjectile[{}] found", akProjectile->GetDisplayFullName());
+bool DidProjectileHitRefWithAmmoFromShooter(RE::TESObjectREFR* shooter, RE::TESObjectREFR* ref, RE::TESAmmo* akAmmo, TrackedProjectileData& data) {
+    return (shooter == data.shooter && ref == data.target && akAmmo == data.ammo);
+}
 
+bool DidProjectileHitRefWithAmmoFromShooter(RE::TESObjectREFR* shooter, RE::TESObjectREFR* ref, RE::Projectile* akProjectile, RE::TESAmmo* akAmmo) {
+    if (gfuncs::IsFormValid(shooter) && gfuncs::IsFormValid(ref) && gfuncs::IsFormValid(akProjectile) && gfuncs::IsFormValid(akAmmo)) {
         auto& runtimeData = akProjectile->GetProjectileRuntimeData();
 
         if (runtimeData.ammoSource != akAmmo) {
@@ -3049,24 +3194,27 @@ bool DidProjectileHitRefWithAmmoFromShooter(RE::TESObjectREFR* shooter, RE::TESO
             }
         }
 
-        if (projectileShooter != shooter) {
-            return false;
+        if (gfuncs::IsFormValid(projectileShooter)) {
+            if (projectileShooter != shooter) {
+                return false;
+            }
         }
 
         auto impacts = runtimeData.impacts;
-        for (auto* impactData : impacts) {
-            if (impactData) {
-                //logger::trace("impactData found");
-                auto hitRef = impactData->collidee;
-                if (hitRef) {
-                    //logger::trace("hitRef found");
-                    auto hitRefPtr = hitRef.get();
-                    if (hitRefPtr) {
-                        //logger::trace("hitRefPtr found");
-                        auto* hitRefRef = hitRefPtr.get();
-                        if (hitRefRef == ref) {
-                            logger::trace("projectile[{}] hit [{}]", akProjectile->GetDisplayFullName(), hitRefRef->GetDisplayFullName());
-                            return true;
+        if (!impacts.empty()) {
+            for (auto* impactData : impacts) {
+                if (impactData) {
+                    //logger::trace("impactData found");
+                    auto hitRef = impactData->collidee;
+                    if (hitRef) {
+                        //logger::trace("hitRef found");
+                        auto hitRefPtr = hitRef.get();
+                        if (hitRefPtr) {
+                            //logger::trace("hitRefPtr found");
+                            auto* hitRefRef = hitRefPtr.get();
+                            if (gfuncs::IsFormValid(hitRefRef)) {
+                                return (hitRefRef == ref);
+                            }
                         }
                     }
                 }
@@ -3076,46 +3224,669 @@ bool DidProjectileHitRefWithAmmoFromShooter(RE::TESObjectREFR* shooter, RE::TESO
     return false;
 }
 
-int GetProjectileType(RE::TESObjectREFR* projectileRef){
-    if (projectileRef) {
-        RE::TESForm* baseForm = projectileRef->GetBaseObject();
-        if (baseForm) {
-            RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-            if (projectile) {
-                if (projectile->IsMissile()) {
-                    return 1;
-                }
-                else if (projectile->IsGrenade()) {
-                    return 2;
-                }
-                else if (projectile->IsBeam()) {
-                    return 3;
-                }
-                else if (projectile->IsFlamethrower()) {
-                    return 4;
-                }
-                else if (projectile->IsCone()) {
-                    return 5;
-                }
-                else if (projectile->IsBarrier()) {
-                    return 6;
-                }
-                else if (projectile->IsArrow()) {
-                    return 7;
-                }
-            }
-        }
+//projectile papyrus functions ==================================================================================================
+
+int GetProjectileType(RE::BGSProjectile* projectile) {
+    if (!gfuncs::IsFormValid(projectile)) {
+        return 0;
+    }
+
+    if (projectile->IsMissile()) {
+        return 1;
+    }
+    else if (projectile->IsGrenade()) {
+        return 2;
+    }
+    else if (projectile->IsBeam()) {
+        return 3;
+    }
+    else if (projectile->IsFlamethrower()) {
+        return 4;
+    }
+    else if (projectile->IsCone()) {
+        return 5;
+    }
+    else if (projectile->IsBarrier()) {
+        return 6;
+    }
+    else if (projectile->IsArrow()) {
+        return 7;
     }
     return 0;
 }
 
+int GetProjectileRefType(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        return 0;
+    }
+
+    auto* akProjectile = projectileRef->AsProjectile();
+
+    if (!gfuncs::IsFormValid(akProjectile)) {
+        return 0;
+    }
+
+    RE::BGSProjectile* projectileBase = akProjectile->GetProjectileBase();
+    return GetProjectileType(projectileBase);
+}
+
+RE::TESObjectREFR* GetProjectileHitRef(RE::Projectile::ImpactData* impactData) {
+    if (impactData) {
+        if (impactData->collidee) {
+            auto hitRefHandle = impactData->collidee;
+            if (hitRefHandle) {
+                auto hitRefPtr = hitRefHandle.get();
+                if (hitRefPtr) {
+                    return hitRefPtr.get();
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+std::vector<RE::TESObjectREFR*> GetProjectileHitRefs(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    std::vector<RE::TESObjectREFR*> hitRefs;
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return hitRefs;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return hitRefs;
+    }
+
+    auto impacts = projectile->GetProjectileRuntimeData().impacts;
+    if (!impacts.empty()) {
+        for (auto* impactData : impacts) {
+            auto* hitRef = GetProjectileHitRef(impactData);
+            if (gfuncs::IsFormValid(hitRef)) {
+                hitRefs.push_back(hitRef);
+            }
+        }
+    }
+    return hitRefs;
+}
+
+RE::TESObjectREFR* GetLastProjectileHitRefFromRuntimeData(RE::Projectile::PROJECTILE_RUNTIME_DATA& runtimeData) {
+    RE::TESObjectREFR* hitRef;
+    if (!runtimeData.impacts.empty()) {
+        for (auto* impactData : runtimeData.impacts) {
+            if (impactData) {
+                RE::TESObjectREFR* akHitRef = GetProjectileHitRef(impactData);
+                if (gfuncs::IsFormValid(akHitRef)) {
+                    hitRef = akHitRef;
+                }
+            }
+        }
+    }
+    return hitRef;
+}
+
+RE::TESObjectREFR* GetProjectileShooterFromRuntimeData(RE::Projectile::PROJECTILE_RUNTIME_DATA& runtimeData) {
+    if (runtimeData.shooter) {
+        auto refPtr = runtimeData.shooter.get();
+        if (refPtr) {
+            return refPtr.get();
+        }
+    }
+    return nullptr;
+}
+
+RE::TESObjectREFR* GetProjectileShooter(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return nullptr;
+    }
+
+    return GetProjectileShooterFromRuntimeData(projectile->GetProjectileRuntimeData());
+}
+
+RE::BGSExplosion* GetProjectileExplosion(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return nullptr;
+    }
+
+    return projectile->GetProjectileRuntimeData().explosion;
+}
+
+RE::TESAmmo* GetProjectileAmmoSource(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return nullptr;
+    }
+
+    return projectile->GetProjectileRuntimeData().ammoSource;
+}
+
+RE::AlchemyItem* GetProjectilePoison(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    RE::AlchemyItem* poison;
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    auto* arrowProjectile = projectileRef->As<RE::ArrowProjectile>();
+    if (gfuncs::IsFormValid(arrowProjectile)) {
+        poison = arrowProjectile->GetArrowRuntimeData().poison;
+    }
+    return poison;
+}
+
+RE::EnchantmentItem* GetProjectileEnchantment(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    RE::EnchantmentItem* enchantment;
+
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    auto* arrowProjectile = projectileRef->As<RE::ArrowProjectile>();
+    if (gfuncs::IsFormValid(arrowProjectile)) {
+        enchantment = arrowProjectile->GetArrowRuntimeData().enchantItem;
+    }
+    return enchantment;
+}
+
+RE::TESForm* GetProjectileMagicSource(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return nullptr;
+    }
+
+    return projectile->GetProjectileRuntimeData().spell;
+}
+
+RE::TESObjectWEAP* GetProjectileWeaponSource(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return nullptr;
+    }
+
+    return projectile->GetProjectileRuntimeData().weaponSource;
+}
+
+float GetProjectileWeaponDamage(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return 0.0;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return 0.0;
+    }
+
+    return projectile->GetProjectileRuntimeData().weaponDamage;
+}
+
+float GetProjectilePower(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return 0.0;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return 0.0;
+    }
+
+    return projectile->GetProjectileRuntimeData().power;
+}
+
+float GetProjectileDistanceTraveled(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return 0.0;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return 0.0;
+    }
+
+    return projectile->GetProjectileRuntimeData().distanceMoved;
+}
+
+int GetProjectileImpactResult(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    int impactResult = 0;
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef isn't valid or doesn't exist", __func__);
+        return impactResult;
+    }
+
+    auto* missileProjectile = projectileRef->As<RE::MissileProjectile>();
+
+    if (gfuncs::IsFormValid(missileProjectile)) {
+        impactResult = static_cast<int>(missileProjectile->GetMissileRuntimeData().impactResult);
+    }
+
+    if (impactResult == 0) {
+        if (gfuncs::IsFormValid(projectileRef)) { //check this again to be sure
+            auto* coneProjectile = projectileRef->As<RE::ConeProjectile>();
+            if (gfuncs::IsFormValid(coneProjectile)) {
+                impactResult = static_cast<int>(coneProjectile->GetConeRuntimeData().impactResult);
+            }
+        }
+    }
+    return impactResult;
+}
+
+std::vector<int> GetProjectileCollidedLayers(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    std::vector<int> layers;
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return layers;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return layers;
+    }
+
+    auto impacts = projectile->GetProjectileRuntimeData().impacts;
+    if (!impacts.empty()) {
+        for (auto* impactData : impacts) {
+            if (impactData) {
+                int collidedLayer = impactData->collidedLayer.underlying();
+                layers.push_back(collidedLayer);
+            }
+        }
+    }
+    return layers;
+}
+
+std::string GetCollisionLayerName(RE::StaticFunctionTag*, int layer) {
+    switch (layer) {
+    case 1:
+        return "Static";
+    case 2:
+        return "AnimStatic";
+    case 3:
+        return "Transparent";
+    case 4:
+        return "Clutter";
+    case 5:
+        return "Weapon";
+    case 6:
+        return "Projectile";
+    case 7:
+        return "Spell";
+    case 8:
+        return "Biped";
+    case 9:
+        return "Trees";
+    case 10:
+        return "Props";
+    case 11:
+        return "Water";
+    case 12:
+        return "Trigger";
+    case 13:
+        return "Terrain";
+    case 14:
+        return "Trap";
+    case 15:
+        return "NonCollidable";
+    case 16:
+        return "CloudTrap";
+    case 17:
+        return "Ground";
+    case 18:
+        return "Portal";
+    case 19:
+        return "DebrisSmall";
+    case 20:
+        return "DebrisLarge";
+    case 21:
+        return "AcousticSpace";
+    case 22:
+        return "ActorZone";
+    case 23:
+        return "ProjectileZone";
+    case 24:
+        return "GasTrap";
+    case 25:
+        return "ShellCasting";
+    case 26:
+        return "TransparentWall";
+    case 27:
+        return "InvisibleWall";
+    case 28:
+        return "TransparentSmallAnim";
+    case 29:
+        return "ClutterLarge";
+    case 30:
+        return "CharController";
+    case 31:
+        return "StairHelper";
+    case 32:
+        return "DeadBip";
+    case 33:
+        return "BipedNoCC";
+    case 34:
+        return "AvoidBox";
+    case 35:
+        return "CollisionBox";
+    case 36:
+        return "CameraSphere";
+    case 37:
+        return "DoorDetection";
+    case 38:
+        return "ConeProjectile";
+    case 39:
+        return "Camera";
+    case 40:
+        return "ItemPicker";
+    case 41:
+        return "LOS";
+    case 42:
+        return "PathingPick";
+    case 43:
+        return "Unused0";
+    case 44:
+        return "Unused1";
+    case 45:
+        return "SpellExplosion";
+    case 46:
+        return "DroppingPick";
+    default:
+        return "Unidentified";
+    }
+}
+
+std::vector<std::string> GetProjectileCollidedLayerNames(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    std::vector<std::string> layers;
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return layers;
+    }
+
+    std::vector<int> intLayers = GetProjectileCollidedLayers(nullptr, projectileRef);
+    for (auto& layer : intLayers) {
+        layers.push_back(GetCollisionLayerName(nullptr, layer));
+    }
+
+    return layers;
+}
+
+std::string GetProjectileNodeHitName(RE::Projectile::ImpactData* impactData) {
+    RE::BSFixedString hitPartNodeName;
+    if (impactData) {
+        RE::NiNode* hitPart = impactData->damageRootNode;
+        if (hitPart) {
+            RE::BSFixedString hitPartNodeName = hitPart->name;
+            if (hitPart->parent) {
+                if (hitPart->parent->name == "SHIELD" || hitPartNodeName == "") {
+                    hitPartNodeName = hitPart->parent->name;
+                }
+            }
+        }
+    }
+    return hitPartNodeName.data();
+}
+
+std::vector<std::string> GetProjectileNodeHitNames(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
+    std::vector<std::string> nodeNames;
+    if (!gfuncs::IsFormValid(projectileRef)) {
+        logger::warn("{}: projectileRef doesn't exist or isn't valid", __func__);
+        return nodeNames;
+    }
+
+    RE::Projectile* projectile = projectileRef->AsProjectile();
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectileRef[{}] is not a projectile", __func__, gfuncs::GetFormName(projectileRef));
+        return nodeNames;
+    }
+
+    auto impacts = projectile->GetProjectileRuntimeData().impacts;
+    if (!impacts.empty()) {
+        for (auto* impactData : impacts) {
+            if (impactData) {
+                std::string nodeName = GetProjectileNodeHitName(impactData);
+                if (nodeName != "") {
+                    nodeNames.push_back(nodeName);
+                }
+            }
+        }
+    }
+    return nodeNames;
+}
+
+std::vector<RE::TESObjectREFR*> GetRecentProjectileHitRefs(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled, int projectileType) {
+    std::vector<RE::TESObjectREFR*> refs;
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref doesn't exist", __func__);
+        return refs;
+    }
+
+    auto it = recentHitProjectiles.find(ref);
+    if (it != recentHitProjectiles.end()) {
+        if (it->second.size() == 0) {
+            return refs;
+        }
+        if (projectileType >= 1 && projectileType <= 7) {
+            for (auto& data : it->second) {
+                if (GetProjectileRefType(nullptr, data.projectile) == projectileType) {
+                    if ((data.projectile->Is3DLoaded() || !only3dLoaded) && (!data.projectile->IsDisabled() || !onlyEnabled)) {
+                        refs.push_back(data.projectile);
+                    }
+                }
+            }
+        }
+        else {
+            for (auto& data : it->second) {
+                if (gfuncs::IsFormValid(data.projectile)) {
+                    if ((data.projectile->Is3DLoaded() || !only3dLoaded) && (!data.projectile->IsDisabled() || !onlyEnabled)) {
+                        refs.push_back(data.projectile);
+                    }
+                }
+            }
+        }
+    }
+    return refs;
+}
+
+RE::TESObjectREFR* GetLastProjectileHitRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled, int projectileType) {
+    RE::TESObjectREFR* returnRef = nullptr;
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref isn't valid or doesn't exist", __func__);
+        return returnRef;
+    }
+
+    auto it = recentHitProjectiles.find(ref);
+    if (it != recentHitProjectiles.end()) {
+        if (it->second.size() == 0) {
+            return nullptr;
+        }
+        if (projectileType >= 1 && projectileType <= 7) {
+            for (int i = it->second.size() - 1; i >= 0 && !returnRef; --i) {
+                if (GetProjectileRefType(nullptr, it->second[i].projectile) == projectileType) {
+                    if ((it->second[i].projectile->Is3DLoaded() || !only3dLoaded) && (!it->second[i].projectile->IsDisabled() || !onlyEnabled)) {
+                        returnRef = it->second[i].projectile;
+                    }
+                }
+            }
+        }
+        else {
+            for (int i = it->second.size() - 1; i >= 0 && !returnRef; --i) {
+                if (gfuncs::IsFormValid(it->second[i].projectile)) {
+                    if ((it->second[i].projectile->Is3DLoaded() || !only3dLoaded) && (!it->second[i].projectile->IsDisabled() || !onlyEnabled)) {
+                        returnRef = it->second[i].projectile;
+                    }
+                }
+            }
+        }
+    }
+    return returnRef;
+}
+
+std::vector<RE::TESObjectREFR*> GetRecentProjectileShotRefs(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled, int projectileType) {
+    std::vector<RE::TESObjectREFR*> refs;
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref doesn't exist", __func__);
+        return refs;
+    }
+
+    auto it = recentShotProjectiles.find(ref);
+    if (it != recentShotProjectiles.end()) {
+        if (it->second.size() == 0) {
+            return refs;
+        }
+        if (projectileType >= 1 && projectileType <= 7) {
+            for (auto& data : it->second) {
+                if (GetProjectileRefType(nullptr, data.projectile) == projectileType) {
+                    if ((data.projectile->Is3DLoaded() || !only3dLoaded) && (!data.projectile->IsDisabled() || !onlyEnabled)) {
+                        refs.push_back(data.projectile);
+                    }
+                }
+            }
+        }
+        else {
+            for (auto& data : it->second) {
+                if (gfuncs::IsFormValid(data.projectile)) {
+                    if ((data.projectile->Is3DLoaded() || !only3dLoaded) && (!data.projectile->IsDisabled() || !onlyEnabled)) {
+                        refs.push_back(data.projectile);
+                    }
+                }
+            }
+        }
+    }
+    return refs;
+}
+
+RE::TESObjectREFR* GetLastProjectileShotRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled, int projectileType) {
+    RE::TESObjectREFR* returnRef = nullptr;
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref isn't valid or doesn't exist", __func__);
+        return returnRef;
+    }
+
+    auto it = recentShotProjectiles.find(ref);
+    if (it != recentShotProjectiles.end()) {
+        if (it->second.size() == 0) {
+            return nullptr;
+        }
+        if (projectileType >= 1 && projectileType <= 7) {
+            for (int i = it->second.size() - 1; i >= 0 && !returnRef; --i) {
+                if (GetProjectileRefType(nullptr, it->second[i].projectile) == projectileType) {
+                    if ((it->second[i].projectile->Is3DLoaded() || !only3dLoaded) && (!it->second[i].projectile->IsDisabled() || !onlyEnabled)) {
+                        returnRef = it->second[i].projectile;
+                    }
+                }
+            }
+        }
+        else {
+            for (int i = it->second.size() - 1; i >= 0 && !returnRef; --i) {
+                if (gfuncs::IsFormValid(it->second[i].projectile)) {
+                    if ((it->second[i].projectile->Is3DLoaded() || !only3dLoaded) && (!it->second[i].projectile->IsDisabled() || !onlyEnabled)) {
+                        returnRef = it->second[i].projectile;
+                    }
+                }
+            }
+        }
+    }
+    return returnRef;
+}
+
+std::vector<RE::TESObjectREFR*> GetAttachedProjectileRefs(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+    logger::trace("{} called", __func__);
+
+    std::vector<RE::TESObjectREFR*> attachedProjectiles;
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref isn't valid or doesn't exist", __func__);
+        return attachedProjectiles;
+    }
+
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+    for (auto& [id, form] : *allForms) {
+        auto* akRef = form->AsReference();
+        if (gfuncs::IsFormValid(akRef)) {
+            RE::Projectile* projectileRef = akRef->AsProjectile();
+            if (DidProjectileHitRef(projectileRef, ref)) {
+                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                    int impactResult = GetProjectileImpactResult(nullptr, projectileRef);
+                    if (impactResult == 3 || impactResult == 4) { //impale or stick
+                        float distance = akRef->GetPosition().GetDistance(ref->GetPosition());
+                        if (distance < 3000.0) {
+                            attachedProjectiles.push_back(akRef);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return attachedProjectiles;
+}
+
+std::vector<RE::BGSProjectile*> GetAttachedProjectiles(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+    std::vector<RE::BGSProjectile*> attachedProjectiles;
+
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref isn't valid or doesn't exist", __func__);
+        return attachedProjectiles;
+    }
+
+    auto* data = ref->extraList.GetByType<RE::ExtraAttachedArrows3D>();
+    if (data) {
+        if (!data->data.empty()) {
+            for (auto& dataItem : data->data) {
+                if (dataItem.source) {
+                    attachedProjectiles.push_back(dataItem.source);
+                }
+            }
+        }
+    }
+    else {
+        logger::debug("{}: couldn't get ExtraAttachedArrows3D for ref[{}]", __func__, gfuncs::GetFormName(ref));
+    }
+    return attachedProjectiles;
+}
 
 //Get all hit projectiles of type =======================================================================================================
-//projectile type 7 arrow
-std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
+//All Projectiles that hit ref
+std::vector<RE::TESObjectREFR*> GetAllHitProjectileRefs(RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
     std::vector<RE::TESObjectREFR*> projectileRefs;
-    if (!ref) {
-        logger::warn("{} ref doesn't exist", __func__);
+
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref isn't valid or doesn't exist", __func__);
         return projectileRefs;
     }
 
@@ -3123,15 +3894,82 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
+                RE::Projectile* projectileRef = akRef->AsProjectile();
+                if (DidProjectileHitRef(projectileRef, ref)) {
+                    if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                        projectileRefs.push_back(akRef);
+                    }
+                }
+            }
+        }
+    }
+    else if (onlyEnabled) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            auto* akRef = form->AsReference();
+            if (gfuncs::IsFormValid(akRef)) {
+                RE::Projectile* projectileRef = akRef->AsProjectile();
+                if (DidProjectileHitRef(projectileRef, ref)) {
+                    if (!akRef->IsDisabled()) {
+                        projectileRefs.push_back(akRef);
+                    }
+                }
+            }
+        }
+    }
+    else if (only3dLoaded) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            auto* akRef = form->AsReference();
+            if (gfuncs::IsFormValid(akRef)) {
+                RE::Projectile* projectileRef = akRef->AsProjectile();
+                if (DidProjectileHitRef(projectileRef, ref)) {
+                    if (akRef->Is3DLoaded()) {
+                        projectileRefs.push_back(akRef);
+                    }
+                }
+            }
+        }
+    }
+    else {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            auto* akRef = form->AsReference();
+            if (gfuncs::IsFormValid(akRef)) {
+                RE::Projectile* projectileRef = akRef->AsProjectile();
+                if (DidProjectileHitRef(projectileRef, ref)) {
+                    projectileRefs.push_back(akRef);
+                }
+            }
+        }
+    }
+
+    return projectileRefs;
+}
+
+//projectile type 7 arrow
+std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
+    std::vector<RE::TESObjectREFR*> projectileRefs;
+
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{} ref doesn't exist or isn't valid", __func__);
+        return projectileRefs;
+    }
+
+    if (only3dLoaded && onlyEnabled) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            auto* akRef = form->AsReference();
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsArrow()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3145,15 +3983,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsArrow()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3167,15 +4005,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsArrow()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3189,17 +4027,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsArrow()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -3209,7 +4045,7 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* 
     }
 
     return projectileRefs;
-} 
+}
 
 //projectile type 6 barrier
 std::vector<RE::TESObjectREFR*> GetAllHitProjectileBarrierRefs(RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
@@ -3223,15 +4059,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBarrierRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBarrier()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3245,15 +4081,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBarrierRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBarrier()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3267,15 +4103,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBarrierRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBarrier()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3289,17 +4125,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBarrierRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBarrier()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -3323,15 +4157,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileConeRefs(RE::TESObjectREFR* r
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsCone()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3345,15 +4179,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileConeRefs(RE::TESObjectREFR* r
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsCone()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3367,15 +4201,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileConeRefs(RE::TESObjectREFR* r
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsCone()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3389,17 +4223,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileConeRefs(RE::TESObjectREFR* r
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsCone()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -3423,15 +4255,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileFlamethrowerRefs(RE::TESObjec
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsFlamethrower()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3445,15 +4277,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileFlamethrowerRefs(RE::TESObjec
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsFlamethrower()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3467,15 +4299,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileFlamethrowerRefs(RE::TESObjec
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsFlamethrower()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3489,17 +4321,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileFlamethrowerRefs(RE::TESObjec
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsFlamethrower()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -3523,15 +4353,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBeamRefs(RE::TESObjectREFR* r
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBeam()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3545,15 +4375,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBeamRefs(RE::TESObjectREFR* r
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBeam()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3567,15 +4397,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBeamRefs(RE::TESObjectREFR* r
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBeam()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3589,17 +4419,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBeamRefs(RE::TESObjectREFR* r
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBeam()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -3623,15 +4451,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileGrenadeRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsGrenade()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3645,15 +4473,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileGrenadeRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsGrenade()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3667,15 +4495,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileGrenadeRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsGrenade()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3689,17 +4517,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileGrenadeRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsGrenade()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -3723,15 +4549,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileMissileRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsMissile()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3745,15 +4571,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileMissileRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsMissile()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3767,15 +4593,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileMissileRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsMissile()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3789,17 +4615,15 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileMissileRefs(RE::TESObjectREFR
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsMissile()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidProjectileHitRef(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidProjectileHitRef(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -3813,7 +4637,7 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileMissileRefs(RE::TESObjectREFR
 
 std::vector<RE::TESObjectREFR*> GetAllHitProjectileRefsOfType(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled, int projectileType) {
     switch (projectileType) {
-    case 1: 
+    case 1:
         return GetAllHitProjectileMissileRefs(ref, only3dLoaded, onlyEnabled);
     case 2:
         return GetAllHitProjectileGrenadeRefs(ref, only3dLoaded, onlyEnabled);
@@ -3825,14 +4649,82 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileRefsOfType(RE::StaticFunction
         return GetAllHitProjectileConeRefs(ref, only3dLoaded, onlyEnabled);
     case 6:
         return GetAllHitProjectileBarrierRefs(ref, only3dLoaded, onlyEnabled);
-    default:
+    case 7:
         return GetAllHitProjectileArrowRefs(ref, only3dLoaded, onlyEnabled);
+    default:
+        return GetAllHitProjectileRefs(ref, only3dLoaded, onlyEnabled);
     }
 }
 
 //=======================================================================================================================================================
 
 //Get all shot arrows of type ===========================================================================================================================
+//All Projectiles that the ref shot
+std::vector<RE::TESObjectREFR*> GetAllShotProjectileRefs(RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
+    std::vector<RE::TESObjectREFR*> projectileRefs;
+    if (!ref) {
+        logger::warn("{} ref doesn't exist", __func__);
+        return projectileRefs;
+    }
+
+    if (only3dLoaded && onlyEnabled) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            auto* akRef = form->AsReference();
+            if (gfuncs::IsFormValid(akRef)) {
+                RE::Projectile* projectileRef = akRef->AsProjectile();
+                if (DidRefShootProjectile(projectileRef, ref)) {
+                    if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                        projectileRefs.push_back(akRef);
+                    }
+                }
+            }
+        }
+    }
+    else if (onlyEnabled) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            auto* akRef = form->AsReference();
+            if (gfuncs::IsFormValid(akRef)) {
+                RE::Projectile* projectileRef = akRef->AsProjectile();
+                if (DidRefShootProjectile(projectileRef, ref)) {
+                    if (!akRef->IsDisabled()) {
+                        projectileRefs.push_back(akRef);
+                    }
+                }
+            }
+        }
+    }
+    else if (only3dLoaded) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            auto* akRef = form->AsReference();
+            if (gfuncs::IsFormValid(akRef)) {
+                RE::Projectile* projectileRef = akRef->AsProjectile();
+                if (DidRefShootProjectile(projectileRef, ref)) {
+                    if (akRef->Is3DLoaded()) {
+                        projectileRefs.push_back(akRef);
+                    }
+                }
+            }
+        }
+    }
+    else {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            auto* akRef = form->AsReference();
+            if (gfuncs::IsFormValid(akRef)) {
+                RE::Projectile* projectileRef = akRef->AsProjectile();
+                if (DidRefShootProjectile(projectileRef, ref)) {
+                    projectileRefs.push_back(akRef);
+                }
+            }
+        }
+    }
+
+    return projectileRefs;
+}
+
 //projectile type 7 arrow
 std::vector<RE::TESObjectREFR*> GetAllShotProjectileArrowRefs(RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled) {
     std::vector<RE::TESObjectREFR*> projectileRefs;
@@ -3845,15 +4737,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileArrowRefs(RE::TESObjectREFR*
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsArrow()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3867,15 +4759,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileArrowRefs(RE::TESObjectREFR*
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsArrow()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3889,15 +4781,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileArrowRefs(RE::TESObjectREFR*
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsArrow()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3911,17 +4803,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileArrowRefs(RE::TESObjectREFR*
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsArrow()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -3945,15 +4835,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBarrierRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBarrier()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3967,15 +4857,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBarrierRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBarrier()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -3989,15 +4879,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBarrierRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBarrier()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4011,17 +4901,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBarrierRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBarrier()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -4045,15 +4933,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileConeRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsCone()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4067,15 +4955,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileConeRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsCone()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4089,15 +4977,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileConeRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsCone()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4111,17 +4999,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileConeRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsCone()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -4145,15 +5031,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileFlamethrowerRefs(RE::TESObje
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsFlamethrower()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4167,15 +5053,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileFlamethrowerRefs(RE::TESObje
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsFlamethrower()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4189,15 +5075,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileFlamethrowerRefs(RE::TESObje
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsFlamethrower()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4211,17 +5097,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileFlamethrowerRefs(RE::TESObje
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsFlamethrower()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -4245,15 +5129,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBeamRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBeam()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4267,15 +5151,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBeamRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBeam()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4289,15 +5173,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBeamRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBeam()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4311,17 +5195,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBeamRefs(RE::TESObjectREFR* 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsBeam()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -4345,15 +5227,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileGrenadeRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsGrenade()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4367,15 +5249,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileGrenadeRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsGrenade()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4389,15 +5271,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileGrenadeRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsGrenade()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4411,17 +5293,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileGrenadeRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsGrenade()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -4445,15 +5325,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileMissileRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsMissile()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled() && akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4467,15 +5347,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileMissileRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsMissile()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && !akRef->IsDisabled()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (!akRef->IsDisabled()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4489,15 +5369,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileMissileRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsMissile()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted() && akRef->Is3DLoaded()) {
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                if (akRef->Is3DLoaded()) {
                                     projectileRefs.push_back(akRef);
                                 }
                             }
@@ -4511,17 +5391,15 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileMissileRefs(RE::TESObjectREF
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             auto* akRef = form->AsReference();
-            if (akRef) {
+            if (gfuncs::IsFormValid(akRef)) {
                 RE::TESForm* baseForm = akRef->GetBaseObject();
-                if (baseForm) {
+                if (gfuncs::IsFormValid(baseForm)) {
                     RE::BGSProjectile* projectile = baseForm->As<RE::BGSProjectile>();
-                    if (projectile) {
+                    if (gfuncs::IsFormValid(projectile)) {
                         if (projectile->IsMissile()) {
-                            RE::Projectile* projectile = akRef->AsProjectile();
-                            if (DidRefShootProjectile(projectile, ref)) {
-                                if (!akRef->IsDeleted()) {
-                                    projectileRefs.push_back(akRef);
-                                }
+                            RE::Projectile* projectileRef = akRef->AsProjectile();
+                            if (DidRefShootProjectile(projectileRef, ref)) {
+                                projectileRefs.push_back(akRef);
                             }
                         }
                     }
@@ -4547,9 +5425,42 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileRefsOfType(RE::StaticFunctio
         return GetAllShotProjectileConeRefs(ref, only3dLoaded, onlyEnabled);
     case 6:
         return GetAllShotProjectileBarrierRefs(ref, only3dLoaded, onlyEnabled);
-    default:
+    case 7:
         return GetAllShotProjectileArrowRefs(ref, only3dLoaded, onlyEnabled);
+    default:
+        return GetAllShotProjectileRefs(ref, only3dLoaded, onlyEnabled);
     }
+}
+
+// ==================================================================================================================================================================================
+
+RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
+    return gfuncs::lastPlayerActivatedRef;
+}
+
+RE::TESObjectREFR* GetLastPlayerMenuActivatedRef(RE::StaticFunctionTag*) {
+    return gfuncs::menuRef;
+}
+
+RE::TESObjectREFR* GetAshPileLinkedRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    auto* data = ref->extraList.GetByType<RE::ExtraAshPileRef>();
+    if (data) {
+        if (data->ashPileRef) {
+            auto refPtr = data->ashPileRef.get();
+            if (refPtr) {
+                RE::TESObjectREFR* returnRef = refPtr.get();
+                if (gfuncs::IsFormValid(returnRef)) {
+                    return returnRef;
+                }
+            }
+        }
+    }
+    return nullptr;
 }
 
 RE::TESObjectREFR* GetClosestObjectFromRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, std::vector<RE::TESObjectREFR*> refs) {
@@ -4563,7 +5474,7 @@ RE::TESObjectREFR* GetClosestObjectFromRef(RE::StaticFunctionTag*, RE::TESObject
     int i = 0;
 
     while (i < refs.size() && returnRef == nullptr) { //find first valid ref and distance
-        if (refs[i]) {
+        if (gfuncs::IsFormValid(refs[i])) {
             distance = refPosition.GetDistance(refs[i]->GetPosition());
             returnRef = refs[i];
         }
@@ -4571,7 +5482,7 @@ RE::TESObjectREFR* GetClosestObjectFromRef(RE::StaticFunctionTag*, RE::TESObject
     }
 
     while (i < refs.size()) {
-        if (refs[i]) {
+        if (gfuncs::IsFormValid(refs[i])) {
             float refDistance = refPosition.GetDistance(refs[i]->GetPosition());
             if (refDistance < distance) {
                 distance = refDistance;
@@ -4594,7 +5505,7 @@ int GetClosestObjectIndexFromRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref,
     int i = 0;
 
     while (i < refs.size() && iReturn == -1) { //find first valid ref and distance
-        if (refs[i]) {
+        if (gfuncs::IsFormValid(refs[i])) {
             distance = refPosition.GetDistance(refs[i]->GetPosition());
             iReturn = i;
         }
@@ -4602,7 +5513,7 @@ int GetClosestObjectIndexFromRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref,
     }
 
     while (i < refs.size()) {
-        if (refs[i]) {
+        if (gfuncs::IsFormValid(refs[i])) {
             float refDistance = refPosition.GetDistance(refs[i]->GetPosition());
             if (refDistance < distance) {
                 distance = refDistance;
@@ -4639,7 +5550,7 @@ std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
 
 bool IsMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     LogAndMessage("IsMapMarker function called");
-    if (!mapMarker) {
+    if (!gfuncs::IsFormValid(mapMarker)) {
         LogAndMessage("IsMapMarker: mapMarker doesn't exist", warn);
         return false;
     }
@@ -4661,7 +5572,7 @@ bool IsMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
 
 bool SetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, std::string name) {
     LogAndMessage("Renaming map marker");
-    if (!mapMarker) {
+    if (!gfuncs::IsFormValid(mapMarker)) {
         LogAndMessage("SetMapMarkerName: mapMarker doesn't exist", warn);
         return false;
     }
@@ -4692,7 +5603,7 @@ bool SetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, std:
 
 std::string GetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     LogAndMessage("Getting Marker Name");
-    if (!mapMarker) {
+    if (!gfuncs::IsFormValid(mapMarker)) {
         LogAndMessage("GetMapMarkerName: mapMarker doesn't exist", warn);
         return "";
     }
@@ -4718,7 +5629,7 @@ std::string GetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarke
 }
 
 bool SetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, int iconType) {
-    if (!mapMarker) {
+    if (!gfuncs::IsFormValid(mapMarker)) {
         LogAndMessage("SetMapMarkerIconType: mapMarker doesn't exist", warn);
         return false;
     }
@@ -4744,7 +5655,7 @@ bool SetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, 
 
 int GetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     LogAndMessage("Getting Map Marker Type");
-    if (!mapMarker) {
+    if (!gfuncs::IsFormValid(mapMarker)) {
         LogAndMessage("GetMapMarkerIconType: mapMarker doesn't exist", warn);
         return false;
     }
@@ -4795,7 +5706,7 @@ static inline void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_c
     if (script) {
         script->SetCommand(a_command);
 
-        if (objRef) {
+        if (gfuncs::IsFormValid(objRef)) {
             CompileAndRun(script, objRef);
         }
         else {
@@ -4811,7 +5722,7 @@ static inline void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_c
 bool HasCollision(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef) {
     LogAndMessage(std::format("{} called", __func__));
 
-    if (!objRef) {
+    if (!gfuncs::IsFormValid(objRef)) {
         logger::warn("{}: objRef doesn't exist", __func__);
         return false;
     }
@@ -4836,7 +5747,7 @@ RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
         for (RE::BSTArray<RE::TESForm*>::iterator itr = musicTypeArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::BGSMusicType* musicType = static_cast<RE::BGSMusicType*>(baseForm);
                 RE::BSIMusicType::MUSIC_STATUS musicStatus = musicType->typeStatus.get();
 
@@ -4861,14 +5772,26 @@ RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
 }
 
 int GetNumberOfTracksInMusicType(RE::StaticFunctionTag*, RE::BGSMusicType* musicType) {
+    if (!gfuncs::IsFormValid(musicType)) {
+        logger::warn("{}: musicType doesn't exist or isn't valid", __func__);
+        return false;
+    }
     return musicType->tracks.size();
 }
 
 int GetMusicTypeTrackIndex(RE::StaticFunctionTag*, RE::BGSMusicType* musicType) {
+    if (!gfuncs::IsFormValid(musicType)) {
+        logger::warn("{}: musicType doesn't exist or isn't valid", __func__);
+        return false;
+    }
     return musicType->currentTrackIndex;
 }
 
 void SetMusicTypeTrackIndex(RE::StaticFunctionTag*, RE::BGSMusicType* musicType, int index) {
+    if (!gfuncs::IsFormValid(musicType)) {
+        logger::warn("{}: musicType doesn't exist or isn't valid", __func__);
+        return;
+    }
     if (index >= musicType->tracks.size()) {
         index = musicType->tracks.size() - 1;
     }
@@ -4887,14 +5810,26 @@ void SetMusicTypeTrackIndex(RE::StaticFunctionTag*, RE::BGSMusicType* musicType,
 }
 
 int GetMusicTypePriority(RE::StaticFunctionTag*, RE::BGSMusicType* musicType) {
+    if (!gfuncs::IsFormValid(musicType)) {
+        logger::warn("{}: musicType doesn't exist or isn't valid", __func__);
+        return -1;
+    }
     return musicType->priority;
 }
 
 void SetMusicTypePriority(RE::StaticFunctionTag*, RE::BGSMusicType* musicType, int priority) {
+    if (!gfuncs::IsFormValid(musicType)) {
+        logger::warn("{}: musicType doesn't exist or isn't valid", __func__);
+        return;
+    }
     musicType->priority = priority;
 }
 
 int GetMusicTypeStatus(RE::StaticFunctionTag*, RE::BGSMusicType* musicType) {
+    if (!gfuncs::IsFormValid(musicType)) {
+        logger::warn("{}: musicType doesn't exist or isn't valid", __func__);
+        return -1;
+    }
     return musicType->typeStatus.underlying();
 }
 
@@ -4910,11 +5845,11 @@ std::vector<RE::EnchantmentItem*> GetKnownEnchantments(RE::StaticFunctionTag*) {
     for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != itrEndType; it++) {
         RE::TESForm* baseForm = *it;
 
-        if (baseForm) {
+        if (gfuncs::IsFormValid(baseForm)) {
             RE::EnchantmentItem* enchantment = baseForm->As<RE::EnchantmentItem>();
-            if (enchantment) {
+            if (gfuncs::IsFormValid(enchantment)) {
                 RE::EnchantmentItem* baseEnchantment = enchantment->data.baseEnchantment;
-                if (baseEnchantment) {
+                if (gfuncs::IsFormValid(baseEnchantment)) {
                     if (baseEnchantment->GetKnown()) {
                         if (std::find(returnValues.begin(), returnValues.end(), baseEnchantment) == returnValues.end()) {
                             // baseEnchantment not in returnValues, add it
@@ -4929,8 +5864,9 @@ std::vector<RE::EnchantmentItem*> GetKnownEnchantments(RE::StaticFunctionTag*) {
 }
 
 void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akList) {
-    if (!akList) {
+    if (!gfuncs::IsFormValid(akList)) {
         logger::warn("{} akList doesn't exist", __func__);
+        return;
     }
 
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
@@ -4943,11 +5879,11 @@ void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akL
     for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != itrEndType; it++) {
         RE::TESForm* baseForm = *it;
 
-        if (baseForm) {
+        if (gfuncs::IsFormValid(baseForm)) {
             RE::EnchantmentItem* enchantment = baseForm->As<RE::EnchantmentItem>();
-            if (enchantment) {
+            if (gfuncs::IsFormValid(enchantment)) {
                 RE::EnchantmentItem* baseEnchantment = enchantment->data.baseEnchantment;
-                if (baseEnchantment) {
+                if (gfuncs::IsFormValid(baseEnchantment)) {
                     if (baseEnchantment->GetKnown()) {
                         //if (!akList->HasForm(baseEnchantment)) {
                         akList->AddForm(baseEnchantment);
@@ -4960,7 +5896,7 @@ void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akL
 }
 
 std::string GetWordOfPowerTranslation(RE::StaticFunctionTag*, RE::TESWordOfPower* akWord) {
-    if (!akWord) {
+    if (!gfuncs::IsFormValid(akWord)) {
         logger::warn("{} akWord doesn't exist.", __func__);
         return "";
     }
@@ -4969,7 +5905,7 @@ std::string GetWordOfPowerTranslation(RE::StaticFunctionTag*, RE::TESWordOfPower
 }
 
 void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
-    if (!akShout) {
+    if (!gfuncs::IsFormValid(akShout)) {
         logger::warn("{} akShout doesn't exist.", __func__);
         return;
     }
@@ -4979,28 +5915,28 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
     logger::debug("{} {} ID {:x}", __func__, akShout->GetName(), akShout->GetFormID());
 
     RE::TESWordOfPower* word = akShout->variations[0].word;
-    if (word) {
+    if (gfuncs::IsFormValid(word)) {
         //playerRef->UnlockWord(word);
         logger::debug("{} unlock word 1 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
-        std::string command = "player.teachword " + IntToHex(int(word->GetFormID())); //didn't find a teachword function in NG, so using console command as workaround. 
+        std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID())); //didn't find a teachword function in NG, so using console command as workaround. 
         ExecuteConsoleCommand(nullptr, command, nullptr);
         player->UnlockWord(word);
     }
 
     word = akShout->variations[1].word;
-    if (word) {
+    if (gfuncs::IsFormValid(word)) {
         //playerRef->UnlockWord(word);
         logger::debug("{} unlock word 2 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
-        std::string command = "player.teachword " + IntToHex(int(word->GetFormID()));
+        std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
         ExecuteConsoleCommand(nullptr, command, nullptr);
         player->UnlockWord(word);
     }
 
     word = akShout->variations[2].word;
-    if (word) {
+    if (gfuncs::IsFormValid(word)) {
         //playerRef->UnlockWord(word);
         logger::debug("{} unlock word 3 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
-        std::string command = "player.teachword " + IntToHex(int(word->GetFormID()));
+        std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
         ExecuteConsoleCommand(nullptr, command, nullptr);
         player->UnlockWord(word);
     }
@@ -5018,9 +5954,9 @@ void AddAndUnlockAllShouts(RE::StaticFunctionTag*, int minNumberOfWordsWithTrans
         //loop through all shouts
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESShout* akShout = baseForm->As<RE::TESShout>();
-                if (akShout) {
+                if (gfuncs::IsFormValid(akShout)) {
                     if (onlyShoutsWithNames) {
                         if (akShout->GetName() == "") {
                             continue;
@@ -5049,12 +5985,12 @@ void AddAndUnlockAllShouts(RE::StaticFunctionTag*, int minNumberOfWordsWithTrans
 void SetBookSpell(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, RE::SpellItem* akSpell) {
     logger::debug("{} called", __func__);
 
-    if (!akBook) {
+    if (!gfuncs::IsFormValid(akBook)) {
         logger::warn("{} akBook doesn't exist.", __func__);
         return;
     }
 
-    if (!akSpell) {
+    if (!gfuncs::IsFormValid(akSpell)) {
         akBook->data.flags.reset(RE::OBJ_BOOK::Flag::kTeachesSpell);
         logger::debug("{} akSpell is none, removing teaches spell flag", __func__);
         return;
@@ -5068,7 +6004,7 @@ void SetBookSpell(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, RE::SpellIt
 }
 
 RE::TESObjectBOOK* GetSpellTomeForSpell(RE::StaticFunctionTag*, RE::SpellItem* akSpell) {
-    if (!akSpell) {
+    if (!gfuncs::IsFormValid(akSpell)) {
         logger::warn("{} akSpell doesn't exist.", __func__);
         return nullptr;
     }
@@ -5083,9 +6019,9 @@ RE::TESObjectBOOK* GetSpellTomeForSpell(RE::StaticFunctionTag*, RE::SpellItem* a
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
-                if (akBook) {
+                if (gfuncs::IsFormValid(akBook)) {
                     if (akBook->TeachesSpell()) {
                         if (akBook->GetSpell() == akSpell) {
                             return akBook;
@@ -5101,7 +6037,7 @@ RE::TESObjectBOOK* GetSpellTomeForSpell(RE::StaticFunctionTag*, RE::SpellItem* a
 std::vector<RE::TESObjectBOOK*> GetSpellTomesForSpell(RE::StaticFunctionTag*, RE::SpellItem* akSpell) {
     std::vector<RE::TESObjectBOOK*> v;
 
-    if (!akSpell) {
+    if (!gfuncs::IsFormValid(akSpell)) {
         logger::warn("{} akSpell doesn't exist.", __func__);
         return v;
     }
@@ -5116,9 +6052,9 @@ std::vector<RE::TESObjectBOOK*> GetSpellTomesForSpell(RE::StaticFunctionTag*, RE
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
-                if (akBook) {
+                if (gfuncs::IsFormValid(akBook)) {
                     if (akBook->TeachesSpell()) {
                         if (akBook->GetSpell() == akSpell) {
                             v.push_back(akBook);
@@ -5132,12 +6068,12 @@ std::vector<RE::TESObjectBOOK*> GetSpellTomesForSpell(RE::StaticFunctionTag*, RE
 }
 
 void AddSpellTomesForSpellToList(RE::StaticFunctionTag*, RE::SpellItem* akSpell, RE::BGSListForm* akList) {
-    if (!akSpell) {
+    if (!gfuncs::IsFormValid(akSpell)) {
         logger::warn("{} akSpell doesn't exist.", __func__);
         return;
     }
 
-    if (!akList) {
+    if (!gfuncs::IsFormValid(akList)) {
         logger::warn("{} akList doesn't exist.", __func__);
         return;
     }
@@ -5148,13 +6084,12 @@ void AddSpellTomesForSpellToList(RE::StaticFunctionTag*, RE::SpellItem* akSpell,
 
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
-
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
-                if (akBook) {
+                if (gfuncs::IsFormValid(akBook)) {
                     if (akBook->TeachesSpell()) {
                         if (akBook->GetSpell() == akSpell) {
                             akList->AddForm(akBook);
@@ -5167,9 +6102,7 @@ void AddSpellTomesForSpellToList(RE::StaticFunctionTag*, RE::SpellItem* akSpell,
 }
 
 std::string GetBookSkill(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook) {
-    logger::debug("{} called", __func__);
-
-    if (!akBook) {
+    if (!gfuncs::IsFormValid(akBook)) {
         logger::warn("{} akBook doesn't exist.", __func__);
         return "";
     }
@@ -5187,7 +6120,7 @@ void SetBookSkillInt(RE::TESObjectBOOK* akBook, int value, std::string skill = "
         if (addToSkillBooksMap) {
             skillBooksMap[akBook] = value;
         }
-        logger::debug("{} book[{}] ID[{:x}] no longer teaches skill", __func__, GetFormName(akBook), akBook->GetFormID());
+        logger::debug("{} book[{}] ID[{:x}] no longer teaches skill", __func__, gfuncs::GetFormName(akBook), akBook->GetFormID());
         return;
     }
     else if (value < -1 || value > 163) {
@@ -5206,7 +6139,7 @@ void SetBookSkillInt(RE::TESObjectBOOK* akBook, int value, std::string skill = "
 void SetBookSkill(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, std::string actorValue) {
     logger::debug("{} called", __func__);
 
-    if (!akBook) {
+    if (!gfuncs::IsFormValid(akBook)) {
         logger::warn("{} akBook doesn't exist.", __func__);
         return;
     }
@@ -5236,9 +6169,9 @@ std::vector<RE::TESObjectBOOK*> GetSkillBooksForSkill(RE::StaticFunctionTag*, st
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
-                if (akBook) {
+                if (gfuncs::IsFormValid(akBook)) {
                     if (skillBooksMap.find(akBook) != skillBooksMap.end()) {
                         if (skillBooksMap[akBook] == value) {
                             v.push_back(akBook);
@@ -5252,7 +6185,7 @@ std::vector<RE::TESObjectBOOK*> GetSkillBooksForSkill(RE::StaticFunctionTag*, st
 }
 
 void AddSkillBookForSkillToList(RE::StaticFunctionTag*, std::string actorValue, RE::BGSListForm* akList) {
-    if (!akList) {
+    if (!gfuncs::IsFormValid(akList)) {
         logger::warn("{} akList doesn't exist.", __func__);
         return;
     }
@@ -5275,9 +6208,9 @@ void AddSkillBookForSkillToList(RE::StaticFunctionTag*, std::string actorValue, 
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
-                if (akBook) {
+                if (gfuncs::IsFormValid(akBook)) {
                     if (skillBooksMap.find(akBook) != skillBooksMap.end()) {
                         if (skillBooksMap[akBook] == value) {
                             akList->AddForm(akBook);
@@ -5290,7 +6223,7 @@ void AddSkillBookForSkillToList(RE::StaticFunctionTag*, std::string actorValue, 
 }
 
 void SetBookRead(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, bool read) {
-    if (!akBook) {
+    if (!gfuncs::IsFormValid(akBook)) {
         logger::warn("{} akBook doesn't exist.", __func__);
         return;
     }
@@ -5327,7 +6260,7 @@ void SetAllBooksRead(RE::StaticFunctionTag*, bool read) {
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
             RE::TESForm* baseForm = *itr;
 
-            if (baseForm) {
+            if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESObjectBOOK* akBook = baseForm->As<RE::TESObjectBOOK>();
                 SetBookRead(nullptr, akBook, read);
             }
@@ -5355,21 +6288,21 @@ int GetActiveEffectCastingSource(RE::StaticFunctionTag*, RE::ActiveEffect* akEff
 
 std::vector<RE::EffectSetting*> GetMagicEffectsForForm(RE::StaticFunctionTag*, RE::TESForm* akForm) {
     std::vector<RE::EffectSetting*> akEffects;
-    if (!akForm) {
+    if (!gfuncs::IsFormValid(akForm)) {
         logger::warn("{} akForm doesn't exist", __func__);
         return akEffects;
     }
 
     RE::MagicItem* magicItem = akForm->As<RE::MagicItem>();
-    if (!magicItem) {
-        logger::warn("{} akForm name[{}] editorID[{}] formID[{}], is not a magic item", __func__, GetFormName(akForm), GetFormEditorId(nullptr, akForm, ""), akForm->GetFormID());
+    if (!gfuncs::IsFormValid(magicItem)) {
+        logger::warn("{} akForm name[{}] editorID[{}] formID[{}], is not a magic item", __func__, gfuncs::GetFormName(akForm), GetFormEditorId(nullptr, akForm, ""), akForm->GetFormID());
         return akEffects;
     }
 
     int m = magicItem->effects.size();
     for (int i = 0; i < m; i++) {
         RE::EffectSetting* effect = magicItem->effects[i]->baseEffect;
-        if (effect) {
+        if (gfuncs::IsFormValid(effect)) {
             akEffects.push_back(effect);
         }
     }
@@ -5377,13 +6310,13 @@ std::vector<RE::EffectSetting*> GetMagicEffectsForForm(RE::StaticFunctionTag*, R
 }
 
 bool IsFormMagicItem(RE::StaticFunctionTag*, RE::TESForm* akForm) {
-    if (!akForm) {
+    if (!gfuncs::IsFormValid(akForm)) {
         logger::warn("{} akForm doesn't exist", __func__);
         return false;
     }
 
     RE::MagicItem* magicItem = akForm->As<RE::MagicItem>();
-    if (magicItem) {
+    if (gfuncs::IsFormValid(magicItem)) {
         return true;
     }
     else {
@@ -5400,7 +6333,7 @@ bool IsFormMagicItem(RE::StaticFunctionTag*, RE::TESForm* akForm) {
 void SetSoulGemSize(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, int level) {
     logger::debug("{} called", __func__);
 
-    if (!akGem) {
+    if (!gfuncs::IsFormValid(akGem)) {
         logger::warn("{}: error akGem doesn't exist", __func__);
         return;
     }
@@ -5418,7 +6351,7 @@ void SetSoulGemSize(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, int level) {
 void SetSoulGemCanHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, bool canCarry) {
     logger::debug("{} called", __func__);
 
-    if (!akGem) {
+    if (!gfuncs::IsFormValid(akGem)) {
         logger::warn("{}: error akGem doesn't exist", __func__);
         return;
     }
@@ -5434,7 +6367,7 @@ void SetSoulGemCanHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, boo
 bool CanSoulGemHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem) {
     logger::debug("{} called", __func__);
 
-    if (!akGem) {
+    if (!gfuncs::IsFormValid(akGem)) {
         logger::warn("{}: error akGem doesn't exist", __func__);
         return false;
     }
@@ -5443,7 +6376,7 @@ bool CanSoulGemHoldNPCSoul(RE::StaticFunctionTag*, RE::TESSoulGem* akGem) {
 
 RE::TESCondition* condition_isPowerAttacking;
 bool IsActorPowerAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5463,7 +6396,7 @@ bool IsActorPowerAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_IsAttacking;
 bool IsActorAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5483,7 +6416,7 @@ bool IsActorAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_isActorSpeaking;
 bool IsActorSpeaking(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5503,7 +6436,7 @@ bool IsActorSpeaking(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_IsBlocking;
 bool IsActorBlocking(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5523,7 +6456,7 @@ bool IsActorBlocking(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_IsCasting;
 bool IsActorCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5543,7 +6476,7 @@ bool IsActorCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_IsDualCasting;
 bool IsActorDualCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5563,7 +6496,7 @@ bool IsActorDualCasting(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_IsStaggered;
 bool IsActorStaggered(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5583,7 +6516,7 @@ bool IsActorStaggered(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_IsRecoiling;
 bool IsActorRecoiling(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5603,7 +6536,7 @@ bool IsActorRecoiling(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_IsIgnoringCombat;
 bool IsActorIgnoringCombat(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5623,7 +6556,7 @@ bool IsActorIgnoringCombat(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_IsUndead;
 bool IsActorUndead(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5643,7 +6576,7 @@ bool IsActorUndead(RE::StaticFunctionTag*, RE::Actor* akActor) {
 
 RE::TESCondition* condition_IsOnFlyingMount;
 bool IsActorOnFlyingMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5662,7 +6595,7 @@ bool IsActorOnFlyingMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
 }
 
 bool IsActorAMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5670,7 +6603,7 @@ bool IsActorAMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
 }
 
 bool IsActorInMidAir(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5678,7 +6611,7 @@ bool IsActorInMidAir(RE::StaticFunctionTag*, RE::Actor* akActor) {
 }
 
 bool IsActorInRagdollState(RE::StaticFunctionTag*, RE::Actor* akActor) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return false;
     }
@@ -5686,7 +6619,7 @@ bool IsActorInRagdollState(RE::StaticFunctionTag*, RE::Actor* akActor) {
 }
 
 int GetDetectionLevel(RE::StaticFunctionTag*, RE::Actor* akActor, RE::Actor* akTarget) {
-    if (!akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
         logger::warn("{}: error, akActor doesn't exist", __func__);
         return -1;
     }
@@ -5700,7 +6633,7 @@ int GetDetectionLevel(RE::StaticFunctionTag*, RE::Actor* akActor, RE::Actor* akT
 
 std::string GetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword) {
     logger::trace("{}", __func__);
-    if (!akKeyword) {
+    if (!gfuncs::IsFormValid(akKeyword)) {
         logger::warn("{} akKeyword doesn't exist", __func__);
         return "";
     }
@@ -5712,7 +6645,7 @@ void SetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword, std::st
 
     //if (!savedFormIDs) { savedFormIDs = new SavedFormIDs(); }
 
-    if (!akKeyword) {
+    if (!gfuncs::IsFormValid(akKeyword)) {
         logger::warn("{} akKeyword doesn't exist", __func__);
         return;
     }
@@ -5723,7 +6656,7 @@ RE::BGSKeyword* CreateKeyword(RE::StaticFunctionTag*) {
     logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSKeyword>()->Create();
-    if (!newForm) {
+    if (!gfuncs::IsFormValid(newForm, false)) {
         logger::warn("{} failed", __func__);
     }
     else {
@@ -5736,14 +6669,13 @@ RE::BGSKeyword* CreateKeyword(RE::StaticFunctionTag*) {
 RE::BGSListForm* CreateFormList(RE::StaticFunctionTag*, RE::BGSListForm* formListFiller) {
     logger::trace("{} called", __func__);
 
-    //RE::BGS
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSListForm>()->Create();
-    if (!newForm) {
+    if (!gfuncs::IsFormValid(newForm, false)) {
         logger::error("{} failed", __func__);
     }
     else {
         logger::debug("{} success", __func__);
-        if (formListFiller) {
+        if (gfuncs::IsFormValid(formListFiller)) {
             logger::debug("{} IsDynamicForm[{}]", __func__, formListFiller->IsDynamicForm());
             int max = formListFiller->forms.size();
             for (int i = 0; i < max; i++) {
@@ -5758,7 +6690,7 @@ RE::BGSColorForm* CreateColorForm(RE::StaticFunctionTag*, int color) {
     logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSColorForm>()->Create();
-    if (!newForm) {
+    if (!gfuncs::IsFormValid(newForm, false)) {
         logger::error("{} failed", __func__);
     }
     else {
@@ -5774,7 +6706,7 @@ RE::BGSConstructibleObject* CreateConstructibleObject(RE::StaticFunctionTag*) {
 
     //RE::BGSConstructibleObject
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSConstructibleObject>()->Create();
-    if (!newForm) {
+    if (!gfuncs::IsFormValid(newForm, false)) {
         logger::error("{} failed", __func__);
     }
     else {
@@ -5788,7 +6720,7 @@ RE::BGSTextureSet* CreateTextureSet(RE::StaticFunctionTag*) {
     logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSTextureSet>()->Create();
-    if (!newForm) {
+    if (!gfuncs::IsFormValid(newForm, false)) {
         logger::error("{} failed", __func__);
     }
     else {
@@ -5802,7 +6734,7 @@ RE::TESSound* CreateSoundMarker(RE::StaticFunctionTag*) {
     logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::TESSound>()->Create();
-    if (!newForm) {
+    if (!gfuncs::IsFormValid(newForm, false)) {
         logger::error("{} failed", __func__);
     }
     else {
@@ -5831,12 +6763,12 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
 
     logger::trace("{} called", __func__);
 
-    if (!akSound) {
+    if (!gfuncs::IsFormValid(akSound)) {
         logger::warn("{}: error, akSound doesn't exist", __func__);
         return -1;
     }
 
-    if (!akSource) {
+    if (!gfuncs::IsFormValid(akSource)) {
         logger::warn("{}: error, akSource doesn't exist", __func__);
         return -1;
     }
@@ -5852,22 +6784,22 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
 
     std::vector<RE::VMHandle> vmHandles;
 
-    if (eventReceiverForm) {
-        RE::VMHandle vmHandle = GetHandle(eventReceiverForm);
+    if (gfuncs::IsFormValid(eventReceiverForm)) {
+        RE::VMHandle vmHandle = gfuncs::GetHandle(eventReceiverForm);
         if (vmHandle != NULL) {
             vmHandles.push_back(vmHandle);
         }
     }
 
     if (eventReceiverAlias) {
-        RE::VMHandle vmHandle = GetHandle(eventReceiverAlias);
+        RE::VMHandle vmHandle = gfuncs::GetHandle(eventReceiverAlias);
         if (vmHandle != NULL) {
             vmHandles.push_back(vmHandle);
         }
     }
 
     if (eventReceiverActiveEffect) {
-        RE::VMHandle vmHandle = GetHandle(eventReceiverActiveEffect);
+        RE::VMHandle vmHandle = gfuncs::GetHandle(eventReceiverActiveEffect);
         if (vmHandle != NULL) {
             vmHandles.push_back(vmHandle);
         }
@@ -5884,12 +6816,12 @@ int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSo
 
     logger::trace("{} called", __func__);
 
-    if (!akSoundDescriptor) {
+    if (!gfuncs::IsFormValid(akSoundDescriptor)) {
         logger::warn("{}: error, akSoundDescriptor doesn't exist", __func__);
         return -1;
     }
 
-    if (!akSource) {
+    if (!gfuncs::IsFormValid(akSource)) {
         logger::warn("{}: error, akSource doesn't exist", __func__);
         return -1;
     }
@@ -5905,22 +6837,22 @@ int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSo
 
     std::vector<RE::VMHandle> vmHandles;
 
-    if (eventReceiverForm) {
-        RE::VMHandle vmHandle = GetHandle(eventReceiverForm);
+    if (gfuncs::IsFormValid(eventReceiverForm)) {
+        RE::VMHandle vmHandle = gfuncs::GetHandle(eventReceiverForm);
         if (vmHandle != NULL) {
             vmHandles.push_back(vmHandle);
         }
     }
 
     if (eventReceiverAlias) {
-        RE::VMHandle vmHandle = GetHandle(eventReceiverAlias);
+        RE::VMHandle vmHandle = gfuncs::GetHandle(eventReceiverAlias);
         if (vmHandle != NULL) {
             vmHandles.push_back(vmHandle);
         }
     }
 
     if (eventReceiverActiveEffect) {
-        RE::VMHandle vmHandle = GetHandle(eventReceiverActiveEffect);
+        RE::VMHandle vmHandle = gfuncs::GetHandle(eventReceiverActiveEffect);
         if (vmHandle != NULL) {
             vmHandles.push_back(vmHandle);
         }
@@ -5933,7 +6865,7 @@ int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSo
 }
 
 RE::BGSSoundCategory* GetParentSoundCategory(RE::StaticFunctionTag*, RE::BGSSoundCategory* akSoundCategory) {
-    if (!akSoundCategory) {
+    if (!gfuncs::IsFormValid(akSoundCategory)) {
         logger::warn("{}: error, akSoundCategory doesn't exist", __func__);
         return nullptr;
     }
@@ -5942,7 +6874,7 @@ RE::BGSSoundCategory* GetParentSoundCategory(RE::StaticFunctionTag*, RE::BGSSoun
 }
 
 RE::BGSSoundCategory* GetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSoundDescriptor) {
-    if (!akSoundDescriptor) {
+    if (!gfuncs::IsFormValid(akSoundDescriptor)) {
         logger::warn("{}: error, akSoundDescriptor doesn't exist", __func__);
         return nullptr;
     }
@@ -5956,12 +6888,12 @@ RE::BGSSoundCategory* GetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*,
 }
 
 void SetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSoundDescriptor, RE::BGSSoundCategory* akSoundCategory) {
-    if (!akSoundCategory) {
+    if (!gfuncs::IsFormValid(akSoundCategory)) {
         logger::warn("{}: error, akSoundCategory doesn't exist", __func__);
         return;
     }
 
-    if (!akSoundDescriptor) {
+    if (!gfuncs::IsFormValid(akSoundDescriptor)) {
         logger::warn("{}: error, akSoundDescriptor doesn't exist", __func__);
         return;
     }
@@ -5975,7 +6907,7 @@ void SetSoundCategoryForSoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDesc
 }
 
 float GetSoundCategoryVolume(RE::StaticFunctionTag*, RE::BGSSoundCategory* akCategory) {
-    if (!akCategory) {
+    if (!gfuncs::IsFormValid(akCategory)) {
         logger::warn("{}: error, akCategory doesn't exist", __func__);
         return -1.0;
     }
@@ -5984,7 +6916,7 @@ float GetSoundCategoryVolume(RE::StaticFunctionTag*, RE::BGSSoundCategory* akCat
 }
 
 float GetSoundCategoryFrequency(RE::StaticFunctionTag*, RE::BGSSoundCategory* akCategory) {
-    if (!akCategory) {
+    if (!gfuncs::IsFormValid(akCategory)) {
         logger::warn("{}: error, akCategory doesn't exist", __func__);
         return -1.0;
     }
@@ -5996,18 +6928,18 @@ float GetSoundCategoryFrequency(RE::StaticFunctionTag*, RE::BGSSoundCategory* ak
 
 //from papyrus
 void SaveProjectileForAmmo(RE::StaticFunctionTag*, RE::TESAmmo* akAmmo, RE::BGSProjectile* akProjectile) {
-    if (akAmmo && akProjectile) {
+    if (gfuncs::IsFormValid(akAmmo) && gfuncs::IsFormValid(akProjectile)) {
         RE::TESForm* ammoProjectileForm = RE::TESForm::LookupByID(akAmmo->data.projectile->GetFormID());
         if (!ammoProjectileForm) { //projectile for ammo not set correctly
             akAmmo->data.projectile = akProjectile;
-            logger::debug("ammo {} projectile {} saved from papyrus", GetFormDataString(akAmmo), GetFormDataString(akAmmo->data.projectile));
+            logger::debug("ammo {} projectile {} saved from papyrus", gfuncs::GetFormDataString(akAmmo), gfuncs::GetFormDataString(akAmmo->data.projectile));
         }
     }
 }
 
 //initially ammo->data.projectile is not set correctly and causes CTDs if trying to access. 
 //This saves ammo projectiles from papyrus if necessarry so they are set correctly
-void SaveAllAmmoProjectilesFromPapyrus() { 
+void SaveAllAmmoProjectilesFromPapyrus() {
     auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
     if (!vm) {
         return;
@@ -6016,9 +6948,9 @@ void SaveAllAmmoProjectilesFromPapyrus() {
     std::vector<RE::TESAmmo*> allAmmos;
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
     for (auto& [id, form] : *allForms) {
-        if (form) {
+        if (gfuncs::IsFormValid(form)) {
             RE::TESAmmo* ammo = form->As<RE::TESAmmo>();
-            if (ammo) {
+            if (gfuncs::IsFormValid(ammo)) {
                 allAmmos.push_back(ammo);
             }
         }
@@ -6074,9 +7006,9 @@ struct MenuModeTimer {
             std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
 
             if (!cancelled) {
-                float elapsedTime = (savedTimeElapsed + timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
+                float elapsedTime = (savedTimeElapsed + gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
                 auto* args = RE::MakeFunctionArguments((int)timerID);
-                svm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
+                gfuncs::svm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
                 delete args;
                 logger::debug("menu mode timer event sent. ID[{}], interval[{}], elapsed time[{}]", timerID, interval, elapsedTime);
             }
@@ -6092,11 +7024,11 @@ struct MenuModeTimer {
     }
 
     float GetElapsedTime() {
-        return (savedTimeElapsed + timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
+        return (savedTimeElapsed + gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
     }
 
     float GetCurrentElapsedTime() { //for current - after loading a save startTime and interval are reset.
-        return timePointDiffToFloat(std::chrono::system_clock::now(), startTime);
+        return gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime);
     }
 
     float GetTimeLeft() {
@@ -6147,14 +7079,14 @@ void EraseFinishedMenuModeTimers() {
     for (auto* timer : currentMenuModeTimers) {
         if (timer) {
             if (timer->finished) {
-                RemoveFromVectorByValue(currentMenuModeTimers, timer);
+                gfuncs::RemoveFromVectorByValue(currentMenuModeTimers, timer);
                 delete timer;
                 timer = nullptr;
                 logger::debug("erased menuModeTimer, Timers left = {}", currentMenuModeTimers.size());
             }
         }
         else {
-            RemoveFromVectorByValue(currentMenuModeTimers, timer);
+            gfuncs::RemoveFromVectorByValue(currentMenuModeTimers, timer);
         }
     }
     erasingMenuModeTimers = false;
@@ -6383,7 +7315,7 @@ struct NoMenuModeTimer {
 
         if (lastMenuCheckSet) {
             lastMenuCheckSet = false;
-            totalTimePaused += timePointDiffToFloat(std::chrono::system_clock::now(), lastMenuCheck);
+            totalTimePaused += gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastMenuCheck);
         }
 
         std::thread t([=]() {
@@ -6394,7 +7326,7 @@ struct NoMenuModeTimer {
             if (!cancelled) {
                 if (inMenuMode) {
                     started = false;
-                    float timeInMenu = timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeMenuWasOpened);
+                    float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeMenuWasOpened);
                     currentInterval += timeInMenu;
                     totalTimePaused += timeInMenu;
                     lastMenuCheckSet = true;
@@ -6402,9 +7334,9 @@ struct NoMenuModeTimer {
                 }
 
                 if (currentInterval <= 0.0 && !cancelled) {
-                    float elapsedTime = (savedTimeElapsed + (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+                    float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
                     auto* args = RE::MakeFunctionArguments((int)timerID);
-                    svm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
+                    gfuncs::svm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
                     delete args;
                     logger::debug("NoMenuModeTimer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
                         timerID, initInterval, totalTimePaused, elapsedTime);
@@ -6432,11 +7364,11 @@ struct NoMenuModeTimer {
     }
 
     float GetElapsedTime() {
-        return (savedTimeElapsed + (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+        return (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
     }
 
     float GetCurrentElapsedTime() {
-        return (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused);
+        return (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused);
     }
 
     float GetTimeLeft() {
@@ -6508,14 +7440,14 @@ void EraseFinishedNoMenuModeTimers() {
     for (auto* timer : currentNoMenuModeTimers) {
         if (timer) {
             if (timer->canDelete) {
-                RemoveFromVectorByValue(currentNoMenuModeTimers, timer);
+                gfuncs::RemoveFromVectorByValue(currentNoMenuModeTimers, timer);
                 delete timer;
                 timer = nullptr;
                 logger::debug("erased NoMenuModeTimer, Timers left = {}", currentNoMenuModeTimers.size());
             }
         }
         else {
-            RemoveFromVectorByValue(currentNoMenuModeTimers, timer);
+            gfuncs::RemoveFromVectorByValue(currentNoMenuModeTimers, timer);
         }
     }
     erasingNoMenuModeTimers = false;
@@ -6745,7 +7677,7 @@ struct Timer {
 
         if (lastPausedTimeCheckSet) {
             lastPausedTimeCheckSet = false;
-            totalTimePaused += timePointDiffToFloat(std::chrono::system_clock::now(), lastPausedTimeCheck);
+            totalTimePaused += gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastPausedTimeCheck);
         }
 
         std::thread t([=]() {
@@ -6756,7 +7688,7 @@ struct Timer {
             if (!cancelled) {
                 if (ui->GameIsPaused()) {
                     started = false;
-                    float timeInMenu = timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeGameWasPaused);
+                    float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeGameWasPaused);
                     currentInterval += timeInMenu;
                     totalTimePaused += timeInMenu;
                     lastPausedTimeCheckSet = true;
@@ -6764,9 +7696,9 @@ struct Timer {
                 }
 
                 if (currentInterval <= 0.0 && !cancelled) {
-                    float elapsedTime = (savedTimeElapsed + (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+                    float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
                     auto* args = RE::MakeFunctionArguments((int)timerID);
-                    svm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
+                    gfuncs::svm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
                     delete args;
                     logger::debug("timer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
                         timerID, initInterval, totalTimePaused, elapsedTime);
@@ -6794,11 +7726,11 @@ struct Timer {
     }
 
     float GetElapsedTime() {
-        return (savedTimeElapsed + (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+        return (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
     }
 
     float getCurrentElapsedTime() {
-        return (timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused);
+        return (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused);
     }
 
     float GetTimeLeft() {
@@ -6874,14 +7806,14 @@ void EraseFinishedTimers() {
     for (auto* timer : currentTimers) {
         if (timer) {
             if (timer->canDelete) {
-                RemoveFromVectorByValue(currentTimers, timer);
+                gfuncs::RemoveFromVectorByValue(currentTimers, timer);
                 delete timer;
                 timer = nullptr;
                 logger::debug("erased timer, Timers left = {}", currentTimers.size());
             }
         }
         else {
-            RemoveFromVectorByValue(currentTimers, timer);
+            gfuncs::RemoveFromVectorByValue(currentTimers, timer);
         }
     }
     erasingTimers = false;
@@ -7126,7 +8058,7 @@ struct GameTimeTimer {
                 float elapsedGameHours = (calendar->GetHoursPassed() - startTime);
 
                 auto* args = RE::MakeFunctionArguments((int)timerID);
-                svm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
+                gfuncs::svm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
                 delete args;
                 logger::debug("game timer event sent. ID[{}] gameHoursInterval[{}] startTime[{}] endTime[{}] elapsedGameHours[{}]",
                     timerID, initGameHoursInterval, startTime, endTime, elapsedGameHours);
@@ -7198,14 +8130,14 @@ void EraseFinishedGameTimers() {
     for (auto* timer : currentGameTimeTimers) {
         if (timer) {
             if (timer->canDelete) {
-                RemoveFromVectorByValue(currentGameTimeTimers, timer);
+                gfuncs::RemoveFromVectorByValue(currentGameTimeTimers, timer);
                 delete timer;
                 timer = nullptr;
                 logger::debug("erased gameTimer, Timers left = {}", currentGameTimeTimers.size());
             }
         }
         else {
-            RemoveFromVectorByValue(currentGameTimeTimers, timer);
+            gfuncs::RemoveFromVectorByValue(currentGameTimeTimers, timer);
         }
     }
     erasingGameTimers = false;
@@ -7415,22 +8347,22 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
 void StartMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
     MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
     if (timer) {
         timer->cancelled = true;
-        logger::debug("{} reset timer on form [{}] ID[{:x}] timerID[{}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID(), aiTimerID);
+        logger::debug("{} reset timer on form [{}] ID[{:x}] timerID[{}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID(), aiTimerID);
     }
 
     MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
@@ -7440,15 +8372,15 @@ void StartMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver
 void CancelMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called, ID {}", __func__, aiTimerID);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -7461,15 +8393,15 @@ void CancelMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceive
 float GetTimeElapsedOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return -1.0;
     }
 
@@ -7488,15 +8420,15 @@ float GetTimeElapsedOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eve
 float GetTimeLeftOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return -1.0;
     }
 
@@ -7516,15 +8448,15 @@ float GetTimeLeftOnMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventR
 void StartNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
     logger::trace("{} called, time: {}", __func__, afInterval);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -7540,15 +8472,15 @@ void StartNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiv
 void CancelNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -7562,15 +8494,15 @@ void CancelNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventRecei
 float GetTimeElapsedOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return -1.0;
     }
 
@@ -7589,15 +8521,15 @@ float GetTimeElapsedOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* e
 float GetTimeLeftOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return -1.0;
     }
 
@@ -7617,15 +8549,15 @@ float GetTimeLeftOnNoMenuModeTimerForm(RE::StaticFunctionTag*, RE::TESForm* even
 void StartTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
     logger::trace("{} called, time: {}", __func__, afInterval);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -7641,15 +8573,15 @@ void StartTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float 
 void CancelTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -7663,15 +8595,15 @@ void CancelTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int a
 float GetTimeElapsedOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return -1.0;
     }
 
@@ -7690,15 +8622,15 @@ float GetTimeElapsedOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiv
 float GetTimeLeftOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return -1.0;
     }
 
@@ -7718,15 +8650,15 @@ float GetTimeLeftOnTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver,
 void StartGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float afInterval, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -7742,15 +8674,15 @@ void StartGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, fl
 void CancelGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -7764,15 +8696,15 @@ void CancelGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, i
 float GetTimeElapsedOnGameTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return -1.0;
     }
 
@@ -7791,15 +8723,15 @@ float GetTimeElapsedOnGameTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventRe
 float GetTimeLeftOnGameTimerForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
     logger::trace("{} called", __func__);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return -1.0;
     }
 
@@ -7826,7 +8758,7 @@ void StartMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventRe
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -7851,7 +8783,7 @@ void CancelMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventR
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -7873,7 +8805,7 @@ float GetTimeElapsedOnMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlia
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -7900,7 +8832,7 @@ float GetTimeLeftOnMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* 
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -7928,7 +8860,7 @@ void StartNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* event
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -7952,7 +8884,7 @@ void CancelNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* even
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -7974,7 +8906,7 @@ float GetTimeElapsedOnNoMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAl
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8001,7 +8933,7 @@ float GetTimeLeftOnNoMenuModeTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8029,7 +8961,7 @@ void StartTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, 
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8053,7 +8985,7 @@ void CancelTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver,
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8075,7 +9007,7 @@ float GetTimeElapsedOnTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* event
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8102,7 +9034,7 @@ float GetTimeLeftOnTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventRec
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8130,7 +9062,7 @@ void StartGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiv
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8154,7 +9086,7 @@ void CancelGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventRecei
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8176,7 +9108,7 @@ float GetTimeElapsedOnGameTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* e
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8203,7 +9135,7 @@ float GetTimeLeftOnGameTimerAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* even
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for Alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->aliasID);
@@ -8233,17 +9165,17 @@ void StartMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEff
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return;
     }
 
     MenuModeTimer* timer = GetTimer(currentMenuModeTimers, handle, aiTimerID);
     if (timer) {
         timer->cancelled = true;
-        logger::debug("{} reset timer on ActiveMagicEffect [{}] ID[{:x}] timerID[{}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID, aiTimerID);
+        logger::debug("{} reset timer on ActiveMagicEffect [{}] ID[{:x}] timerID[{}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID, aiTimerID);
     }
 
     MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
@@ -8258,10 +9190,10 @@ void CancelMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEf
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return;
     }
 
@@ -8280,10 +9212,10 @@ float GetTimeElapsedOnMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE:
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return -1.0;
     }
 
@@ -8308,10 +9240,10 @@ float GetTimeLeftOnMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::Ac
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return -1.0;
     }
 
@@ -8336,10 +9268,10 @@ void StartNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveE
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return;
     }
 
@@ -8360,10 +9292,10 @@ void CancelNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::Active
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return;
     }
 
@@ -8382,10 +9314,10 @@ float GetTimeElapsedOnNoMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, R
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return -1.0;
     }
 
@@ -8409,10 +9341,10 @@ float GetTimeLeftOnNoMenuModeTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return -1.0;
     }
 
@@ -8437,10 +9369,10 @@ void StartTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eve
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return;
     }
 
@@ -8461,10 +9393,10 @@ void CancelTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* ev
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return;
     }
 
@@ -8483,10 +9415,10 @@ float GetTimeElapsedOnTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveE
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return -1.0;
     }
 
@@ -8510,10 +9442,10 @@ float GetTimeLeftOnTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffe
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return -1.0;
     }
 
@@ -8538,10 +9470,10 @@ void StartGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect*
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return;
     }
 
@@ -8562,10 +9494,10 @@ void CancelGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect
         return;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return;
     }
 
@@ -8584,10 +9516,10 @@ float GetTimeElapsedOnGameTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::Act
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return -1.0;
     }
 
@@ -8611,10 +9543,10 @@ float GetTimeLeftOnGameTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::Active
         return -1.0;
     }
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
+        logger::error("{}: couldn't get handle for ActiveMagicEffect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->usUniqueID);
         return -1.0;
     }
 
@@ -8662,8 +9594,9 @@ enum EventsEnum {
     EventEnum_BeginSheathe,
     EventEnum_EndSheathe,
     EventEnum_OnContainerChanged,
+    EventEnum_OnProjectileImpact,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnContainerChanged
+    EventEnum_Last = EventEnum_OnProjectileImpact
 };
 
 struct EventData {
@@ -8721,10 +9654,10 @@ struct EventData {
         if (akForm) {
             auto it = eventFormHandles.find(akForm);
             if (it != eventFormHandles.end()) { //form found in activator param map
-                int handleIndex = GetIndexInVector(it->second, handle);
+                int handleIndex = gfuncs::GetIndexInVector(it->second, handle);
                 if (handleIndex == -1) { //handle not already added for this form (activator param)
                     it->second.push_back(handle);
-                    logger::debug("{}: akForm[{}] ID[{:x}] found, handles sixe[{}]", __func__, GetFormName(akForm), akForm->GetFormID(), it->second.size());
+                    logger::debug("{}: akForm[{}] ID[{:x}] found, handles sixe[{}]", __func__, gfuncs::GetFormName(akForm), akForm->GetFormID(), it->second.size());
                 }
             }
             else { //form not found
@@ -8732,7 +9665,7 @@ struct EventData {
                 handles.push_back(handle);
                 eventFormHandles.insert(std::pair<RE::TESForm*, std::vector<RE::VMHandle>>(akForm, handles));
 
-                logger::debug("{}: akForm[{}] ID[{:x}] doesn't already have handles, handles size[{}] eventFormHandles size[{}]", __func__, GetFormName(akForm), akForm->GetFormID(), handles.size(), eventFormHandles.size());
+                logger::debug("{}: akForm[{}] ID[{:x}] doesn't already have handles, handles size[{}] eventFormHandles size[{}]", __func__, gfuncs::GetFormName(akForm), akForm->GetFormID(), handles.size(), eventFormHandles.size());
             }
         }
     }
@@ -8741,7 +9674,7 @@ struct EventData {
         if (akForm) {
             auto it = eventFormHandles.find(akForm);
             if (it != eventFormHandles.end()) { //form found in activator param map
-                int handleIndex = GetIndexInVector(it->second, handle);
+                int handleIndex = gfuncs::GetIndexInVector(it->second, handle);
                 if (handleIndex != -1) { //handle not already added for this form (activator param)
                     auto itb = it->second.begin() + handleIndex;
                     it->second.erase(itb);
@@ -8757,7 +9690,7 @@ struct EventData {
     //erase all instances of handle
     void EraseFromFormHandles(RE::VMHandle handle, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& eventFormHandles) { //erase all instances of handle
         for (auto it : eventFormHandles) {
-            int handleIndex = GetIndexInVector(it.second, handle);
+            int handleIndex = gfuncs::GetIndexInVector(it.second, handle);
             if (handleIndex != -1) {
                 auto itb = it.second.begin() + handleIndex;
                 it.second.erase(itb);
@@ -8799,7 +9732,7 @@ struct EventData {
     }
 
     void RemoveHandle(RE::VMHandle handle, RE::TESForm* paramFilter, int paramFilterIndex) {
-        int gIndex = GetIndexInVector(globalHandles, handle);
+        int gIndex = gfuncs::GetIndexInVector(globalHandles, handle);
 
         if (!paramFilter) {
             if (gIndex != -1) {
@@ -8828,7 +9761,7 @@ struct EventData {
     }
 
     void RemoveAllHandles(RE::VMHandle handle) {
-        int gIndex = GetIndexInVector(globalHandles, handle);
+        int gIndex = gfuncs::GetIndexInVector(globalHandles, handle);
         if (gIndex != -1) {
             auto it = globalHandles.begin() + gIndex;
             globalHandles.erase(it);
@@ -8842,7 +9775,7 @@ struct EventData {
 
     bool HasHandle(RE::VMHandle handle, RE::TESForm* paramFilter, int paramFilterIndex) {
         if (!paramFilter) {
-            int gIndex = GetIndexInVector(globalHandles, handle);
+            int gIndex = gfuncs::GetIndexInVector(globalHandles, handle);
             return (gIndex != -1);
         }
 
@@ -8856,7 +9789,7 @@ struct EventData {
 
         auto it = eventParamMaps[index].find(paramFilter);
         if (it != eventParamMaps[index].end()) {
-            return (GetIndexInVector(it->second, handle) != -1);
+            return (gfuncs::GetIndexInVector(it->second, handle) != -1);
         }
         return false;
     }
@@ -8909,36 +9842,36 @@ struct EventData {
 std::vector<EventData*> eventDataPtrs;
 
 //not used, caused CTDs and wasn't worth it to track projectile references this way
-struct ObjectInitEventSink : public RE::BSTEventSink<RE::TESInitScriptEvent> {
-    bool sinkAdded = false; 
-
-    RE::BSEventNotifyControl ProcessEvent(const RE::TESInitScriptEvent* event, RE::BSTEventSource<RE::TESInitScriptEvent>* source) {
-        if (!event) {
-            logger::error("AnimationEventSink event doesn't exist");
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-        if (event->objectInitialized) {
-            RE::TESObjectREFR* loadedRef = event->objectInitialized.get();
-            if (loadedRef) {
-                if (IsBadReadPtr(loadedRef, sizeof(loadedRef))) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-
-                RE::Projectile* projectile = loadedRef->AsProjectile(); 
-                if (projectile) {
-                    if (IsBadReadPtr(projectile, sizeof(projectile))) {
-                        return RE::BSEventNotifyControl::kContinue;
-                    }
-                }
-            }
-        }
-
-        return RE::BSEventNotifyControl::kContinue;
-    }
-};
-
-ObjectInitEventSink* objectInitEventSink;
+//struct ObjectInitEventSink : public RE::BSTEventSink<RE::TESInitScriptEvent> {
+//    bool sinkAdded = false;
+//
+//    RE::BSEventNotifyControl ProcessEvent(const RE::TESInitScriptEvent* event, RE::BSTEventSource<RE::TESInitScriptEvent>* source) {
+//        if (!event) {
+//            logger::error("AnimationEventSink event doesn't exist");
+//            return RE::BSEventNotifyControl::kContinue;
+//        }
+//
+//        if (event->objectInitialized) {
+//            RE::TESObjectREFR* loadedRef = event->objectInitialized.get();
+//            if (loadedRef) {
+//                if (IsBadReadPtr(loadedRef, sizeof(loadedRef))) {
+//                    return RE::BSEventNotifyControl::kContinue;
+//                }
+//
+//                RE::Projectile* projectile = loadedRef->AsProjectile();
+//                if (gfuncs::IsFormValid(projectile)) {
+//                    if (IsBadReadPtr(projectile, sizeof(projectile))) {
+//                        return RE::BSEventNotifyControl::kContinue;
+//                    }
+//                }
+//            }
+//        }
+//
+//        return RE::BSEventNotifyControl::kContinue;
+//    }
+//};
+//
+//ObjectInitEventSink* objectInitEventSink;
 
 //one event sink per actor
 //track ammo
@@ -8978,10 +9911,258 @@ struct AnimationEventSink : public RE::BSTEventSink<RE::BSAnimationGraphEvent> {
 
 std::map<RE::TESObjectREFR*, AnimationEventSink*> animationEventActorsMap;
 
+int GetImpactResultInt(RE::ImpactResult& result) {
+    switch (result) {
+
+    case RE::ImpactResult::kDestroy:
+        return 1;
+    case RE::ImpactResult::kBounce:
+        return 2;
+    case RE::ImpactResult::kImpale:
+        return 3;
+    case RE::ImpactResult::kStick:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+
+
+void SaveRecentProjectile(RE::Projectile* projectile, RE::TESObjectREFR* shooter, RE::TESObjectREFR* target, RE::TESAmmo* ammo, 
+    float& gameTime, RE::BGSProjectile* projectileBase, int& impactResult, int& collidedLayer, float& distanceTraveled,
+    std::string hitPartNodeName/*, uint32_t& runTime, std::chrono::system_clock::time_point& timePoint*/) {
+
+    TrackedProjectileData data;
+    data.gameTimeStamp = gameTime;
+    data.lastImpactEventGameTimeStamp = 0.0;
+    //data.runTimeStamp = runTime;
+    //data.timeStamp = timePoint;
+    data.projectile = projectile;
+    data.shooter = shooter;
+    data.target = target;
+    data.ammo = ammo;
+    data.projectileBase = projectileBase;
+    data.impactResult = impactResult;
+    data.collidedLayer = collidedLayer;
+    data.distanceTraveled = distanceTraveled;
+    data.hitPartNodeName = hitPartNodeName;
+
+    auto it = recentShotProjectiles.find(shooter);
+    if (it != recentShotProjectiles.end()) {
+        it->second.push_back(data);
+        if (it->second.size() > iMaxArrowsSavedPerReference) {
+            it->second.erase(it->second.begin());
+        }
+    }
+    else {
+        std::vector<TrackedProjectileData> datas;
+        datas.push_back(data);
+        recentShotProjectiles.insert(std::pair<RE::TESObjectREFR*, std::vector<TrackedProjectileData>>(shooter, datas));
+    }
+
+    auto itt = recentHitProjectiles.find(target);
+    if (itt != recentHitProjectiles.end()) {
+        itt->second.push_back(data);
+        if (itt->second.size() > iMaxArrowsSavedPerReference) {
+            itt->second.erase(itt->second.begin());
+        }
+    }
+    else {
+        std::vector<TrackedProjectileData> datas;
+        datas.push_back(data);
+        recentHitProjectiles.insert(std::pair<RE::TESObjectREFR*, std::vector<TrackedProjectileData>>(target, datas));
+    }
+
+    //SendProjectileImpactEvent(data);
+}
+
+struct ProjectileImpactHook
+{
+    static bool thunk(RE::Projectile* projectile)
+    {
+        if (gfuncs::IsFormValid(projectile)) {
+            float gameHoursPassed = calendar->GetHoursPassed();
+
+            //uint32_t runTime = RE::GetDurationOfApplicationRunTime();
+            //auto now = std::chrono::system_clock::now();
+
+            //return projectile->Unk_B8();
+            bool killOnCollision = projectile->GetKillOnCollision();
+
+            if (iMaxArrowsSavedPerReference <= 0) {
+                return killOnCollision;
+            }
+
+            //logger::trace("impact event: getting runtimeData");
+            auto& runtimeData = projectile->GetProjectileRuntimeData();
+            RE::BGSProjectile* projectileBase = projectile->GetProjectileBase();
+            int impactResult = GetProjectileImpactResult(nullptr, projectile);
+
+            RE::TESObjectREFR* shooter = GetProjectileShooterFromRuntimeData(runtimeData);
+            RE::TESObjectREFR* target;
+            RE::TESAmmo* ammo = runtimeData.ammoSource;
+            float distanceTraveled = runtimeData.distanceMoved;
+            std::string hitPartNodeName;
+            int collidedLayer = 0;
+
+            //for (auto* impactData : runtimeData.impacts) {
+            if (!runtimeData.impacts.empty()) {
+                auto* impactData = *runtimeData.impacts.begin();
+                if (impactData) {
+                    if (impactData->collidee) {
+                        auto hitRefHandle = impactData->collidee;
+                        if (hitRefHandle) {
+                            //logger::trace("hitRef found");
+                            auto hitRefPtr = hitRefHandle.get();
+                            if (hitRefPtr) {
+                                target = hitRefPtr.get();
+                            }
+                        }
+                    }
+                    RE::NiNode* hitPart = impactData->damageRootNode;
+                    if (hitPart) {
+                        hitPartNodeName = hitPart->name;
+                        if (hitPart->parent) {
+                            if (hitPart->parent->name == "SHIELD" || hitPartNodeName == "") {
+                                hitPartNodeName = static_cast<std::string>(hitPart->parent->name);
+                            }
+                        }
+                    }
+                    collidedLayer = impactData->collidedLayer.underlying();
+                }
+            }
+
+            SaveRecentProjectile(projectile, shooter, target, ammo, gameHoursPassed, projectileBase, impactResult, collidedLayer, distanceTraveled, hitPartNodeName/*, runTime, now*/);
+            
+            return killOnCollision;
+        }
+        else {
+            return false;
+        }
+    }
+
+    static REL::Relocation<uintptr_t> GetRelocationID(REL::Version a_ver) {
+        return a_ver <= SKSE::RUNTIME_SSE_1_5_97 ?
+            REL::Relocation<uintptr_t>(REL::ID(43013), 0x3E3) : // SkyrimSE.exe+0x7521f0+0x3E3
+            REL::Relocation<uintptr_t>(REL::ID(44204), 0x3D4); // SkyrimSE.exe+0x780870+0x3D4
+    }
+
+    static inline REL::Relocation<decltype(thunk)> func;
+
+    static bool Check(REL::Version a_ver)
+    {
+        auto hook = GetRelocationID(a_ver);
+        if (*(uint16_t*)hook.address() != 0x90FF)
+        {
+            logger::critical("ProjectileImpactHook check: Opcode at injection site not matched. Aborting...");
+            return false;
+        }
+
+        return true;
+    }
+
+    static bool Install(REL::Version a_ver)
+    {
+        if (Check(a_ver)) {
+            // 44204+0x3EC 0x780870
+            auto hook = GetRelocationID(a_ver);
+            REL::safe_fill(hook.address(), 0x90, 6);
+            stl::write_thunk_call<ProjectileImpactHook>(hook.address());
+            return true;
+        }
+        return false;
+    }
+};
+
+//struct InputEventSink : public RE::BSTEventSink<RE::InputEvent> {
+//    bool sinkAdded = false;
+//
+//    RE::BSEventNotifyControl ProcessEvent(const RE::InputEvent* event, RE::BSTEventSource<RE::InputEvent>*/*source*/) {
+//        if (!event) {
+//            logger::error("InputEvent event doesn't exist");
+//            return RE::BSEventNotifyControl::kContinue;
+//        }
+//
+//        auto* buttonEvent = event->AsButtonEvent();
+//
+//        return RE::BSEventNotifyControl::kContinue;
+//    }
+//};
+//
+//InputEventSink* inputEventSink;
+
+void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source, bool SneakAttack, bool HitBlocked, float currentGameTime) {
+    if (!eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded) {
+        return;
+    }
+
+    if (!gfuncs::IsFormValid(data.shooter)) {
+        return;
+    }
+
+    if (!gfuncs::IsFormValid(data.target)) {
+        return;
+    }
+
+    if (GameHoursToRealTimeSeconds(nullptr, (currentGameTime - data.lastImpactEventGameTimeStamp)) < 0.1) {
+        return; //event for this shooter and target was sent less than 0.1 seconds ago. Skip
+    }
+
+    data.lastImpactEventGameTimeStamp = currentGameTime;
+
+    std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnProjectileImpact]->globalHandles;
+
+    CombineEventHandles(handles, data.shooter, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[0]);
+    CombineEventHandles(handles, data.target, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[1]);
+    CombineEventHandles(handles, source, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[2]);
+    CombineEventHandles(handles, data.ammo, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[3]);
+    CombineEventHandles(handles, data.projectileBase, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[3]);
+
+    gfuncs::RemoveDuplicates(handles);
+
+    auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)data.shooter, (RE::TESObjectREFR*)data.target, (RE::TESForm*)source,
+        (RE::TESAmmo*)data.ammo, (RE::BGSProjectile*)data.projectileBase, (bool)SneakAttack, (bool)HitBlocked,
+        (int)data.impactResult, (int)data.collidedLayer, (float)data.distanceTraveled, (std::string)data.hitPartNodeName);
+
+    SendEvents(handles, eventDataPtrs[EventEnum_OnProjectileImpact]->sEvent, args);
+
+    logger::trace("projectile impact: shooter[{}] target[{}] source[{}] ammo[{}] projectile[{}]",
+        gfuncs::GetFormName(data.shooter), gfuncs::GetFormName(data.target), gfuncs::GetFormName(source),
+        gfuncs::GetFormName(data.ammo), gfuncs::GetFormName(data.projectileBase));
+
+    logger::trace("projectile impact: sneak[{}] blocked[{}] impactResult[{}] collidedLayer[{}] distanceTraveled[{}] hitPartNodeName[{}]",
+        SneakAttack, HitBlocked, data.impactResult, data.collidedLayer, data.distanceTraveled, data.hitPartNodeName);
+}
+
+TrackedProjectileData GetRecentTrackedProjectileData(RE::TESObjectREFR* shooter, RE::TESObjectREFR* target, float hitGameTime) {
+    TrackedProjectileData nullData;
+
+    if (gfuncs::IsFormValid(shooter) && gfuncs::IsFormValid(target)) {
+        auto it = recentHitProjectiles.find(target);
+        if (it != recentHitProjectiles.end()) {
+            if (it->second.size() > 0) {
+                for (int i = it->second.size() - 1; i >= 0; --i) {
+                    auto akData = it->second[i];
+                    float hitTimeDiff = GameHoursToRealTimeSeconds(nullptr, hitGameTime - akData.gameTimeStamp);
+                    //logger::trace("{}: hitTimeDiff = [{}]", __func__, hitTimeDiff);
+                    if (hitTimeDiff < 0.1) {
+                        if (akData.shooter == shooter && akData.target == target) {
+                            return akData;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return nullData;
+}
+
 struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
-    bool sinkAdded = false; 
+    bool sinkAdded = false;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* event, RE::BSTEventSource<RE::TESHitEvent>*/*source*/) {
+        //logger::trace("hit event");
 
         if (!event) {
             logger::error("hit event doesn't exist");
@@ -8989,37 +10170,66 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
         }
 
         std::chrono::system_clock::time_point hitTime = std::chrono::system_clock::now();
+        float currentGameTime = calendar->GetHoursPassed();
 
-        RE::TESObjectREFR* attacker = event->cause.get();
-        RE::TESObjectREFR* target = event->target.get();
-        RE::TESForm* source = RE::TESForm::LookupByID(event->source);
+        RE::TESObjectREFR* attacker = nullptr;
+        if (event->cause) {
+            attacker = event->cause.get();
+        }
+
+        RE::TESObjectREFR* target = nullptr;
+        if (event->target) {
+            target = event->target.get();
+        }
+
+        RE::TESForm* source = nullptr;
+        if (event->source) {
+            source = RE::TESForm::LookupByID(event->source);
+        }
+
+        RE::BGSProjectile* projectileForm = nullptr;
+        if (event->projectile) {
+            projectileForm = RE::TESForm::LookupByID<RE::BGSProjectile>(event->projectile);
+        }
+
         RE::TESAmmo* ammo = nullptr;
-        RE::BGSProjectile* projectileForm = RE::TESForm::LookupByID<RE::BGSProjectile>(event->projectile);
-        bool powerAttack = event->flags.any(RE::TESHitEvent::Flag::kPowerAttack);
-        bool SneakAttack = event->flags.any(RE::TESHitEvent::Flag::kSneakAttack);
-        bool bBashAttack = event->flags.any(RE::TESHitEvent::Flag::kBashAttack);
-        bool HitBlocked = event->flags.any(RE::TESHitEvent::Flag::kHitBlocked);
+        bool powerAttack = false;
+        bool SneakAttack = false;
+        bool bBashAttack = false;
+        bool HitBlocked = false;
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_HitEvent]->globalHandles;
+        if (event->flags) {
+            bool powerAttack = event->flags.any(RE::TESHitEvent::Flag::kPowerAttack);
+            bool SneakAttack = event->flags.any(RE::TESHitEvent::Flag::kSneakAttack);
+            bool bBashAttack = event->flags.any(RE::TESHitEvent::Flag::kBashAttack);
+            bool HitBlocked = event->flags.any(RE::TESHitEvent::Flag::kHitBlocked);
+        }
+        
+        bool hitEventDataEmpty = eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty();
 
         if (!bBashAttack) {
-            if (formIsBowOrCrossbow(source)) {
-                if (attacker && target) {
+            bool bowEquipped = formIsBowOrCrossbow(source);
+            if (bowEquipped || gfuncs::IsFormValid(projectileForm)) {
+                auto recentProjectileData = GetRecentTrackedProjectileData(attacker, target, currentGameTime);
+                SendProjectileImpactEvent(recentProjectileData, source, SneakAttack, HitBlocked, currentGameTime);
+            }
+
+            if (bowEquipped && eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
+                if (gfuncs::IsFormValid(attacker) && gfuncs::IsFormValid(target)) {
                     RE::Actor* actor = attacker->As<RE::Actor>();
-                    if (actor) {
+                    if (gfuncs::IsFormValid(actor)) {
                         ammo = actor->GetCurrentAmmo();
                         auto it = animationEventActorsMap.find(attacker);
                         if (it != animationEventActorsMap.end()) { //akactor found in animationEventActorsMap
-                            float fTime = calendar->GetHoursPassed();
                             if (it->second) {
-                                float hitTimeDiff = timePointDiffToFloat(hitTime, it->second->lastHitTime);
+                                float hitTimeDiff = gfuncs::timePointDiffToFloat(hitTime, it->second->lastHitTime);
                                 it->second->lastHitTime = hitTime;
-                                logger::trace("hit event: found ammo tracking data for [{}] hitTimeDiff = [{}]", GetFormName(attacker), hitTimeDiff);
-                                bool bSetAmmoToLastHitAmmo = false;
+                                logger::trace("hit event: found ammo tracking data for [{}] hitTimeDiff = [{}]", gfuncs::GetFormName(attacker), hitTimeDiff);
 
-                                if (hitTimeDiff <= 0.1 && target == it->second->lastHitTarget) { //assume this is the same hit event run again (for enchantments ect) 
+                                bool bSetAmmoToLastHitAmmo = false;
+                                if (hitTimeDiff <= 0.1 && target == it->second->lastHitTarget) { //assume this is the same hit event run again (for enchantments ect) ) {
                                     if (it->second->lastHitAmmo) {
-                                        logger::debug("hit event multiple, setting ammo for attacker [{}] from [{}] to [{}]", GetFormName(attacker), GetFormName(ammo), GetFormName(it->second->lastHitAmmo));
+                                        logger::debug("hit event multiple, setting ammo for attacker [{}] from [{}] to [{}]", gfuncs::GetFormName(attacker), gfuncs::GetFormName(ammo), gfuncs::GetFormName(it->second->lastHitAmmo));
                                         ammo = it->second->lastHitAmmo;
                                         bSetAmmoToLastHitAmmo = true;
                                     }
@@ -9028,22 +10238,53 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
                                 it->second->lastHitTarget = target;
 
                                 if (!bSetAmmoToLastHitAmmo) {
-                                    if (it->second->forceChangedAmmos.size() > 0) {
+                                    if (it->second->forceChangedAmmos.size() > 0) { //the attacker did have their ammo force unequipped by shooting last arrow of type. 
                                         int indexToErase = -1;
                                         float gameHoursPassed = calendar->GetHoursPassed();
-                                            
-                                        for (int i = 0; i < it->second->forceChangedAmmos.size(); i++) {
-                                            if (GameHoursToRealTimeSeconds(nullptr, (gameHoursPassed - it->second->forceChangedAmmos[0].gameTimeStamp) < 1.5)) {
-                                                ammo = it->second->forceChangedAmmos[i].ammo;
-                                                it->second->forceChangedAmmos.erase(it->second->forceChangedAmmos.begin() + i);
-                                                break;
-                                            }
-                                            else {
-                                                indexToErase = i;
+
+                                        bool ammoFound = false;
+
+                                        if (iMaxArrowsSavedPerReference > 0) {
+                                            auto recentHitIt = recentShotProjectiles.find(attacker);
+                                            if (recentHitIt != recentShotProjectiles.end()) {
+                                                for (int i = 0; i < it->second->forceChangedAmmos.size() && !ammoFound; i++) { //cycle through force unequipped ammos due to shooting last arrow of type. 
+                                                    for (int ii = recentHitIt->second.size() - 1; ii >= 0 && !ammoFound; --ii) { //cycle through projectiles that recently hit the target to find matching ammo
+                                                        float timeDiff = GameHoursToRealTimeSeconds(nullptr, (gameHoursPassed - recentHitIt->second[ii].gameTimeStamp));
+                                                        //logger::trace("hit event: recentHitProjectile[{}] timeDiff = [{}]", gfuncs::GetFormName(recentHitIt->second[ii].projectile), timeDiff);
+                                                        if (timeDiff < 0.1) {
+                                                            if (DidProjectileHitRefWithAmmoFromShooter(attacker, target, it->second->forceChangedAmmos[i].ammo, recentHitIt->second[ii])) {
+                                                                auto trackedProjectileData = recentHitIt->second[ii];
+
+                                                                logger::trace("hit event: attacker[{}] target[{}] ammo changed from [{}] to [{}]. Recent projectile found[{}]. TimeDiff = [{}]",
+                                                                    gfuncs::GetFormName(attacker), gfuncs::GetFormName(target), gfuncs::GetFormName(ammo), gfuncs::GetFormName(it->second->forceChangedAmmos[i].ammo), gfuncs::GetFormName(trackedProjectileData.projectileBase), timeDiff);
+
+                                                                ammo = it->second->forceChangedAmmos[i].ammo;
+                                                                it->second->forceChangedAmmos.erase(it->second->forceChangedAmmos.begin() + i);
+                                                                ammoFound = true; //break both loops and set ammo as found
+                                                            }
+                                                        }
+                                                        else {
+                                                            break; //break out of this loop, check next force unequipped ammo
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
-                                        if (indexToErase > -1 && it->second->forceChangedAmmos.size() > 0) {
-                                            it->second->forceChangedAmmos.erase(it->second->forceChangedAmmos.begin() + indexToErase);
+
+                                        if (!ammoFound) { //ammo not found in previous search
+                                            for (int i = 0; i < it->second->forceChangedAmmos.size(); i++) {
+                                                if (GameHoursToRealTimeSeconds(nullptr, (gameHoursPassed - it->second->forceChangedAmmos[0].gameTimeStamp) < 1.5)) {
+                                                    ammo = it->second->forceChangedAmmos[i].ammo;
+                                                    it->second->forceChangedAmmos.erase(it->second->forceChangedAmmos.begin() + i);
+                                                    break;
+                                                }
+                                                else {
+                                                    indexToErase = i;
+                                                }
+                                            }
+                                            if (indexToErase > -1 && it->second->forceChangedAmmos.size() > 0) {
+                                                it->second->forceChangedAmmos.erase(it->second->forceChangedAmmos.begin() + indexToErase);
+                                            }
                                         }
                                     }
                                 }
@@ -9055,21 +10296,25 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
             }
         }
 
-        CombineEventHandles(handles, attacker, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[0]);
-        CombineEventHandles(handles, target, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[1]);
-        CombineEventHandles(handles, source, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[2]);
-        CombineEventHandles(handles, ammo, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[3]);
-        CombineEventHandles(handles, projectileForm, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[4]);
+        if (eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
+            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_HitEvent]->globalHandles;
 
-        RemoveDuplicates(handles);
+            CombineEventHandles(handles, attacker, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[0]);
+            CombineEventHandles(handles, target, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[1]);
+            CombineEventHandles(handles, source, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[2]);
+            CombineEventHandles(handles, ammo, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[3]);
+            CombineEventHandles(handles, projectileForm, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[4]);
 
-        logger::trace("HitEvent: attacker[{}]  target[{}]  source[{}]  ammo[{}]  projectile[{}]", GetFormName(attacker), GetFormName(target), GetFormName(source), GetFormName(ammo), GetFormName(projectileForm));
-        logger::trace("HitEvent: powerAttack[{}]  SneakAttack[{}]  BashAttack[{}]  HitBlocked[{}]", powerAttack, SneakAttack, bBashAttack, HitBlocked);
+            gfuncs::RemoveDuplicates(handles);
 
-        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)attacker, (RE::TESObjectREFR*)target, (RE::TESForm*)source,
-            (RE::TESAmmo*)ammo, (RE::BGSProjectile*)projectileForm, (bool)powerAttack, (bool)SneakAttack, (bool)bBashAttack, (bool)HitBlocked);
+            logger::trace("HitEvent: attacker[{}]  target[{}]  source[{}]  ammo[{}]  projectile[{}]", gfuncs::GetFormName(attacker), gfuncs::GetFormName(target), gfuncs::GetFormName(source), gfuncs::GetFormName(ammo), gfuncs::GetFormName(projectileForm));
+            logger::trace("HitEvent: powerAttack[{}]  SneakAttack[{}]  BashAttack[{}]  HitBlocked[{}]", powerAttack, SneakAttack, bBashAttack, HitBlocked);
 
-        SendEvents(handles, eventDataPtrs[EventEnum_HitEvent]->sEvent, args);
+            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)attacker, (RE::TESObjectREFR*)target, (RE::TESForm*)source,
+                (RE::TESAmmo*)ammo, (RE::BGSProjectile*)projectileForm, (bool)powerAttack, (bool)SneakAttack, (bool)bBashAttack, (bool)HitBlocked);
+
+            SendEvents(handles, eventDataPtrs[EventEnum_HitEvent]->sEvent, args);
+        }
 
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -9097,7 +10342,7 @@ void CheckForPlayerCombatStatusChange() {
             }
         }
 
-        logger::debug("{} target[{}]", __func__, GetFormName(target));
+        logger::debug("{} target[{}]", __func__, gfuncs::GetFormName(target));
 
         // RE::TESForm* Target = .attackedMember.get().get();
 
@@ -9105,7 +10350,7 @@ void CheckForPlayerCombatStatusChange() {
         CombineEventHandles(handles, playerRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
         CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::Actor*)playerRef, (RE::Actor*)target, (int)combatState);
         SendEvents(handles, eventDataPtrs[EventEnum_OnCombatStateChanged]->sEvent, args);
@@ -9122,23 +10367,36 @@ struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        RE::TESObjectREFR* actorObjRef = event->actor.get();
-        RE::TESObjectREFR* Target = event->targetActor.get();
+        RE::TESObjectREFR* actorObjRef = nullptr;
+        if (event->actor) {
+            actorObjRef = event->actor.get();
+        }
+
+        RE::TESObjectREFR* Target = nullptr;
+        if (event->targetActor) {
+            Target = event->targetActor.get();
+        }
+
+        int combatState = 0;
+
+        if (event->newState) {
+            combatState = static_cast<int>(event->newState.get());
+        }
+
         //RE::Actor* actorRef = actorObjRef->As<RE::Actor>();
-        int combatState = static_cast<int>(event->newState.get());
-        //logger::trace("Actor {} changed to combat state to {} with", GetFormName(actorObjRef), combatState);
+        //logger::trace("Actor {} changed to combat state to {} with", gfuncs::GetFormName(actorObjRef), combatState);
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->globalHandles;
         CombineEventHandles(handles, actorObjRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
         CombineEventHandles(handles, Target, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::Actor*)actorObjRef, (RE::Actor*)Target, (int)combatState);
         SendEvents(handles, eventDataPtrs[EventEnum_OnCombatStateChanged]->sEvent, args);
 
         if (bRegisteredForPlayerCombatChange) {
-            DelayedFunction(&CheckForPlayerCombatStatusChange, 1200); //check for player combat status change after 1.2 seconds.
+            gfuncs::DelayedFunction(&CheckForPlayerCombatStatusChange, 1200); //check for player combat status change after 1.2 seconds.
         }
 
         return RE::BSEventNotifyControl::kContinue;
@@ -9155,10 +10413,25 @@ struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        RE::TESObjectREFR* actorObjRef = event->actor.get();
-        RE::Actor* actorRef = actorObjRef->As<RE::Actor>();
-        RE::TESObjectREFR* furnitureRef = event->targetFurniture.get();
-        int type = event->type.underlying();
+        RE::TESObjectREFR* actorObjRef = nullptr;
+        if (event->actor) {
+            actorObjRef = event->actor.get();
+        }
+
+        RE::Actor* actorRef = nullptr;
+        if (gfuncs::IsFormValid(actorObjRef)) {
+            actorRef = actorObjRef->As<RE::Actor>();
+        }
+
+        RE::TESObjectREFR* furnitureRef = nullptr;
+        if (event->targetFurniture) {
+            furnitureRef = event->targetFurniture.get();
+        }
+        
+        int type = 1; 
+        if (event->type) {
+            type = event->type.underlying();
+        }
 
         RE::BSFixedString sEvent;
         int eventIndex;
@@ -9178,7 +10451,7 @@ struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
         CombineEventHandles(handles, actorObjRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
         CombineEventHandles(handles, furnitureRef, eventDataPtrs[eventIndex]->eventParamMaps[1]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::Actor*)actorRef, (RE::TESObjectREFR*)furnitureRef);
         SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
@@ -9197,15 +10470,28 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        RE::TESObjectREFR* activatorRef = event->actionRef.get();
-        RE::TESObjectREFR* activatedRef = event->objectActivated.get();
+        RE::TESObjectREFR* activatorRef = nullptr;
+        if (event->actionRef) {
+            activatorRef = event->actionRef.get();
+        }
+
+        RE::TESObjectREFR* activatedRef = nullptr;
+        if (event->objectActivated) {
+            activatedRef = event->objectActivated.get();
+        }
+
+        if (activatorRef == playerRef) {
+            if (gfuncs::IsFormValid(activatedRef)) {
+                gfuncs::lastPlayerActivatedRef = activatedRef;
+            }
+        }
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActivate]->globalHandles;
 
         CombineEventHandles(handles, activatorRef, eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[0]);
         CombineEventHandles(handles, activatedRef, eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[1]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatorRef, (RE::TESObjectREFR*)activatedRef);
         SendEvents(handles, eventDataPtrs[EventEnum_OnActivate]->sEvent, args);
@@ -9226,25 +10512,19 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
 
         logger::trace("Death Event");
 
-        RE::TESObjectREFR* victimRef;
+        RE::TESObjectREFR* victimRef = nullptr;
         if (event->actorDying) {
             victimRef = event->actorDying.get();
         }
 
-        RE::TESObjectREFR* killerRef;
+        RE::TESObjectREFR* killerRef = nullptr;
         if (event->actorKiller) {
             killerRef = event->actorKiller.get();
         }
 
-        RE::Actor* victim;
-        if (victimRef != nullptr) {
-            if (IsBadReadPtr(victimRef, sizeof(victimRef))) {
-                victim = nullptr;
-                logger::error("death event: bad victimRef pointer");
-                return RE::BSEventNotifyControl::kContinue;
-            }
-            else if (victimRef->GetFormID() == 0) {
-                victim = nullptr;
+        RE::Actor* victim = nullptr;
+        if (gfuncs::IsFormValid(victimRef)) {
+            if (victimRef->GetFormID() == 0) {
                 logger::error("death event: 0 victimRef pointer");
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -9253,16 +10533,15 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
                 logger::debug("death event: valid victimRef pointer");
             }
         }
+        else {
+            logger::error("death event: 0 victimRef doesn't exist or isn't valid");
+            return RE::BSEventNotifyControl::kContinue;
+        }
 
-        RE::Actor* killer;
-        if (killerRef != nullptr) {
+        RE::Actor* killer = nullptr;
+        if (gfuncs::IsFormValid(killerRef)) {
             //this is necessarry because when using console command kill or script command actor.kill() killer will be a bad ptr and cause ctd.
-            if (IsBadReadPtr(killerRef, sizeof(killerRef))) {
-                killer = nullptr;
-                logger::error("death event: bad killerRef pointer");
-            }
-            else if (killerRef->GetFormID() == 0) {
-                killer = nullptr;
+            if (killerRef->GetFormID() == 0) {
                 logger::error("death event: 0 killerRef pointer");
             }
             else {
@@ -9273,7 +10552,7 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
 
         bool dead = event->dead;
 
-        logger::trace("Death Event: victim[{}], Killer[{}], Dead[{}]", GetFormName(victim), GetFormName(killer), dead);
+        logger::trace("Death Event: victim[{}], Killer[{}], Dead[{}]", gfuncs::GetFormName(victim), gfuncs::GetFormName(killer), dead);
 
         RE::BSFixedString sEvent;
         int eventIndex;
@@ -9290,7 +10569,7 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
         std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
         CombineEventHandles(handles, victim, eventDataPtrs[eventIndex]->eventParamMaps[0]);
         CombineEventHandles(handles, killer, eventDataPtrs[eventIndex]->eventParamMaps[1]);
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::Actor*)victim, (RE::Actor*)killer);
         SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
@@ -9300,7 +10579,7 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
 };
 
 bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
-    if (actorRef) {
+    if (gfuncs::IsFormValid(actorRef)) {
         RE::Actor* actor = actorRef->As<RE::Actor>();
         if (actorHasBowEquipped(actor)) {
             auto it = animationEventActorsMap.find(actorRef);
@@ -9309,7 +10588,7 @@ bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
                 animEventSink->actor = actor;
                 animationEventActorsMap.insert(std::pair<RE::TESObjectREFR*, AnimationEventSink*>(actorRef, animEventSink));
                 actor->AddAnimationGraphEventSink(animEventSink);
-                logger::info("{}: actor [{}]", __func__, GetFormName(actorRef));
+                logger::info("{}: actor [{}]", __func__, gfuncs::GetFormName(actorRef));
                 return true;
             }
         }
@@ -9330,7 +10609,7 @@ bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
                         delete it->second;
                         it->second = nullptr;
                         animationEventActorsMap.erase(it);
-                        logger::debug("{}: actor [{}]", __func__, GetFormName(actorRef));
+                        logger::debug("{}: actor [{}]", __func__, gfuncs::GetFormName(actorRef));
                         bUnregistered = true;
                     }
                 }
@@ -9339,13 +10618,13 @@ bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
                     delete it->second;
                     it->second = nullptr;
                     animationEventActorsMap.erase(it);
-                    logger::debug("{}: actor [{}]", __func__, GetFormName(actorRef));
+                    logger::debug("{}: actor [{}]", __func__, gfuncs::GetFormName(actorRef));
                     bUnregistered = true;
                 }
             }
             else { //animation event doesn't exist
                 animationEventActorsMap.erase(it);
-                logger::debug("{}: actor [{}]", __func__, GetFormName(actorRef));
+                logger::debug("{}: actor [{}]", __func__, gfuncs::GetFormName(actorRef));
                 bUnregistered = true;
             }
         }
@@ -9363,7 +10642,7 @@ void RegisterActorsForBowDrawAnimEvents() {
 }
 
 struct EquipEventData {
-    float gameTimeStamp; 
+    float gameTimeStamp;
     RE::TESObjectREFR* akActorRef;
     RE::TESForm* baseObject;
     bool equipped;
@@ -9380,14 +10659,21 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        RE::TESObjectREFR* akActorRef = event->actor.get();
-        RE::Actor* akActor = nullptr;
+        RE::TESObjectREFR* akActorRef = nullptr;
+        if (event->actor) {
+            akActorRef = event->actor.get();
+        }
 
-        if (akActorRef) {
+        RE::Actor* akActor = nullptr;
+        if (gfuncs::IsFormValid(akActorRef)) {
             akActor = akActorRef->As<RE::Actor>();
         }
 
-        RE::TESForm* baseObject = RE::TESForm::LookupByID(event->baseObject);
+        RE::TESForm* baseObject = nullptr; 
+        if (event->baseObject) {
+            baseObject = RE::TESForm::LookupByID(event->baseObject);
+        }
+
         bool equipped = event->equipped;
         int eventIndex = -1;
 
@@ -9397,7 +10683,7 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
         //skip the event if time and other variables match last equip event
         if (fTime == lastEquipEvent.gameTimeStamp) {
             if (lastEquipEvent.akActorRef == akActorRef && lastEquipEvent.baseObject == baseObject && lastEquipEvent.equipped == equipped) {
-                logger::debug("Skipping Equip Event: Actor[{}], BaseObject[{}], Equipped[{}] gameTimeStamp[{}]", GetFormName(akActorRef), GetFormName(baseObject), equipped, fTime);
+                logger::debug("Skipping Equip Event: Actor[{}], BaseObject[{}], Equipped[{}] gameTimeStamp[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), equipped, fTime);
                 return RE::BSEventNotifyControl::kContinue;
             }
         }
@@ -9409,7 +10695,7 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
 
         if (equipped) {
             if (formIsBowOrCrossbow(baseObject)) {
-                logger::trace("equip event registering actor [{}] for animation events", GetFormName(akActorRef));
+                logger::trace("equip event registering actor [{}] for animation events", gfuncs::GetFormName(akActorRef));
                 RegisterActorForBowDrawAnimEvent(akActorRef);
             }
 
@@ -9418,39 +10704,28 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
             }
         }
         else {
-            if (baseObject) {
+            if (gfuncs::IsFormValid(baseObject)) {
                 RE::TESAmmo* akAmmo = baseObject->As<RE::TESAmmo>();
-                if (akAmmo) {
-                    if (akActor) {
+                if (gfuncs::IsFormValid(akAmmo)) {
+                    if (gfuncs::IsFormValid(akActor)) {
                         auto it = animationEventActorsMap.find(akActorRef);
                         if (it != animationEventActorsMap.end()) {
                             float timeDiff = GameHoursToRealTimeSeconds(nullptr, (fTime - it->second->lastReleaseGameTime));
-                            logger::trace("equip event: actor[{}] unequipped ammo[{}]. Time since last bow release is [{}]", GetFormName(akActor), GetFormName(akAmmo), timeDiff);
-                            
+                            logger::trace("equip event: actor[{}] unequipped ammo[{}]. Time since last bow release is [{}]", gfuncs::GetFormName(akActor), gfuncs::GetFormName(akAmmo), timeDiff);
+
                             if (timeDiff < 0.2) { //actor released their bow less than 0.2 seconds ago.
-                                logger::debug("unequip event: saved force unequipped ammo[{}] for actor[{}]", GetFormName(akAmmo), GetFormName(akActor));
+                                logger::debug("unequip event: saved force unequipped ammo[{}] for actor[{}]", gfuncs::GetFormName(akAmmo), gfuncs::GetFormName(akActor));
                                 TrackedActorAmmoData data;
                                 data.ammo = akAmmo;
                                 data.gameTimeStamp = fTime;
                                 it->second->forceChangedAmmos.push_back(data);
-
-                                //auto* container = akActor->GetContainer(); 
-                                //int count = 0;
-                                //if (container) {
-                                //    count = container->CountObjectsInContainer(akAmmo);
-                                //}
-                                //if (count <= 0) {
-                                //    //if (!TrackedActorAmmoDataHasAmmo(akAmmo, it->second->forceChangedAmmos)) {
-                                //        
-                                //    //}
-                                //}
                             }
                         }
                     }
                 }
             }
             else if (formIsBowOrCrossbow(baseObject)) {
-                logger::trace("equip event Unregistering actor[{}] for animation events", GetFormName(akActorRef));
+                logger::trace("equip event Unregistering actor[{}] for animation events", gfuncs::GetFormName(akActorRef));
                 UnRegisterActorForBowDrawAnimEvent(akActorRef);
             }
 
@@ -9459,12 +10734,12 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
             }
         }
 
-        //logger::trace("Equip Event: Actor[{}], BaseObject[{}], Equipped[{}]", GetFormName(akActorRef), GetFormName(baseObject), equipped);
+        //logger::trace("Equip Event: Actor[{}], BaseObject[{}], Equipped[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), equipped);
 
         if (eventIndex != -1) {
             RE::TESForm* ref = RE::TESForm::LookupByID(event->originalRefr);
 
-            logger::trace("Equip Event: Actor[{}], BaseObject[{}], Ref[{}] Equipped[{}]", GetFormName(akActorRef), GetFormName(baseObject), GetFormName(ref), equipped);
+            logger::trace("Equip Event: Actor[{}], BaseObject[{}], Ref[{}] Equipped[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), gfuncs::GetFormName(ref), equipped);
 
             std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
 
@@ -9472,7 +10747,7 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
             CombineEventHandles(handles, baseObject, eventDataPtrs[eventIndex]->eventParamMaps[1]);
             CombineEventHandles(handles, ref, eventDataPtrs[eventIndex]->eventParamMaps[2]);
 
-            RemoveDuplicates(handles);
+            gfuncs::RemoveDuplicates(handles);
 
             auto* args = RE::MakeFunctionArguments((RE::Actor*)akActorRef, (RE::TESForm*)baseObject, (RE::TESObjectREFR*)ref);
             SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
@@ -9496,7 +10771,7 @@ struct WaitStartEventSink : public RE::BSTEventSink<RE::TESWaitStartEvent> {
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStart]->globalHandles;
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments();
         SendEvents(handles, eventDataPtrs[EventEnum_OnWaitStart]->sEvent, args);
@@ -9519,7 +10794,7 @@ struct WaitStopEventSink : public RE::BSTEventSink<RE::TESWaitStopEvent> {
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStop]->globalHandles;
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((bool)event->interrupted);
         SendEvents(handles, eventDataPtrs[EventEnum_OnWaitStop]->sEvent, args);
@@ -9540,9 +10815,20 @@ struct MagicEffectApplyEventSink : public RE::BSTEventSink<RE::TESMagicEffectApp
 
         logger::trace("MagicEffectApply Event");
 
-        RE::TESObjectREFR* caster = event->caster.get();
-        RE::TESObjectREFR* target = event->target.get();
-        RE::EffectSetting* magicEffect = RE::TESForm::LookupByID<RE::EffectSetting>(event->magicEffect);
+        RE::TESObjectREFR* caster = nullptr;
+        if (event->caster) {
+            caster = event->caster.get();
+        }
+
+        RE::TESObjectREFR* target = nullptr;
+        if (event->target) {
+            target = event->target.get();
+        }
+
+        RE::EffectSetting* magicEffect = nullptr;
+        if (event->magicEffect) {
+            magicEffect = RE::TESForm::LookupByID<RE::EffectSetting>(event->magicEffect);
+        }
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnMagicEffectApply]->globalHandles;
 
@@ -9550,7 +10836,7 @@ struct MagicEffectApplyEventSink : public RE::BSTEventSink<RE::TESMagicEffectApp
         CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[1]);
         CombineEventHandles(handles, magicEffect, eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[2]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)caster, (RE::TESObjectREFR*)target, (RE::EffectSetting*)magicEffect);
         SendEvents(handles, eventDataPtrs[EventEnum_OnMagicEffectApply]->sEvent, args);
@@ -9571,9 +10857,12 @@ struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
 
         logger::trace("Lock Changed Event");
 
-        RE::TESObjectREFR* lockedObject = event->lockedObject.get();
+        RE::TESObjectREFR* lockedObject = nullptr; 
+        if (event->lockedObject) {
+            lockedObject = event->lockedObject.get();
+        }
 
-        if (!lockedObject) {
+        if (!gfuncs::IsFormValid(lockedObject)) {
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -9582,7 +10871,7 @@ struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_LockChanged]->globalHandles;
         CombineEventHandles(handles, lockedObject, eventDataPtrs[EventEnum_LockChanged]->eventParamMaps[0]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)lockedObject, (bool)Locked);
         SendEvents(handles, eventDataPtrs[EventEnum_LockChanged]->sEvent, args);
@@ -9603,9 +10892,16 @@ struct OpenCloseEventSink : public RE::BSTEventSink<RE::TESOpenCloseEvent> {
 
         logger::trace("Open Close Event");
 
+        RE::TESObjectREFR* activatorRef = nullptr;
+        if (event->activeRef) {
+            activatorRef = event->activeRef.get();
+        }
 
-        RE::TESObjectREFR* activatorRef = event->activeRef.get();
-        RE::TESObjectREFR* akActionRef = event->ref.get();
+        RE::TESObjectREFR* akActionRef = nullptr;
+        if (event->ref) {
+            akActionRef = event->ref.get();
+        }
+
         int eventIndex;
 
         if (event->opened) {
@@ -9620,7 +10916,7 @@ struct OpenCloseEventSink : public RE::BSTEventSink<RE::TESOpenCloseEvent> {
         CombineEventHandles(handles, activatorRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
         CombineEventHandles(handles, akActionRef, eventDataPtrs[eventIndex]->eventParamMaps[1]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatorRef, (RE::TESObjectREFR*)akActionRef);
         SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
@@ -9641,17 +10937,24 @@ struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
 
         logger::trace("spell cast Event");
 
-        RE::TESObjectREFR* caster = event->object.get();
-        RE::TESForm* spell = RE::TESForm::LookupByID(event->spell);
+        RE::TESObjectREFR* caster = nullptr;
+        if (event->object) {
+            caster = event->object.get();
+        }
 
-        //logger::trace("spell cast: [{}] obj [{}]", GetFormName(spell), GetFormName(caster));
+        RE::TESForm* spell = nullptr;
+        if (event->spell) {
+            spell = RE::TESForm::LookupByID(event->spell);
+        }
+
+        //logger::trace("spell cast: [{}] obj [{}]", gfuncs::GetFormName(spell), gfuncs::GetFormName(caster));
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnSpellCast]->globalHandles;
 
         CombineEventHandles(handles, caster, eventDataPtrs[EventEnum_OnSpellCast]->eventParamMaps[0]);
         CombineEventHandles(handles, spell, eventDataPtrs[EventEnum_OnSpellCast]->eventParamMaps[1]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)caster, (RE::TESForm*)spell);
         SendEvents(handles, eventDataPtrs[EventEnum_OnSpellCast]->sEvent, args);
@@ -9672,7 +10975,10 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
 
         //logger::debug("Container Change Event");
 
-        RE::TESForm* baseObj = RE::TESForm::LookupByID(event->baseObj);
+        RE::TESForm* baseObj = nullptr;
+        if (event->baseObj) {
+            baseObj = RE::TESForm::LookupByID(event->baseObj);
+        }
 
         RE::TESObjectREFR* itemReference = nullptr;
         auto refHandle = event->reference;
@@ -9680,27 +10986,31 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
             //logger::debug("refHandle found");
 
             RE::TESForm* refForm = RE::TESForm::LookupByID(refHandle.native_handle());
-            if (refForm) {
+            if (gfuncs::IsFormValid(refForm)) {
                 //logger::debug("refForm found");
                 itemReference = refForm->AsReference();
             }
         }
 
         RE::TESObjectREFR* newContainer = nullptr;
-        RE::TESForm* newContainerForm = RE::TESForm::LookupByID(event->newContainer);
-        if (newContainerForm) {
-            newContainer = newContainerForm->AsReference();
+        if (event->newContainer) {
+            RE::TESForm* newContainerForm = RE::TESForm::LookupByID(event->newContainer);
+            if (gfuncs::IsFormValid(newContainerForm)) {
+                newContainer = newContainerForm->AsReference();
+            }
         }
 
         RE::TESObjectREFR* oldContainer = nullptr;
-        RE::TESForm* oldContainerForm = RE::TESForm::LookupByID(event->oldContainer);
-        if (oldContainerForm) {
-            oldContainer = oldContainerForm->AsReference();
+        if (event->oldContainer) {
+            RE::TESForm* oldContainerForm = RE::TESForm::LookupByID(event->oldContainer);
+            if (gfuncs::IsFormValid(oldContainerForm)) {
+                oldContainer = oldContainerForm->AsReference();
+            }
         }
 
         int itemCount = event->itemCount;
 
-        //logger::debug("newContainer[{}] oldContainer[{}] itemReference[{}] baseObj[{}] itemCount[{}]", GetFormName(newContainer), GetFormName(oldContainer), GetFormName(itemReference), GetFormName(baseObj), itemCount);
+        //logger::debug("newContainer[{}] oldContainer[{}] itemReference[{}] baseObj[{}] itemCount[{}]", gfuncs::GetFormName(newContainer), gfuncs::GetFormName(oldContainer), gfuncs::GetFormName(itemReference), gfuncs::GetFormName(baseObj), itemCount);
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnContainerChanged]->globalHandles;
 
@@ -9709,7 +11019,7 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
         CombineEventHandles(handles, itemReference, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[2]);
         CombineEventHandles(handles, baseObj, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[3]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)newContainer, (RE::TESObjectREFR*)oldContainer, (RE::TESObjectREFR*)itemReference, (RE::TESForm*)baseObj, (int)itemCount);
         SendEvents(handles, eventDataPtrs[EventEnum_OnContainerChanged]->sEvent, args);
@@ -9748,6 +11058,7 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
 
         //0 = left hand, 1 = right hand, 2 = voice
         int slot = event->slot.underlying();
+
         RE::TESForm* akSource = event->sourceForm;
 
         /*  kWeaponSwing = 0,
@@ -9802,7 +11113,7 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
             break;
         }
 
-        logger::trace("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", GetFormName(akActor), GetFormName(akSource),
+        logger::trace("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", gfuncs::GetFormName(akActor), gfuncs::GetFormName(akSource),
             actionTypeStrings[type], actionSlotStrings[slot]);
 
         if (eventIndex == -1) {
@@ -9814,29 +11125,32 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
         CombineEventHandles(handles, akActor, eventDataPtrs[eventIndex]->eventParamMaps[0]);
         CombineEventHandles(handles, akSource, eventDataPtrs[eventIndex]->eventParamMaps[1]);
 
-        RemoveDuplicates(handles);
+        gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESForm*)akSource, (int)slot);
         SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
 
         //draw / sheathe events aren't triggered for left hand. Send left hand events manually
         if (eventIndex >= EventEnum_BeginDraw && eventIndex <= EventEnum_EndSheathe) {
-            RE::TESForm* leftHandSource = akActor->GetEquippedObject(true);
+            if (gfuncs::IsFormValid(akActor)) {
 
-            if (leftHandSource) {
-                if (leftHandSource != akSource) {
-                    std::vector<RE::VMHandle> handlesB = eventDataPtrs[eventIndex]->globalHandles;
+                RE::TESForm* leftHandSource = akActor->GetEquippedObject(true);
 
-                    CombineEventHandles(handlesB, akActor, eventDataPtrs[eventIndex]->eventParamMaps[0]);
-                    CombineEventHandles(handlesB, leftHandSource, eventDataPtrs[eventIndex]->eventParamMaps[1]);
+                if (gfuncs::IsFormValid(leftHandSource)) {
+                    if (leftHandSource != akSource) {
+                        std::vector<RE::VMHandle> handlesB = eventDataPtrs[eventIndex]->globalHandles;
 
-                    RemoveDuplicates(handlesB);
+                        CombineEventHandles(handlesB, akActor, eventDataPtrs[eventIndex]->eventParamMaps[0]);
+                        CombineEventHandles(handlesB, leftHandSource, eventDataPtrs[eventIndex]->eventParamMaps[1]);
 
-                    auto* argsB = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESForm*)leftHandSource, (int)0);
-                    SendEvents(handlesB, eventDataPtrs[eventIndex]->sEvent, argsB);
+                        gfuncs::RemoveDuplicates(handlesB);
 
-                    logger::trace("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", GetFormName(akActor), GetFormName(leftHandSource),
-                        actionTypeStrings[type], actionSlotStrings[0]);
+                        auto* argsB = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESForm*)leftHandSource, (int)0);
+                        SendEvents(handlesB, eventDataPtrs[eventIndex]->sEvent, argsB);
+
+                        logger::trace("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", gfuncs::GetFormName(akActor), gfuncs::GetFormName(leftHandSource),
+                            actionTypeStrings[type], actionSlotStrings[0]);
+                    }
                 }
             }
         }
@@ -9851,7 +11165,7 @@ void CheckMenusCurrentlyOpen() {
     }
     for (auto& menu : menusCurrentlyOpen) {
         if (!ui->IsMenuOpen(menu)) {
-            RemoveFromVectorByValue(menusCurrentlyOpen, menu);
+            gfuncs::RemoveFromVectorByValue(menusCurrentlyOpen, menu);
         }
     }
 }
@@ -9870,6 +11184,7 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         if (event->menuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
             if (event->opening) {
                 lastMenuOpened = event->menuName;
+
                 if (ui->GameIsPaused() && !gamePaused) {
                     gamePaused = true;
                     lastTimeGameWasPaused = std::chrono::system_clock::now();
@@ -9882,24 +11197,31 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                     logger::trace("inMenuMode = true");
                 }
                 menusCurrentlyOpen.push_back(event->menuName);
+
+                RE::BSFixedString bsMenuName = event->menuName;
+
+                if (gfuncs::GetIndexInVector(refActivatedMenus, bsMenuName) > -1) {
+                    gfuncs::menuRef = gfuncs::lastPlayerActivatedRef;
+                    logger::trace("Menu[{}] opened. saved menuRef[{}]", bsMenuName, gfuncs::GetFormName(gfuncs::menuRef));
+                }
             }
             else {
                 if (!ui->GameIsPaused() && gamePaused) {
                     gamePaused = false;
                     auto now = std::chrono::system_clock::now();
-                    UpdateTimers(timePointDiffToFloat(now, lastTimeGameWasPaused));
+                    UpdateTimers(gfuncs::timePointDiffToFloat(now, lastTimeGameWasPaused));
                     logger::trace("game was unpaused");
                 }
 
                 //menusCurrentlyOpen.erase(std::remove(menusCurrentlyOpen.begin(), menusCurrentlyOpen.end(), event->menuName), menusCurrentlyOpen.end());
-                RemoveFromVectorByValue(menusCurrentlyOpen, event->menuName);
+                gfuncs::RemoveFromVectorByValue(menusCurrentlyOpen, event->menuName);
                 CheckMenusCurrentlyOpen();
                 //logger::trace("menu close, number of menusCurrentlyOpen = {}", menusCurrentlyOpen.size());
 
                 if (menusCurrentlyOpen.size() == 0) { //closed menu
                     inMenuMode = false;
                     auto now = std::chrono::system_clock::now();
-                    UpdateNoMenuModeTimers(timePointDiffToFloat(now, lastTimeMenuWasOpened));
+                    UpdateNoMenuModeTimers(gfuncs::timePointDiffToFloat(now, lastTimeMenuWasOpened));
                     logger::trace("inMenuMode = false");
                 }
             }
@@ -9939,8 +11261,8 @@ bool AddEquipEventSink() {
     if (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() || !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty() || !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
         if (!equipEventSink->sinkAdded) {
             equipEventSink->sinkAdded = true;
-            eventSourceholder->AddEventSink(equipEventSink); 
-            RegisterActorsForBowDrawAnimEvents(); 
+            eventSourceholder->AddEventSink(equipEventSink);
+            RegisterActorsForBowDrawAnimEvents();
             logger::debug("{} Equip Event Sink Added", __func__);
             return true;
         }
@@ -9957,6 +11279,26 @@ bool RemoveEquipEventSink() {
             logger::debug("{} Equip Event Sink Removed", __func__);
             return true;
         }
+    }
+    return false;
+}
+
+bool AddHitEventSink() {
+    if (!hitEventSink->sinkAdded && (!eventDataPtrs[EventEnum_HitEvent]->isEmpty() || !eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty())) {
+        hitEventSink->sinkAdded = true;
+        eventSourceholder->AddEventSink(hitEventSink);
+        logger::trace("{}", __func__);
+        return true;
+    }
+    return false;
+} 
+
+bool RemoveHitEventSink() {
+    if (hitEventSink->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty() && eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
+        hitEventSink->sinkAdded = false;
+        eventSourceholder->RemoveEventSink(hitEventSink);
+        logger::debug("{}", __func__);
+        return true;
     }
     return false;
 }
@@ -9987,20 +11329,21 @@ void AddSink(int index) {
         if (!activateEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
             activateEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = true;
-            eventSourceholder->AddEventSink(activateEventSink);
+            //eventSourceholder->AddEventSink(activateEventSink); //always activate to track lastPlayerActivatedRef
             logger::debug("{}, EventEnum_OnActivate sink added", __func__);
         }
         break;
 
     case EventEnum_HitEvent:
-        if (!hitEventSink->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-            hitEventSink->sinkAdded = true;
-            eventDataPtrs[EventEnum_HitEvent]->sinkAdded = true;
-            eventSourceholder->AddEventSink(hitEventSink);
-            logger::debug("{}, EventEnum_hitEvent sink added", __func__);
+        if (AddHitEventSink()) {
+            //logger::debug("{}, EventEnum_hitEvent sink added", __func__);
         }
         if (AddEquipEventSink()); {
             logger::debug("{}, EventEnum_HitEvent Equip event sink added", __func__);
+        }
+        if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
+            eventDataPtrs[EventEnum_HitEvent]->sinkAdded = true;
+            logger::debug("{}, EventEnum_hitEvent sink added", __func__);
         }
         break;
 
@@ -10120,6 +11463,16 @@ void AddSink(int index) {
             SKSE::GetActionEventSource()->AddEventSink(actorActionEventSink);
         }
         break;
+
+    case EventEnum_OnProjectileImpact:
+        if (AddHitEventSink()) {
+
+        }
+        if (!eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded && !eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
+            eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded = true;
+            logger::debug("{}, EventEnum_OnProjectileImpact sink added", __func__);
+        }
+        break;
     }
 }
 
@@ -10151,21 +11504,21 @@ void RemoveSink(int index) {
         if (activateEventSink->sinkAdded && eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
             activateEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(activateEventSink);
+            //eventSourceholder->RemoveEventSink(activateEventSink); //always activate to track lastPlayerActivatedRef
             logger::debug("{}, EventEnum_OnActivate sink removed", __func__);
         }
         break;
 
     case EventEnum_HitEvent:
-        if (hitEventSink->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-            hitEventSink->sinkAdded = false;
-            eventDataPtrs[EventEnum_HitEvent]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(hitEventSink);
-            logger::debug("{}, EventEnum_hitEvent sink removed", __func__);
-            
+        if (RemoveHitEventSink()) {
+            //logger::debug("{}, EventEnum_hitEvent sink removed", __func__);
         }
         if (RemoveEquipEventSink()) {
             logger::debug("{}, EventEnum_HitEvent equip event sink removed", __func__);
+        }
+        if (eventDataPtrs[EventEnum_HitEvent]->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
+            eventDataPtrs[EventEnum_HitEvent]->sinkAdded = false;
+            logger::debug("{}, EventEnum_hitEvent sink removed", __func__);
         }
         break;
 
@@ -10285,6 +11638,16 @@ void RemoveSink(int index) {
             logger::debug("{}, actorActionEventSink sink removed", __func__);
         }
         break;
+
+    case EventEnum_OnProjectileImpact:
+        if (RemoveHitEventSink()) {
+
+        }
+        if (eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded && eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
+            eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded = false;
+            logger::debug("{}, EventEnum_OnProjectileImpact sink removed", __func__);
+        }
+        break;
     }
 }
 
@@ -10313,17 +11676,17 @@ int GetEventIndex(std::vector<EventData*> v, RE::BSFixedString asEvent) {
 bool IsFormRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
     logger::trace("{} {}", __func__, asEvent);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return false;
     }
 
-    logger::trace("{} getting handle is registered for: {}", __func__, GetFormName(eventReceiver));
+    logger::trace("{} getting handle is registered for: {}", __func__, gfuncs::GetFormName(eventReceiver));
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return false;
     }
 
@@ -10347,7 +11710,7 @@ bool IsAliasRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString a
 
     logger::trace("{} getting handle is registered for: {}", __func__, eventReceiver->aliasName);
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
@@ -10372,12 +11735,12 @@ bool IsActiveMagicEffectRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSF
         return false;
     }
 
-    logger::trace("{} getting handle is registered for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("{} getting handle is registered for: {} instance", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()));
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
+        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
         return false;
     }
 
@@ -10395,21 +11758,22 @@ bool IsActiveMagicEffectRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSF
 void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
     logger::trace("{} {}", __func__, asEvent);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::trace("{} adding handle for: {}", __func__, GetFormName(eventReceiver));
+    logger::trace("{} adding handle for: {}", __func__, gfuncs::GetFormName(eventReceiver));
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
     int index = GetEventIndex(eventDataPtrs, asEvent);
+
     if (index != -1) {
         eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
         AddSink(index);
@@ -10429,7 +11793,7 @@ void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEve
 
     logger::trace("{} adding handle for: {}", __func__, eventReceiver->aliasName);
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
@@ -10454,12 +11818,12 @@ void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixed
         return;
     }
 
-    logger::trace("{} adding handle for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("{} adding handle for: {} instance", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()));
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
+        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
         return;
     }
 
@@ -10477,17 +11841,17 @@ void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixed
 void UnregisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
     logger::trace("{} {}", __func__, asEvent);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::trace("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
+    logger::trace("{} removing handle for: {}", __func__, gfuncs::GetFormName(eventReceiver));
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -10510,7 +11874,7 @@ void UnregisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asE
 
     logger::trace("{} removing handle for: {}", __func__, eventReceiver->aliasName);
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
@@ -10534,12 +11898,12 @@ void UnregisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFix
         return;
     }
 
-    logger::trace("{} removing handle for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("{} removing handle for: {} instance", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()));
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
+        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
         return;
     }
 
@@ -10556,17 +11920,17 @@ void UnregisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFix
 void UnregisterFormForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver) {
     logger::trace("{} {}", __func__, asEvent);
 
-    if (!eventReceiver) {
+    if (!gfuncs::IsFormValid(eventReceiver)) {
         logger::warn("{}: eventReceiver not found", __func__);
         return;
     }
 
-    logger::trace("{} removing handle for: {}", __func__, GetFormName(eventReceiver));
+    logger::trace("{} removing handle for: {}", __func__, gfuncs::GetFormName(eventReceiver));
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -10589,7 +11953,7 @@ void UnregisterAliasForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString
 
     logger::trace("{} removing all handles for: {}", __func__, eventReceiver->aliasName);
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
         logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
@@ -10613,12 +11977,12 @@ void UnregisterActiveMagicEffectForGlobalEvent_All(RE::StaticFunctionTag*, RE::B
         return;
     }
 
-    logger::trace("{} removing all handles for: {} instance", __func__, GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("{} removing all handles for: {} instance", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()));
 
-    RE::VMHandle handle = GetHandle(eventReceiver);
+    RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
+        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
         return;
     }
 
@@ -10669,6 +12033,7 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_BeginSheathe] = new EventData("OnBeginSheatheGlobal", EventEnum_BeginSheathe, 2, 'EAA9');               //actorActionEventSink
         eventDataPtrs[EventEnum_EndSheathe] = new EventData("OnEndSheatheGlobal", EventEnum_EndSheathe, 2, 'EA10');                     //actorActionEventSink
         eventDataPtrs[EventEnum_OnContainerChanged] = new EventData("OnContainerChangedGlobal", EventEnum_OnContainerChanged, 4, 'ECc0');
+        eventDataPtrs[EventEnum_OnProjectileImpact] = new EventData("OnProjectileImpactGlobal", EventEnum_OnProjectileImpact, 5, 'PIi0');
     }
 
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -10686,8 +12051,32 @@ void CreateEventSinks() {
     if (!openCloseEventSink) { openCloseEventSink = new OpenCloseEventSink(); }
     if (!actorActionEventSink) { actorActionEventSink = new ActorActionEventSink(); }
     if (!menuOpenCloseEventSink) { menuOpenCloseEventSink = new MenuOpenCloseEventSink(); }
+    //if (!inputEventSink) { inputEventSink = new InputEventSink(); }
 
+    //always activate to track lastPlayerActivatedRef
+    eventSourceholder->AddEventSink(activateEventSink);
+
+    //always active to track opened menus / game pausing
     ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
+
+    if (iMaxArrowsSavedPerReference > 0) {
+        if (skseLoadInterface) {
+            if (ProjectileImpactHook::Install(skseLoadInterface->RuntimeVersion())) {
+                logger::info("{}: ProjectileImpactHook installed successfully", __func__);
+            }
+            else {
+                logger::warn("{}: ProjectileImpactHook not installed", __func__);
+            }
+        }
+        else {
+            logger::critical("{}: skseLoadInterface not found, aborting ProjectileImpactHook install", __func__);
+        }
+    }
+    else {
+        logger::info("{}: iMaxArrowsSavedPerReference is [{}], aborting ProjectileImpactHook install", __func__, iMaxArrowsSavedPerReference);
+    }
+
+    UIEvents::Install();
 
     logger::trace("Event Sinks Created");
 }
@@ -10697,14 +12086,13 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     logger::trace("Binding Papyrus Functions");
 
     gvm = vm;
-    svm = RE::SkyrimVM::GetSingleton();
+    //gfuncs::svm = RE::SkyrimVM::GetSingleton();
     ui = RE::UI::GetSingleton();
     calendar = RE::Calendar::GetSingleton();
 
     //functions 
     vm->RegisterFunction("SaveProjectileForAmmo", "DbSkseCppCallbackEvents", SaveProjectileForAmmo);
     vm->RegisterFunction("SetDbSkseCppCallbackEventsAttached", "DbSkseCppCallbackEvents", SetDbSkseCppCallbackEventsAttached);
-
 
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
     vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
@@ -10730,17 +12118,45 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("FormListToArray", "DbSkseFunctions", FormListToArray);
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
+    vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
+    vm->RegisterFunction("GetAllFormsWithName", "DbSkseFunctions", GetAllFormsWithName);
+    vm->RegisterFunction("GetAllFormsWithScriptAttached", "DbSkseFunctions", GetAllFormsWithScriptAttached);
+    vm->RegisterFunction("GetAllAliasesWithScriptAttached", "DbSkseFunctions", GetAllAliasesWithScriptAttached);
+    vm->RegisterFunction("GetAllRefAliasesWithScriptAttached", "DbSkseFunctions", GetAllRefAliasesWithScriptAttached);
     vm->RegisterFunction("GetAllRefaliases", "DbSkseFunctions", GetAllRefaliases);
     vm->RegisterFunction("GetAllQuestObjectRefs", "DbSkseFunctions", GetAllQuestObjectRefs);
     vm->RegisterFunction("GetQuestObjectRefsInContainer", "DbSkseFunctions", GetQuestObjectRefsInContainer);
-
+    vm->RegisterFunction("GetProjectileRefType", "DbSkseFunctions", GetProjectileRefType);
+    vm->RegisterFunction("GetAttachedProjectiles", "DbSkseFunctions", GetAttachedProjectiles);
+    vm->RegisterFunction("GetAttachedProjectileRefs", "DbSkseFunctions", GetAttachedProjectileRefs);
     vm->RegisterFunction("GetAllHitProjectileRefsOfType", "DbSkseFunctions", GetAllHitProjectileRefsOfType);
     vm->RegisterFunction("GetAllShotProjectileRefsOfType", "DbSkseFunctions", GetAllShotProjectileRefsOfType);
-
+    vm->RegisterFunction("GetRecentProjectileHitRefs", "DbSkseFunctions", GetRecentProjectileHitRefs);
+    vm->RegisterFunction("GetLastProjectileHitRef", "DbSkseFunctions", GetLastProjectileHitRef);
+    vm->RegisterFunction("GetRecentProjectileShotRefs", "DbSkseFunctions", GetRecentProjectileShotRefs);
+    vm->RegisterFunction("GetLastProjectileShotRef", "DbSkseFunctions", GetLastProjectileShotRef);
+    vm->RegisterFunction("GetProjectileHitRefs", "DbSkseFunctions", GetProjectileHitRefs);
+    vm->RegisterFunction("GetProjectileShooter", "DbSkseFunctions", GetProjectileShooter);
+    vm->RegisterFunction("GetProjectileExplosion", "DbSkseFunctions", GetProjectileExplosion);
+    vm->RegisterFunction("GetProjectileAmmoSource", "DbSkseFunctions", GetProjectileAmmoSource);
+    vm->RegisterFunction("GetProjectilePoison", "DbSkseFunctions", GetProjectilePoison);
+    vm->RegisterFunction("GetProjectileEnchantment", "DbSkseFunctions", GetProjectileEnchantment);
+    vm->RegisterFunction("GetProjectileMagicSource", "DbSkseFunctions", GetProjectileMagicSource);
+    vm->RegisterFunction("GetProjectileWeaponSource", "DbSkseFunctions", GetProjectileWeaponSource);
+    vm->RegisterFunction("GetProjectileWeaponDamage", "DbSkseFunctions", GetProjectileWeaponDamage);
+    vm->RegisterFunction("GetProjectilePower", "DbSkseFunctions", GetProjectilePower);
+    vm->RegisterFunction("GetProjectileDistanceTraveled", "DbSkseFunctions", GetProjectileDistanceTraveled);
+    vm->RegisterFunction("GetProjectileImpactResult", "DbSkseFunctions", GetProjectileImpactResult);
+    vm->RegisterFunction("GetProjectileNodeHitNames", "DbSkseFunctions", GetProjectileNodeHitNames);
+    vm->RegisterFunction("GetProjectileCollidedLayers", "DbSkseFunctions", GetProjectileCollidedLayers);
+    vm->RegisterFunction("GetProjectileCollidedLayerNames", "DbSkseFunctions", GetProjectileCollidedLayerNames);
+    vm->RegisterFunction("GetCollisionLayerName", "DbSkseFunctions", GetCollisionLayerName);
+    vm->RegisterFunction("GetLastPlayerActivatedRef", "DbSkseFunctions", GetLastPlayerActivatedRef);
+    vm->RegisterFunction("GetLastPlayerMenuActivatedRef", "DbSkseFunctions", GetLastPlayerMenuActivatedRef);
+    vm->RegisterFunction("GetAshPileLinkedRef", "DbSkseFunctions", GetAshPileLinkedRef);
     vm->RegisterFunction("GetClosestObjectFromRef", "DbSkseFunctions", GetClosestObjectFromRef);
     vm->RegisterFunction("GetClosestObjectIndexFromRef", "DbSkseFunctions", GetClosestObjectIndexFromRef);
     vm->RegisterFunction("GetGameHoursPassed", "DbSkseFunctions", GetGameHoursPassed);
-
     vm->RegisterFunction("GameHoursToRealTimeSeconds", "DbSkseFunctions", GameHoursToRealTimeSeconds);
     vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused);
     vm->RegisterFunction("IsInMenu", "DbSkseFunctions", IsInMenu);
@@ -10832,8 +12248,26 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("UnregisterActiveMagicEffectForGlobalEvent", "DbSkseEvents", UnregisterActiveMagicEffectForGlobalEvent);
     vm->RegisterFunction("UnregisterActiveMagicEffectForGlobalEvent_All", "DbSkseEvents", UnregisterActiveMagicEffectForGlobalEvent_All);
 
-    //timers
+    //UiItemMenuEvents
+    //form
+    vm->RegisterFunction("IsFormRegisteredForUiItemMenuEvent", "DbSkseEvents", UIEvents::IsFormRegisteredForUiItemMenuEvent);
+    vm->RegisterFunction("RegisterFormForUiItemMenuEvent", "DbSkseEvents", UIEvents::RegisterFormForUiItemMenuEvent);
+    vm->RegisterFunction("UnregisterFormForUiItemMenuEvent", "DbSkseEvents", UIEvents::UnregisterFormForUiItemMenuEvent);
+    vm->RegisterFunction("UnregisterFormForUiItemMenuEvent_All", "DbSkseEvents", UIEvents::UnregisterFormForUiItemMenuEvent_All);
 
+    //Alias
+    vm->RegisterFunction("IsAliasRegisteredForUiItemMenuEvent", "DbSkseEvents", UIEvents::IsAliasRegisteredForUiItemMenuEvent);
+    vm->RegisterFunction("RegisterAliasForUiItemMenuEvent", "DbSkseEvents", UIEvents::RegisterAliasForUiItemMenuEvent);
+    vm->RegisterFunction("UnregisterAliasForUiItemMenuEvent", "DbSkseEvents", UIEvents::UnregisterAliasForUiItemMenuEvent);
+    vm->RegisterFunction("UnregisterAliasForUiItemMenuEvent_All", "DbSkseEvents", UIEvents::UnregisterAliasForUiItemMenuEvent_All);
+
+    //ActiveMagicEffect
+    vm->RegisterFunction("IsActiveMagicEffectRegisteredForUiItemMenuEvent", "DbSkseEvents", UIEvents::IsActiveMagicEffectRegisteredForUiItemMenuEvent);
+    vm->RegisterFunction("RegisterActiveMagicEffectForUiItemMenuEvent", "DbSkseEvents", UIEvents::RegisterActiveMagicEffectForUiItemMenuEvent);
+    vm->RegisterFunction("UnregisterActiveMagicEffectForUiItemMenuEvent", "DbSkseEvents", UIEvents::UnregisterActiveMagicEffectForUiItemMenuEvent);
+    vm->RegisterFunction("UnregisterActiveMagicEffectForUiItemMenuEvent_All", "DbSkseEvents", UIEvents::UnregisterActiveMagicEffectForUiItemMenuEvent_All);
+
+    //timers
     //form
     vm->RegisterFunction("StartTimer", "DbFormTimer", StartTimerOnForm);
     vm->RegisterFunction("CancelTimer", "DbFormTimer", CancelTimerOnForm);
@@ -10930,22 +12364,22 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         //SendLoadGameEvent();
         //CreateEventSinks();
         bPlayerIsInCombat = player->IsInCombat();
-        
+
         logger::trace("kPostLoadGame: sent after an attempt to load a saved game has finished");
         break;
 
-    //case SKSE::MessagingInterface::kSaveGame:
-        //    logger::info("kSaveGame");
-        //    break;
+        //case SKSE::MessagingInterface::kSaveGame:
+            //    logger::info("kSaveGame");
+            //    break;
 
-    //case SKSE::MessagingInterface::kDeleteGame:
-        //    // message->dataLen: length of file path, data: char* file path of .ess savegame file
-        //    logger::info("kDeleteGame: sent right before deleting the .skse cosave and the .ess save");
-        //    break;
+        //case SKSE::MessagingInterface::kDeleteGame:
+            //    // message->dataLen: length of file path, data: char* file path of .ess savegame file
+            //    logger::info("kDeleteGame: sent right before deleting the .skse cosave and the .ess save");
+            //    break;
 
-    //case SKSE::MessagingInterface::kInputLoaded:
-        //    logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
-        //    break;
+        //case SKSE::MessagingInterface::kInputLoaded:
+            //    logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
+            //    break;
 
     case SKSE::MessagingInterface::kNewGame:
         //logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
@@ -10959,6 +12393,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 
     case SKSE::MessagingInterface::kDataLoaded:
         // RE::ConsoleLog::GetSingleton()->Print("DbSkseFunctions Installed");
+        gfuncs::Install();
         SKSE::GetPapyrusInterface()->Register(BindPapyrusFunctions);
         SetSettingsFromIniFile();
         CreateEventSinks();
@@ -11025,7 +12460,7 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     auto* args = RE::MakeFunctionArguments();
 
     //now sending to all scripts with the OnLoadGameGlobal Event
-    //RemoveDuplicates(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles);
+    //gfuncs::RemoveDuplicates(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles);
     //SendEvents(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles, eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
 
     auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
@@ -11036,7 +12471,7 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     bIsLoadingSerialization = false;
     logger::trace("LoadCallback complete");
 
-    //DelayedFunction(&DbSkseCppCallbackLoad, 1200);
+    //gfuncs::DelayedFunction(&DbSkseCppCallbackLoad, 1200);
     DbSkseCppCallbackLoad();
     RegisterActorsForBowDrawAnimEvents();
 }
@@ -11075,10 +12510,12 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
 
+    skseLoadInterface = skse;
+
     SetupLog();
     SKSE::GetMessagingInterface()->RegisterListener(MessageListener);
 
-    auto serialization = SKSE::GetSerializationInterface();
+    auto* serialization = SKSE::GetSerializationInterface();
     serialization->SetUniqueID('DbSF');
     serialization->SetSaveCallback(SaveCallback);
     serialization->SetLoadCallback(LoadCallback);

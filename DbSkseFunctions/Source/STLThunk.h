@@ -1,3 +1,5 @@
+#pragma once
+
 namespace stl
 {
 	using namespace SKSE::stl;
@@ -22,6 +24,13 @@ namespace stl
 	{
 		REL::Relocation<std::uintptr_t> vtbl{ id };
 		T::func = vtbl.write_vfunc(idx, T::thunk);
+	}
+
+	template <size_t offset, class T>
+	void write_vfunc()
+	{
+		REL::Relocation<std::uintptr_t> vtbl{ T::VTABLE[offset] };
+		T::func = vtbl.write_vfunc(T::idx, T::thunk);
 	}
 
 	template <class T>
