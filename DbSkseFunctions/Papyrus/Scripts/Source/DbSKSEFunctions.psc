@@ -139,6 +139,26 @@ String[] Function GetLoadedLightModDescriptions(int sortOption = 0, int maxChara
 ;Sort options are as follows. 0 = not sorted, 1 = sorted by Description ascending, 2 = sorted by Description descending, 3 sorted by mod name ascending, 4 = sorted by mod name descending.
 String[] Function GetAllLoadedModDescriptions(int sortOption = 0, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ") Global Native
 
+;get all constructible objects that create the createdObject. 
+;if none is passed in, get's all constructible objects in game.
+ConstructibleObject[] Function GetAllConstructibleObjects(Form createdObject) global native
+
+;Get all forms who's name (with GetName()) match the sFormName.
+;nameMatchMode 0 = exact match, 1 = name contains sFormName.  
+;formTypeMatchMode 1 = forms that have a type in formTypes.
+;formTypeMatchMode 0 = forms that do not have a type in formTypes. 
+;formTypeMatchMode -1 (or if formTypes == none) = formType filter is ignored completely, get all forms regardless of type that match (or contain) sFormName.
+Form[] Function GetAllFormsWithName(string sFormName, int nameMatchMode = 0, int[] formTypes = none, int formTypeMatchMode = 0) Global Native 
+
+;formTypeMatchMode 1 = forms that have a type in formTypes.
+;formTypeMatchMode 0 = forms that do not have a type in formTypes. 
+;formTypeMatchMode -1 (or if formTypes == none) = formType filter is ignored completely, get all forms regardless of type that match (or contain) sFormName.
+Form[] Function GetAllFormsWithScriptAttached(string sScriptName, int[] formTypes = none, int formTypeMatchMode = 0) Global Native 
+
+Alias[] Function GetAllAliasesWithScriptAttached(string sScriptName) Global Native 
+
+ReferenceAlias[] Function GetAllRefAliasesWithScriptAttached(string sScriptName, bool onlyQuestObjects = false, bool onlyFilled = false) Global Native 
+
 ;Get all quests in game currently being tracked by the player.
 Quest[] Function GetAllActiveQuests() Global Native
 
@@ -153,13 +173,158 @@ ObjectReference[] function GetAllQuestObjectRefs() Global Native
 ;Get all quest object references in containerRef
 ObjectReference[] function GetQuestObjectRefsInContainer(ObjectReference containerRef) Global Native
 
+;get the type of the projectileRef
+;projectile types are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow, 0 = unrecognized.
+int function GetProjectileRefType(ObjectReference projectileRef) Global Native
+
+;get projectiles currently attached to the ref
+;only works if the ref is an actor
+Projectile[] Function GetAttachedProjectiles(ObjectReference ref) Global Native
+
+;get projectile object references attached to the ref 
+;only works if the ref is not an actor
+Projectile[] Function GetAttachedProjectileRefs(ObjectReference ref) Global Native
+
 ;get all projectile object references that hit the ref that match the conditions. 
 ;projectileTypes are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow.
+;if the projectileType param is none of those types, returns all projectiles that have hit the ref regardless of type.
 ObjectReference[] function GetAllHitProjectileRefsOfType(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true, int projectileType = 7) Global Native
 
 ;get all projectile object references that were shot by the ref that match the conditions.
 ;projectileTypes are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow.
+;if the projectileType param is none of those types, returns all projectiles that the ref has shot regardless of type.
 ObjectReference[] function GetAllShotProjectileRefsOfType(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true, int projectileType = 7) Global Native
+
+;get recent projectile object references that hit the ref that match the conditions. 
+;projectileTypes are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow.
+;if the projectileType param is none of those types, returns all recent projectiles that have hit the ref regardless of type.
+;requires iMaxArrowsSavedPerReference to be set to greater than 0 in DbSkseFunctions.ini 
+ObjectReference[] function GetRecentProjectileHitRefs(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true, int projectileType = 7) Global Native
+
+;get the last projectile object reference that hit the ref that match the conditions. 
+;projectileTypes are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow.
+;if the projectileType param is none of those types, returns the last projectile that hit the ref regardless of type
+;requires iMaxArrowsSavedPerReference to be set to greater than 0 in DbSkseFunctions.ini 
+ObjectReference function GetLastProjectileHitRef(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true, int projectileType = 7) Global Native
+
+;get recent projectile object references that were shot by the ref that match the conditions.
+;projectileTypes are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow.
+;if the projectileType param is none of those types, returns all recent projectiles that the ref has shot regardless of type.
+;requires iMaxArrowsSavedPerReference to be set to greater than 0 in DbSkseFunctions.ini 
+ObjectReference[] function GetRecentProjectileShotRefs(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true, int projectileType = 7) Global Native
+
+;get the last projectile object reference that was shot by the ref that match the conditions.
+;projectileTypes are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow.
+;if the projectileType param is none of those types, returns the last projectile was shot by the ref regardless of type
+;requires iMaxArrowsSavedPerReference to be set to greater than 0 in DbSkseFunctions.ini 
+ObjectReference function GetLastProjectileShotRef(ObjectReference ref, bool only3dLoaded = true, bool onlyEnabled = true, int projectileType = 7) Global Native
+
+;get the object reference(s) that the projectileRef hit (collided with). Most of the time this is 1 object, sometimes it's more.
+ObjectReference[] function GetProjectileHitRefs(ObjectReference projectileRef) Global Native
+
+;get the object reference that shot the projectileRef
+ObjectReference function GetProjectileShooter(ObjectReference projectileRef) Global Native
+
+;Get the ammo that the projectileRef was shot with if any
+Ammo function GetProjectileAmmoSource(ObjectReference projectileRef) Global Native
+
+;Get the poison the projectileRef was shot with if any
+Potion function GetProjectilePoison(ObjectReference projectileRef) Global Native
+
+;Get the enchantment the projectileRef was shot with if any
+Enchantment function GetProjectileEnchantment(ObjectReference projectileRef) Global Native
+
+;Get the magic item that shot the projectileRef if any
+;Most likely a spell or shout
+Form function GetProjectileMagicSource(ObjectReference projectileRef) Global Native
+
+;Get the weapon that the projectileRef was shot from if any
+;Most likely a bow or crossbow.
+Weapon function GetProjectileWeaponSource(ObjectReference projectileRef) Global Native
+
+; Get the damage of the weapon that shot the projectileRef if any
+float function GetProjectileWeaponDamage(ObjectReference projectileRef) Global Native
+
+;get the explosion for the projectileRef, if any.
+Explosion function GetProjectileExplosion(ObjectReference projectileRef) Global Native
+
+float function GetProjectilePower(ObjectReference projectileRef) Global Native
+
+float function GetProjectileDistanceTraveled(ObjectReference projectileRef) Global Native
+
+;impactResults are: 0 = none, 1 = destroy, 2 = bounce, 3 = impale, 4 = stick
+int function GetProjectileImpactResult(ObjectReference projectileRef) Global Native
+
+;get the node names that the projectileRef has hit. 
+;these only seem to be valid if the projectileRef hit an actor. 
+;i.e "NPC Head [Head]", "NPC Spine1 [Spn1]" ect.
+string[] function GetProjectileNodeHitNames(ObjectReference projectileRef) Global Native
+    
+; get the collision layers the projectileRef has collided with
+int[] function GetProjectileCollidedLayers(ObjectReference projectileRef) Global Native
+
+; get names of the collision layers the projectileRef has collided with
+string[] function GetProjectileCollidedLayerNames(ObjectReference projectileRef) Global Native
+
+; get the string of the collision layer. i.e "Biped", "static", "trees" ect
+; names are as follows: 
+; Unidentified = 0,
+; Static = 1,
+; AnimStatic = 2,
+; Transparent = 3,
+; Clutter = 4,
+; Weapon = 5,
+; Projectile = 6,
+; Spell = 7,
+; Biped = 8,
+; Trees = 9,
+; Props = 10,
+; Water = 11,
+; Trigger = 12,
+; Terrain = 13,
+; Trap = 14,
+; NonCollidable = 15,
+; CloudTrap = 16,
+; Ground = 17,
+; Portal = 18,
+; DebrisSmall = 19,
+; DebrisLarge = 20,
+; AcousticSpace = 21,
+; ActorZone = 22,
+; ProjectileZone = 23,
+; GasTrap = 24,
+; ShellCasting = 25,
+; TransparentWall = 26,
+; InvisibleWall = 27,
+; TransparentSmallAnim = 28,
+; ClutterLarge = 29,
+; CharController = 30,
+; StairHelper = 31,
+; DeadBip = 32,
+; BipedNoCC = 33,
+; AvoidBox = 34,
+; CollisionBox = 35,
+; CameraSphere = 36,
+; DoorDetection = 37,
+; ConeProjectile = 38,
+; Camera = 39,
+; ItemPicker = 40,
+; LOS = 41,
+; PathingPick = 42,
+; Unused0 = 43,
+; Unused1 = 44,
+; SpellExplosion = 45,
+; DroppingPick = 46
+string function GetCollisionLayerName(int layer) Global Native
+
+;get the last object reference that the player activated
+ObjectReference function GetLastPlayerActivatedRef() Global Native
+
+;get the last object reference that the player activated after a menu was opened
+ObjectReference function GetLastPlayerMenuActivatedRef() Global Native
+
+;If the ref is an ashpile, gets the actor linked to it, if any. If the ref is an actor, gets the ashpile linked to it, if any. 
+ObjectReference function GetAshPileLinkedRef(ObjectReference ref) Global Native
 
 ;Get the closest object reference in the refs array to the ref
 ObjectReference function GetClosestObjectFromRef(ObjectReference ref, ObjectReference[] refs) Global Native
@@ -518,10 +683,6 @@ Event OnSoundFinish(Form SoundOrDescriptor, int instanceID)
 EndEvent
 
 String[] Function GetSoundDescriptorSoundFileNames(SoundDescriptor akSoundDescriptor) Global Native
-
-;RE::TESForm* source = RE::TESForm::LookupByID(event->source);
-;static_cast<std::uint32_t>(std::stoul(mystring, nullptr, 16))
-
 
 SoundCategory Function GetParentSoundCategory(SoundCategory akSoundCategory) Global Native 
 SoundCategory Function GetSoundCategoryForSoundDescriptor(SoundDescriptor akSoundDescriptor) Global Native 

@@ -76,6 +76,8 @@ Int[] Function GetGameActorSoulLevels()
 String[] Function GetGameSoulLevelNames()
 Int Function GetActorSoulSize(Actor akActor)
 String Function GetActorSoulSizeString(Actor akActor, String sBlackSize = "Black")
+Bool Function ActorHasFormEquiped(Actor akActor, Form akForm) global 
+Bool function CanInteractWith(ObjectReference ref, bool checkAshPile = true) global 
 Bool Function IsActorNPC(Actor akActor)
 Bool Function IsActorMoving(Actor akActor)
 Form Function GetRandomFormFromRef(ObjectReference Ref, Int[] TypeArrayFilter = None, Formlist ListFilter = None, Bool TypeFilterHasType = true, Bool akListHasForm = true)
@@ -1459,6 +1461,94 @@ String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 =
     return s
 EndFunction
 
+;Join all 20 strings into a single string seperated by the Divider
+;no requirements
+String Function JoinAllStrings(String s1 = "", String s2 = "", String s3 = "", String s4 = "", String s5 = "", String s6 = "", String s7 = "", String s8 = "", String s9 = "", String s10 = "", \
+String s11 = "", String s12 = "", String s13 = "", String s14 = "", String s15 = "", String s16 = "", String s17 = "", String s18 = "", String s19 = "", String s20 = "", String Divider = " ") Global
+
+    String s = ""
+    
+    s += s1 
+    
+    If s2 != "" 
+        s += (divider + s2)
+    Endif
+    
+    If s3 != "" 
+        s += (divider + s3)
+    Endif
+   
+    If s4 != "" 
+        s += (divider + s4)
+    Endif
+   
+    If s5 != "" 
+        s += (divider + s5)
+    Endif
+   
+    If s6 != "" 
+        s += (divider + s6)
+    Endif
+   
+    If s7 != "" 
+        s += (divider + s7)
+    Endif
+   
+    If s8 != "" 
+        s += (divider + s8)
+    Endif
+   
+    If s9 != "" 
+        s += (divider + s9)
+    Endif
+   
+    If s10 != "" 
+        s += (divider + s10)
+    Endif
+   
+    If s11 != "" 
+        s += (divider + s11)
+    Endif
+   
+    If s12 != "" 
+        s += (divider + s12)
+    Endif
+   
+    If s13 != "" 
+        s += (divider + s13)
+    Endif
+   
+    If s14 != "" 
+        s += (divider + s14)
+    Endif
+   
+    If s15 != "" 
+        s += (divider + s15)
+    Endif
+   
+    If s16 != "" 
+        s += (divider + s16)
+    Endif
+   
+    If s17 != "" 
+        s += (divider + s17)
+    Endif
+   
+    If s18 != "" 
+        s += (divider + s18)
+    Endif
+   
+    If s19 != "" 
+        s += (divider + s19)
+    Endif
+   
+    If s20 != "" 
+        s += (divider + s20)
+    Endif
+    
+    return s
+EndFunction
+
 ;get the current screen resolution. 
 ;[0] = X or width
 ;[1] = Y or height
@@ -1529,6 +1619,74 @@ String Function GetActorSoulSizeString(Actor akActor, String sBlackSize = "Black
     String[] akSoulSizes = GetGameSoulLevelNames()
     Return akSoulSizes[GetActorSoulSize(akActor)]
 EndFunction 
+
+;the IsEquipped function doesn't work for spells, hence the need for this function.
+;no requirements
+Bool Function ActorHasFormEquiped(Actor akActor, Form akForm) global 
+    if !akActor || !akForm 
+        return false 
+    Endif
+
+    if akActor.IsEquipped(akForm)
+        return true 
+    endif
+
+    spell akSpell = akForm as spell 
+    if akSpell 
+        if akActor.GetEquippedSpell(0) == akSpell 
+            return true
+        endif
+
+        if akActor.GetEquippedSpell(1) == akSpell 
+            return true
+        endif
+
+        if akActor.GetEquippedSpell(2) == akSpell 
+            return true
+        endif
+
+        if akActor.GetEquippedSpell(3) == akSpell 
+            return true
+        endif
+    Endif
+
+    return false;
+EndFunction
+
+;requires skse and DbSkseFunctions.psc version 6.7 or greater
+Bool function CanInteractWith(ObjectReference ref, bool checkAshPile = true) global 
+    if !ref 
+        return false 
+    endif 
+
+    if ref.IsDisabled()
+        return false 
+    endif 
+
+    if ref.IsActivationBlocked()
+        return false 
+    endif 
+
+    if ref.IsHarvested()
+        return false
+    Endif
+
+    if ref.IsOffLimits()
+        return false
+    endif
+
+    if checkAshPile
+        form baseObj = ref.GetBaseObject()
+        if (baseObj as activator)
+            string name = baseObj.GetName()
+            if name == "ash pile" || name == "Ghostly Remains" || name == "Ice Pile" ;assume the ref is an ash pile
+                return CanInteractWith(DbSkseFunctions.GetAshPileLinkedRef(ref), false)
+            endif
+        endif
+    Endif
+
+    return true
+EndFunction
 
 ;Is the akActor an NPC? 
 ;no requirements

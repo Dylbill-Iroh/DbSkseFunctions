@@ -86,7 +86,6 @@ bool function ToggleGlobalEventOnAlias(String sEvent, Alias eventReceiver, form 
 	endif
 EndFunction
 
-
 ;ActiveMagicEffect ===============================================================================================================================================================
 Bool function IsActiveMagicEffectRegisteredForGlobalEvent(String asEvent, ActiveMagicEffect eventReceiver, Form paramFilter = none, int paramFilterIndex = 0) global Native
 function RegisterActiveMagicEffectForGlobalEvent(String asEvent, ActiveMagicEffect eventReceiver, Form paramFilter = none, int paramFilterIndex = 0) global Native
@@ -146,6 +145,13 @@ EndEvent
 Event OnHitGlobal(ObjectReference Attacker, ObjectReference Target, Form Source, Ammo akAmmo, Projectile akProjectile, bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)
 EndEvent
 
+;impactResults are: 0 = none, 1 = destroy, 2 = bounce, 3 = impale, 4 = stick
+;for collided layer see DbSkseFunctions.GetCollisionLayerName()
+;damagedNodeName only works on actors. e.g "SHIELD", "NPC Head [Head]", "NPC R UpperArm [RUar]" ect.
+;this event requires the iMaxArrowsSavedPerReference setting in DbSkseFunctions.ini to be greater than 0.
+Event OnProjectileImpactGlobal(ObjectReference shooter, ObjectReference target, Form Source, Ammo ammoSource, Projectile akProjectile, bool abSneakAttack, bool abHitBlocked, int impactResult, int collidedLayer, float distanceTraveled, string damagedNodeName)
+EndEvent
+
 Event OnMagicEffectAppliedGlobal(ObjectReference Caster, ObjectReference Target, MagicEffect akEffect)
 Endevent
 
@@ -189,7 +195,6 @@ Endevent
 
 Event OnWeaponSwingGlobal(Actor akActor, Form Source, int slot)
 Endevent 
-;========================================================================================================
 
 Event OnDeathGlobal(Actor Victim, Actor Killer)
 EndEvent
@@ -211,4 +216,79 @@ EndEvent
 ;internally this checks the player's combat status whenever another actor changes combat status 
 ;and sends the event if the player combat status has changed, if the player is registered for akActor.
 Event OnCombatStateChangedGlobal(Actor akActor, Actor akTarget, int aeCombatState)
+EndEvent
+
+
+;UI Item Menu Events ========================================================================================================================
+
+;register the eventReceiver to receive the OnUiItemMenuEvent from UI item menus.
+;valid menus are: 
+;"inventorymenu"
+;"bartermenu"
+;"containermenu"
+;"giftmenu"
+;"magicmenu"
+;"crafting menu"
+;"favoritesmenu"
+;if menuName = "", registers for all valid item menus 
+
+;eventTypes are: 
+; 0 = selection changed, 
+; 1 = item selected, 
+; 2 = r button (drop, take all ect), 
+; 3 = f button (favorite ect).
+; -1 = all types, 
+
+;for the eventTypes 1 (item selected), the event can be sent twice if there's a messagebox in between. 
+;for example in the crafting menu it's sent when you first click on something in the menu and again after you confirm crafting
+
+;if the paramFilter is none, it's discounted in comparisons.
+
+;example
+;scriptname myQuestScript extends quest
+;weapon property ironSword auto
+;armor property ironHelmet auto
+
+;event OnInit()
+	;RegisterFormForUiItemMenuEvent("inventorymenu", self, none, 3) 		;register for when the user favorites or unfavorites anything in the inventory menu 
+	;RegisterFormForUiItemMenuEvent("giftmenu", self, none, 1) 				;register for when the user clicks on anything in the gift menu
+	;RegisterFormForUiItemMenuEvent("containermenu", self, ironSword, 0) 	;register for when the user highlights the ironSword while the in the container menu
+	;RegisterFormForUiItemMenuEvent("", self, ironHelmet, -1) 				;register for when the user highlights or clicks on or uses the R button or F button on the ironHelmet while in any item menu
+	;RegisterFormForUiItemMenuEvent("", self)								;register for all events in all item menus
+;EndEvent
+
+; Event OnUiItemMenuEvent(String menuName, Form akSelectedForm, int eventType, int count, bool playerInventory, bool stolen)
+;     Utility.waitMenuMode(0.5)
+;     ConsoleUtil.PrintMessage(DbMiscFunctions.JoinAllStrings("OnUiItemMenuEvent event[", menuName, "] form[", DbMiscFunctions.GetFormName(akSelectedForm), \
+;         "] type[", eventType, "] count[", count, "] equiped[", DbMiscFunctions.ActorHasFormEquiped(Game.GetPlayer(), akSelectedForm), \
+;         "] favorited[", Game.IsObjectFavorited(akSelectedForm), "] playerInventory[", \
+;         playerInventory, "]", " menuRef[", DbMiscFunctions.GetFormName(DbSkseFunctions.GetLastPlayerMenuActivatedRef()), \
+;         "] stolen[", stolen, "]"))
+; EndEvent
+
+;form
+Function IsFormRegisteredForUiItemMenuEvent(String menuName, Form eventReceiver, Form paramFilter = none, int eventType = -1) Global Native
+Function RegisterFormForUiItemMenuEvent(String menuName, Form eventReceiver, Form paramFilter = none, int eventType = -1) Global Native
+Function UnregisterFormForUiItemMenuEvent(String menuName, Form eventReceiver, Form paramFilter = none, int eventType = -1) Global Native
+Function UnregisterFormForUiItemMenuEvent_All(Form eventReceiver) Global Native
+
+;Alias
+Function IsAliasRegisteredForUiItemMenuEvent(String menuName, Alias eventReceiver, Form paramFilter = none, int eventType = -1) Global Native
+Function RegisterAliasForUiItemMenuEvent(String menuName, Alias eventReceiver, Form paramFilter = none, int eventType = -1) Global Native
+Function UnregisterAliasForUiItemMenuEvent(String menuName, Alias eventReceiver, Form paramFilter = none, int eventType = -1) Global Native
+Function UnregisterAliasForUiItemMenuEvent_All(Alias eventReceiver) Global Native
+
+;sActiveMagicEffect
+Function IsActiveMagicEffectRegisteredForUiItemMenuEvent(String menuName, ActiveMagicEffect eventReceiver, Form paramFilter = none, int eventType = -1) Global Native
+Function RegisterActiveMagicEffectForUiItemMenuEvent(String menuName, ActiveMagicEffect eventReceiver, Form paramFilter = none, int eventType = -1) Global Native
+Function UnregisterActiveMagicEffectForUiItemMenuEvent(String menuName, ActiveMagicEffect eventReceiver, Form paramFilter = none, int eventType = -1) Global Native
+Function UnregisterActiveMagicEffectForUiItemMenuEvent_All(ActiveMagicEffect eventReceiver) Global Native
+
+;menuName is the item menu that's currently open. 
+;akSelectedForm can be none if nothing is currently selected / highlighted.
+;eventTypes are: -1 = all types, 0 = selection changed, 1 = item selected, 2 = r button (drop, take all ect), 3 = f button (favorite ect).
+;count is the count of the item selected or highlighted, this is before the ui event is processed.
+;So for example if the inventory menu is open and eventType is 2 (r button for dropped) to get the number of items dropped use: int dropped items = (count - Game.GetPlayer().GetItemCount(akSelectedForm))
+;playerInventory is if the item was selected from the player's inventory and not the open container in the case of container menu, barter menu, gift menu ect.
+Event OnUiItemMenuEvent(String menuName, Form akSelectedForm, int eventType, int count, bool playerInventory, bool stolen)
 EndEvent
