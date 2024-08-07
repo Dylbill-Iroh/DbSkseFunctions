@@ -383,6 +383,7 @@ bool Function CanSoulGemHoldNPCSoul(SoulGem akSoulGem) Global Native
 Function SetSoulGemCanHoldNPCSoul(SoulGem akSoulGem, bool canHold) Global Native 
 
 
+
 ;get MusicType that's currently playing
 MusicType Function GetCurrentMusicType() Global Native 
 
@@ -417,6 +418,20 @@ function UnlockShout(shout akShout) Global Native
 ;add and unlock all shouts to the player that match the param filters.
 ;default is adding and unlocking ALL shouts found in game to player
 function AddAndUnlockAllShouts(int minNumberOfWordsWithTranslations = 0, bool onlyShoutsWithNames = false, bool onlyShoutsWithDescriptions = false) Global Native 
+
+; furniture workbench types are:
+; None = 0,
+; CreateObject = 1,
+; SmithingWeapon = 2,
+; Enchanting = 3,
+; EnchantingExperiment = 4,
+; Alchemy = 5,
+; AlchemyExperiment = 6,
+; SmithingArmor = 7
+int Function GetFurnitureWorkbenchType(furniture akFurniture) Global Native 
+
+;return string will be an actor value skill such as "smithing", "enchanting" ect.
+String Function GetFurnitureWorkbenchSkillString(furniture akFurniture) Global Native 
 
 ;/
 valid skills for use with the 'string skill' params in following book functions

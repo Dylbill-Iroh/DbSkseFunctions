@@ -202,6 +202,9 @@ EndEvent
 Event OnDyingGlobal(Actor Victim, Actor Killer)
 EndEvent
 
+Event OnEnterBleedoutGlobal(Actor Victim)
+Endevent
+
 ;Note that this can be used as ItemAdded or ItemRemoved event. 
 Event OnContainerChangedGlobal(ObjectReference newContainer, ObjectReference oldContainer, ObjectReference itemReference, Form baseObj, int itemCount)
 EndEvent
@@ -218,6 +221,24 @@ EndEvent
 Event OnCombatStateChangedGlobal(Actor akActor, Actor akTarget, int aeCombatState)
 EndEvent
 
+;workbench types are:
+;None = 0,
+;CreateObject = 1,
+;SmithingWeapon = 2,
+;Enchanting = 3,
+;EnchantingExperiment = 4,
+;Alchemy = 5,
+;AlchemyExperiment = 6,
+;SmithingArmor = 7
+;benchSkill will be an actor value such as "smithing", "enchanting" ect.
+Event OnItemCraftedGlobal(Form itemCrafted, ObjectReference benchRef, int count, int workBenchType, string benchSkill)
+EndEvent
+
+Event OnItemsPickpocketedGlobal(Actor akTarget, Form itemTaken, int count)
+Endevent
+
+Event OnLocationClearedGlobal(Location akLocation)
+EndEvent
 
 ;UI Item Menu Events ========================================================================================================================
 
@@ -292,3 +313,59 @@ Function UnregisterActiveMagicEffectForUiItemMenuEvent_All(ActiveMagicEffect eve
 ;playerInventory is if the item was selected from the player's inventory and not the open container in the case of container menu, barter menu, gift menu ect.
 Event OnUiItemMenuEvent(String menuName, Form akSelectedForm, int eventType, int count, bool playerInventory, bool stolen)
 EndEvent
+
+;to find if an option is greyed out, use selectedEntry.enabled 
+;example: 
+;bool isSelectionEnabled = ui.GetBool("crafting menu", "_root.Menu.InventoryLists.panelContainer.itemList.selectedEntry.enabled")
+
+;some more info: UI paths for menu selectedEntrys
+
+;for these menus:
+;"inventorymenu"
+;"bartermenu"
+;"containermenu"
+;"giftmenu"
+;"magicmenu" 
+;path = "_root.Menu_mc.inventoryLists.itemList.selectedEntry"
+
+;"crafting menu"
+;path = "_root.Menu.InventoryLists.panelContainer.itemList.selectedEntry"
+
+;"favoritesmenu"
+;path = "_root.MenuHolder.Menu_mc.itemList.selectedEntry"
+
+;here are the entry or selectedEntry variables I found in the skyui .as source files. 
+;selectedEntry.raceName
+;selectedEntry.name
+;selectedEntry.text
+;selectedEntry.level
+;selectedEntry.index
+;selectedEntry.itemId
+;selectedEntry.formId
+;selectedEntry.enabled
+;selectedEntry.disabled
+;selectedEntry.flag
+;selectedEntry.count
+
+;selectedEntry.filterFlag
+;selectedEntry.divider
+;selectedEntry.id
+;selectedEntry.value
+;selectedEntry.handleInput
+;selectedEntry.clipIndex
+;selectedEntry.textFormat
+;selectedEntry.handleInput
+;selectedEntry.chargeAdded
+;selectedEntry.itemIndex
+;selectedEntry._height
+;selectedEntry._width
+
+;quest
+;selectedEntry.questTargetID
+;selectedEntry.completed
+;selectedEntry.instance
+;selectedEntry.active
+;selectedEntry.objectives
+;selectedEntry.type
+;selectedEntry.description
+;selectedEntry.stats
