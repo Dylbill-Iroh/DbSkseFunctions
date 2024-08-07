@@ -122,6 +122,7 @@ namespace UIEvents {
     uint32_t lastUIEventSelectRunTime = 0;
     UiFormData uiSelectedFormData;
     UiFormData uiLastSelectedFormData;
+    std::string uiLastMenuEventName;
 
     bool UIEventDataMatchesParams(UIEventData& UIEventData, std::string& menuName, RE::TESForm* paramFilter, int& eventType) {
         if (UIEventData.menuName != "") {
@@ -291,11 +292,12 @@ namespace UIEvents {
         //selectedEntry.name
         //selectedEntry.text
         //selectedEntry.level
-        //selectedEntry.flag
         //selectedEntry.index
         //selectedEntry.itemId
         //selectedEntry.formId
         //selectedEntry.enabled
+        //selectedEntry.disabled
+        //selectedEntry.flag
         //selectedEntry.count
         // 
         //selectedEntry.questTargetID
@@ -306,6 +308,27 @@ namespace UIEvents {
         //selectedEntry.type
         //selectedEntry.description
         //selectedEntry.stats
+
+        //selectedEntry.filterFlag
+        //selectedEntry.divider
+        //selectedEntry.id
+        //selectedEntry.value
+        //selectedEntry.handleInput
+        //selectedEntry.clipIndex
+        //selectedEntry.textFormat
+        //selectedEntry.handleInput
+        //selectedEntry.chargeAdded
+        //selectedEntry.itemIndex
+        //selectedEntry._height
+        //selectedEntry._width
+        //selectedEntry.
+        // 
+        //MCM
+        //selectedEntry.OPTION_EMPTY
+        //selectedEntry.FLAG_DISABLED
+        //selectedEntry.FLAG_HIDDEN
+        //selectedEntry.FLAG_WITH_UNMAP
+        //selectedEntry.
 
         if (menu) {
             if (!IsBadReadPtr(menu, sizeof(menu))) {
@@ -377,15 +400,12 @@ namespace UIEvents {
             logger::trace("{}: IsItemMenuOpen = false", __func__);
             return true;
         }
-
-        //if (!ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME)) {
-        //    //logger::trace("{}: ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME) = false", __func__);
-        //    return true;
-        //}
         return false;
     }
 
     void ProcessUiItemChangedEvent(UiFormData& data, std::string& menuName) {
+        uiLastMenuEventName = menuName;
+
         if (uiSelectedFormData.form != data.form) {
             uiSelectedFormData = data;
             SendUISelectionEvents(menuName, data, UiEventEnumType_SelectionChanged);
@@ -396,16 +416,17 @@ namespace UIEvents {
     }
 
     void ProcessUiItemSelectEvent(RE::UIMessage& message, std::string& menuName) {
-        RE::BSUIMessageData* msgData = static_cast<RE::BSUIMessageData*>(message.data);
+        uiLastMenuEventName = menuName;
         int type = (message.type.underlying());
 
+        RE::BSUIMessageData* msgData = static_cast<RE::BSUIMessageData*>(message.data);
         //auto msgTypeString = gfuncs::GetBSUIMessageDataTypeString(msgData);
         
         uint32_t currentRunTime = RE::GetDurationOfApplicationRunTime();
         uint32_t diff = currentRunTime - lastUIEventSelectRunTime;
 
         if (diff < 40) {
-            if (uiLastSelectedFormData == uiSelectedFormData && uiLastSelectedMsgEventType != type) {
+            if (uiLastSelectedFormData == uiSelectedFormData ) {
                 logger::trace("{}: ui select skipped, runTimeDiff is {}", __func__, diff);
                 //the select event can run twice for the same selected ui object depending on the button pressed to select. 
                 //once for kUserEvent and once for kInventoryUpdate.
@@ -414,7 +435,7 @@ namespace UIEvents {
             }
         }
 
-        logger::trace("{}: menu[{}] message.type = [{}] uiSelectedForm = [{}] from player = [{}]",
+        logger::trace("{}: menu[{}] message type = [{}] uiSelectedForm = [{}] from player = [{}]",
             __func__, menuName, type, gfuncs::GetFormName(uiSelectedFormData.form), uiSelectedFormData.selectedFromPlayerInventory);
 
         lastUIEventSelectRunTime = currentRunTime;
@@ -424,9 +445,18 @@ namespace UIEvents {
         if (msgData) {
             UiFormData selectedFormData = uiSelectedFormData;
 
+            //leftEquip leftAttack
+
             if (selectedFormData.form) {
-                if (gfuncs::GetIndexInVector(validSelectUserEventStrings, msgData->fixedStr) > -1) {
-                    SendUISelectionEvents(menuName, selectedFormData, UiEventEnumType_ItemSelected);
+                if (gfuncs::GetIndexInVector(validSelectUserEventStrings, msgData->fixedStr) > -1 || msgData->fixedStr == "À¬") { //"À¬" for unrecognized (enter key)
+                    if (msgData->fixedStr == userEvents->leftEquip || msgData->fixedStr == userEvents->leftAttack) {
+                        if (menuName == "inventorymenu" || menuName == "favoritesmenu" || menuName == "containermenu" || menuName == "magicmenu") {
+                            SendUISelectionEvents(menuName, selectedFormData, UiEventEnumType_ItemSelected);
+                        }
+                    }
+                    else {
+                        SendUISelectionEvents(menuName, selectedFormData, UiEventEnumType_ItemSelected);
+                    }
                 }
                 else if (gfuncs::GetIndexInVector(validDropUserEventStrings, msgData->fixedStr) > -1) {
                     SendUISelectionEvents(menuName, selectedFormData, UiEventEnumType_ItemDropped);
@@ -435,6 +465,33 @@ namespace UIEvents {
                     SendUISelectionEvents(menuName, selectedFormData, UiEventEnumType_FavoredToggle);
                 }
             }
+        }
+    }
+
+    //processed from enter key press from InputEventSink in plugin.cpp
+    void ProcessUiItemSelectEvent() {
+        uint32_t currentRunTime = RE::GetDurationOfApplicationRunTime();
+        uint32_t diff = currentRunTime - lastUIEventSelectRunTime;
+
+        if (diff < 40) {
+            logger::trace("{}: ui select skipped, runTimeDiff is {}", __func__, diff);
+            //the select event can run twice for the same selected ui object depending on the button pressed to select. 
+            //once for kUserEvent and once for kInventoryUpdate.
+            //this will prevent the same selected ui object event from being sent to papyrus twice in a row.
+            return;
+        }
+
+        logger::trace("{}: menu[{}] message type = [{}] uiSelectedForm = [{}] from player = [{}]",
+            __func__, uiLastMenuEventName, 7, gfuncs::GetFormName(uiSelectedFormData.form), uiSelectedFormData.selectedFromPlayerInventory);
+
+        lastUIEventSelectRunTime = currentRunTime;
+        uiLastSelectedFormData = uiSelectedFormData;
+        uiLastSelectedMsgEventType = 7;
+
+        UiFormData selectedFormData = uiSelectedFormData;
+
+        if (selectedFormData.form) {
+            SendUISelectionEvents(uiLastMenuEventName, selectedFormData, UiEventEnumType_ItemSelected);
         }
     }
 
@@ -480,13 +537,37 @@ namespace UIEvents {
             return;
         }
 
+        //logger::trace("{}: message.type = [{}]", __func__, message.type.underlying());
+
         if (message.type == RE::UI_MESSAGE_TYPE::kScaleformEvent || message.type == RE::UI_MESSAGE_TYPE::kShow || message.type == RE::UI_MESSAGE_TYPE::kReshow) {
             UiFormData data = GetUiCraftingSelectedFormData(menu, message);
             ProcessUiItemChangedEvent(data, menuName);
         }
         else if (message.type == RE::UI_MESSAGE_TYPE::kUserEvent || message.type == RE::UI_MESSAGE_TYPE::kInventoryUpdate) {
-            menu->inputContext;
-            ProcessUiItemSelectEvent(message, menuName);
+            //bool isEnabled = false;
+            //RE::GFxValue gfxEnabled;
+            //if (menu->uiMovie->GetVariable(&gfxEnabled, "_root.Menu.InventoryLists.panelContainer.itemList.selectedEntry.enabled")) { //
+            //    //logger::trace("{}: got selectedEntry.enabled variable", __func__);
+
+            //    if (gfxEnabled.IsBool()) {
+            //        isEnabled = static_cast<bool>(gfxEnabled.GetBool());
+            //        //logger::trace("{}: selectedEntry.enabled = [{}]", __func__, isEnabled);
+            //    }
+            //}
+
+            //logger::trace("{}: messageBox open = [{}]", __func__, ui->IsMenuOpen(RE::MessageBoxMenu::MENU_NAME));
+
+            //RE::BSUIMessageData* msgData = static_cast<RE::BSUIMessageData*>(message.data);
+            //auto msgTypeString = gfuncs::GetBSUIMessageDataTypeString(msgData);
+            //logger::trace("{}: msgTypeString = [{}]", __func__, msgTypeString);
+
+            //if (msgTypeString == "Unrecognized") {
+            //    logger::trace("{}: Unrecognized string = [{}]", __func__, msgData->fixedStr);
+            //}
+
+            //if (isEnabled) {
+                ProcessUiItemSelectEvent(message, menuName);
+            //}
         }
         else if (message.type == RE::UI_MESSAGE_TYPE::kHide || message.type == RE::UI_MESSAGE_TYPE::kForceHide) {
             UiFormData akData;
@@ -527,6 +608,8 @@ namespace UIEvents {
                 //logger::trace("inventory event: event already processed, skipping");
                 return result;
             }
+
+            //RE::GPtr<RE::GFxMovieView> uiMovie
 
             lastUIEventRunTime = appRunTime;
 
@@ -1209,7 +1292,7 @@ namespace UIEvents {
 
         if (userEvents) {
             validSelectUserEventStrings.push_back(userEvents->rightEquip);
-            validSelectUserEventStrings.push_back(userEvents->leftEquip);
+            validSelectUserEventStrings.push_back(userEvents->leftEquip); 
             validSelectUserEventStrings.push_back(userEvents->unk318);
             validSelectUserEventStrings.push_back(userEvents->accept);
             validSelectUserEventStrings.push_back(userEvents->equip);

@@ -24,6 +24,7 @@ bool bIsSavingSerialization = false;
 bool DbSkseCppCallbackEventsAttached = false;
 std::string lastMenuOpened;
 std::vector<RE::BSFixedString> menusCurrentlyOpen;
+
 std::vector<RE::BSFixedString> refActivatedMenus = {
     RE::DialogueMenu::MENU_NAME,
     RE::BarterMenu::MENU_NAME,
@@ -33,6 +34,18 @@ std::vector<RE::BSFixedString> refActivatedMenus = {
     RE::BookMenu::MENU_NAME,
     RE::CraftingMenu::MENU_NAME
 };
+
+int numOfItemMenusCurrentOpen = 0;
+std::vector<RE::BSFixedString> itemMenus = {
+    RE::InventoryMenu::MENU_NAME,
+    RE::BarterMenu::MENU_NAME,
+    RE::ContainerMenu::MENU_NAME,
+    RE::GiftMenu::MENU_NAME,
+    RE::MagicMenu::MENU_NAME,
+    RE::CraftingMenu::MENU_NAME,
+    RE::FavoritesMenu::MENU_NAME
+};
+
 std::chrono::system_clock::time_point lastTimeMenuWasOpened;
 std::chrono::system_clock::time_point lastTimeGameWasPaused;
 std::map<RE::TESObjectBOOK*, int> skillBooksMap;
@@ -5544,6 +5557,19 @@ bool IsInMenu(RE::StaticFunctionTag*) {
     return inMenuMode;
 }
 
+bool IsMenuOpen(RE::StaticFunctionTag*, std::string menuName) {
+    std::transform(menuName.begin(), menuName.end(), menuName.begin(), tolower);
+
+    for (auto& menu : menusCurrentlyOpen) {
+        std::string sMenu = menu.c_str(); 
+        std::transform(sMenu.begin(), sMenu.end(), sMenu.begin(), tolower);
+        if (sMenu == menuName) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
     return lastMenuOpened;
 }
@@ -5728,6 +5754,35 @@ bool HasCollision(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef) {
     }
     return objRef->HasCollision();
 }
+
+int GetFurnitureWorkbenchType(RE::StaticFunctionTag*, RE::TESFurniture* akFurniture) {
+    if (!gfuncs::IsFormValid(akFurniture)) {
+        logger::warn("{}: akFurniture doesn't exist or isn't valid", __func__);
+        return -1;
+    }
+
+    return static_cast<int>(akFurniture->workBenchData.benchType.get());
+}
+
+
+int GetFurnitureWorkbenchSkillInt(RE::StaticFunctionTag*, RE::TESFurniture* akFurniture) {
+    if (!gfuncs::IsFormValid(akFurniture)) {
+        logger::warn("{}: akFurniture doesn't exist or isn't valid", __func__);
+        return -1;
+    }
+
+    return static_cast<int>(akFurniture->workBenchData.usesSkill.get());
+}
+
+std::string GetFurnitureWorkbenchSkillString(RE::StaticFunctionTag*, RE::TESFurniture* akFurniture) {
+    if (!gfuncs::IsFormValid(akFurniture)) {
+        logger::warn("{}: akFurniture doesn't exist or isn't valid", __func__);
+        return "";
+    }
+
+    int value = static_cast<int>(akFurniture->workBenchData.usesSkill.get());
+    return ActorValueIntsMap[value];
+} 
 
 //function copied from More Informative Console
 RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
@@ -9595,8 +9650,12 @@ enum EventsEnum {
     EventEnum_EndSheathe,
     EventEnum_OnContainerChanged,
     EventEnum_OnProjectileImpact,
+    EventEnum_OnItemCrafted,
+    EventEnum_OnItemsPickpocketed,
+    EventEnum_OnLocationCleared,
+    EventEnum_OnEnterBleedout,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnProjectileImpact
+    EventEnum_Last = EventEnum_OnEnterBleedout
 };
 
 struct EventData {
@@ -9994,8 +10053,14 @@ struct ProjectileImpactHook
                 return killOnCollision;
             }
 
+
             //logger::trace("impact event: getting runtimeData");
             auto& runtimeData = projectile->GetProjectileRuntimeData();
+
+            //auto niTransform = runtimeData.unk0A8;
+            //RE::NiPoint3 desiredTargetPoint;
+
+
             RE::BGSProjectile* projectileBase = projectile->GetProjectileBase();
             int impactResult = GetProjectileImpactResult(nullptr, projectile);
 
@@ -10010,6 +10075,9 @@ struct ProjectileImpactHook
             if (!runtimeData.impacts.empty()) {
                 auto* impactData = *runtimeData.impacts.begin();
                 if (impactData) {
+
+                    //desiredTargetPoint = impactData->desiredTargetLoc;
+
                     if (impactData->collidee) {
                         auto hitRefHandle = impactData->collidee;
                         if (hitRefHandle) {
@@ -10032,7 +10100,7 @@ struct ProjectileImpactHook
                     collidedLayer = impactData->collidedLayer.underlying();
                 }
             }
-
+            
             SaveRecentProjectile(projectile, shooter, target, ammo, gameHoursPassed, projectileBase, impactResult, collidedLayer, distanceTraveled, hitPartNodeName/*, runTime, now*/);
             
             return killOnCollision;
@@ -10075,22 +10143,7 @@ struct ProjectileImpactHook
     }
 };
 
-//struct InputEventSink : public RE::BSTEventSink<RE::InputEvent> {
-//    bool sinkAdded = false;
-//
-//    RE::BSEventNotifyControl ProcessEvent(const RE::InputEvent* event, RE::BSTEventSource<RE::InputEvent>*/*source*/) {
-//        if (!event) {
-//            logger::error("InputEvent event doesn't exist");
-//            return RE::BSEventNotifyControl::kContinue;
-//        }
-//
-//        auto* buttonEvent = event->AsButtonEvent();
-//
-//        return RE::BSEventNotifyControl::kContinue;
-//    }
-//};
-//
-//InputEventSink* inputEventSink;
+
 
 void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source, bool SneakAttack, bool HitBlocked, float currentGameTime) {
     if (!eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded) {
@@ -11170,6 +11223,229 @@ void CheckMenusCurrentlyOpen() {
     }
 }
 
+struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::ItemCrafted::Event* event, RE::BSTEventSource<RE::ItemCrafted::Event>*/*source*/) {
+        
+        if (!event) {
+            logger::error("Item Crafted Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        int benchType = 0;
+        std::string skill = "";
+        int count = 1;
+
+        RE::TESObjectREFR* workbenchRef = nullptr;
+        if (gfuncs::IsFormValid(gfuncs::menuRef)) {
+            workbenchRef = gfuncs::menuRef;
+            RE::TESForm* baseObj = workbenchRef->GetBaseObject(); 
+            if (gfuncs::IsFormValid(baseObj)) {
+                RE::TESFurniture* furniture = baseObj->As<RE::TESFurniture>();
+                benchType = GetFurnitureWorkbenchType(nullptr, furniture);
+                skill = GetFurnitureWorkbenchSkillString(nullptr, furniture);
+            }
+        }
+
+        RE::TESForm* craftedItem = nullptr;
+        if (gfuncs::IsFormValid(event->item)) {
+            craftedItem = event->item;
+        }
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnItemCrafted]->globalHandles;
+
+        CombineEventHandles(handles, craftedItem, eventDataPtrs[EventEnum_OnItemCrafted]->eventParamMaps[0]);
+        CombineEventHandles(handles, workbenchRef, eventDataPtrs[EventEnum_OnItemCrafted]->eventParamMaps[1]);
+
+        gfuncs::RemoveDuplicates(handles);
+
+        if (benchType == 1) { //CreateObject
+            count = UIEvents::uiLastSelectedFormData.count;
+        }
+
+        auto* args = RE::MakeFunctionArguments((RE::TESForm*)craftedItem, (RE::TESObjectREFR*)workbenchRef,
+            (int)count, (int)benchType, (std::string)skill);
+
+        SendEvents(handles, eventDataPtrs[EventEnum_OnItemCrafted]->sEvent, args);
+
+        logger::trace("Item Crafted Event: workbenchRef[{}] craftedItem[{}] benchType[{}] skill[{}]",
+            gfuncs::GetFormName(craftedItem), gfuncs::GetFormName(workbenchRef), benchType, skill);
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+ItemCraftedEventSink* itemCraftedEventSink;
+
+struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpocketed::Event> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::ItemsPickpocketed::Event* event, RE::BSTEventSource<RE::ItemsPickpocketed::Event>*/*source*/) {
+        if (!event) {
+            logger::error("Item Pickpocketed Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::TESForm* akForm = UIEvents::uiSelectedFormData.form;
+
+        RE::Actor* target = nullptr;
+        if (gfuncs::IsFormValid(gfuncs::menuRef)) {
+            target = gfuncs::menuRef->As<RE::Actor>();
+        }
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnItemsPickpocketed]->globalHandles;
+
+        if (gfuncs::IsFormValid(target)) {
+            CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnItemsPickpocketed]->eventParamMaps[0]);
+        }
+
+        if (gfuncs::IsFormValid(akForm)) {
+            CombineEventHandles(handles, akForm, eventDataPtrs[EventEnum_OnItemsPickpocketed]->eventParamMaps[1]);
+        }
+        
+        gfuncs::RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((RE::Actor*)target, (RE::TESForm*)akForm, (int)event->numItems);
+
+        SendEvents(handles, eventDataPtrs[EventEnum_OnItemsPickpocketed]->sEvent, args);
+
+        logger::trace("pickpocket event: numItems[{}] form[{}]", event->numItems, gfuncs::GetFormName(akForm));
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+ItemsPickpocketedEventSink* itemsPickpocketedEventSink;
+
+struct LocationClearedEventSink : public RE::BSTEventSink<RE::LocationCleared::Event> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::LocationCleared::Event* event, RE::BSTEventSource<RE::LocationCleared::Event>*/*source*/) {
+        if (!event) {
+            logger::error("Location Cleared Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::BGSLocation* location = playerRef->GetCurrentLocation();
+        if (gfuncs::IsFormValid(location)) {
+            bool locationCleared = location->IsCleared();
+            while (!locationCleared) {
+                location = location->parentLoc;
+                if (gfuncs::IsFormValid(location)) {
+                    bool locationCleared = location->IsCleared();
+                }
+                else {
+                    break;
+                }
+            }
+        }
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnLocationCleared]->globalHandles;
+
+        if (gfuncs::IsFormValid(location)) {
+            CombineEventHandles(handles, location, eventDataPtrs[EventEnum_OnLocationCleared]->eventParamMaps[0]);
+        }
+        else {
+            location = nullptr;
+        }
+
+        auto* args = RE::MakeFunctionArguments((RE::BGSLocation*)location);
+
+        SendEvents(handles, eventDataPtrs[EventEnum_OnLocationCleared]->sEvent, args);
+
+        logger::trace("location cleared event: location[{}]", gfuncs::GetFormName(location));
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+LocationClearedEventSink* locationClearedEventSink;
+
+struct EnterBleedoutEventSink : public RE::BSTEventSink<RE::TESEnterBleedoutEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESEnterBleedoutEvent* event, RE::BSTEventSource<RE::TESEnterBleedoutEvent>*/*source*/) {
+        if (!event) {
+            logger::error("Enter Bleedout Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::Actor* akActor = nullptr;
+
+        if (event->actor) {
+            auto* actorRef = event->actor.get();
+            if (gfuncs::IsFormValid(actorRef)) {
+                akActor = actorRef->As<RE::Actor>();
+            }
+        }
+
+        if (!gfuncs::IsFormValid(akActor)) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEnterBleedout]->globalHandles;
+        CombineEventHandles(handles, akActor, eventDataPtrs[EventEnum_OnEnterBleedout]->eventParamMaps[0]);
+
+        auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor);
+
+        SendEvents(handles, eventDataPtrs[EventEnum_OnEnterBleedout]->sEvent, args);
+
+        logger::trace("Enter Bleedout Event: akActor[{}]", gfuncs::GetFormName(akActor));
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+EnterBleedoutEventSink* enterBleedoutEventSink;
+
+bool IsItemMenuOpen() {
+    for (auto& menu : itemMenus) {
+        if (ui->IsMenuOpen(menu)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+class InputEventSink : public RE::BSTEventSink<RE::InputEvent*> {
+
+public:
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* eventPtr, RE::BSTEventSource<RE::InputEvent*>*) {
+
+        //logger::trace("input event");
+
+        //don't want to send ui select events to papyrus if message box context is open, only when selecting item.
+        if (ui->IsMenuOpen(RE::MessageBoxMenu::MENU_NAME)) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        auto* event = *eventPtr;
+        if (!event) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (event->eventType == RE::INPUT_EVENT_TYPE::kButton) {
+            auto* buttonEvent = event->AsButtonEvent();
+            if (buttonEvent) {
+                if (buttonEvent->IsDown()) {
+                    if (buttonEvent->GetIDCode() == 28) { //enter key pressed
+                        if (IsItemMenuOpen()) {
+                            UIEvents::ProcessUiItemSelectEvent();
+                            logger::trace("input Event: button[{}] pressed. ProcessUiItemSelectEvent", buttonEvent->GetIDCode());
+                        }
+                    }
+                }
+            }
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+InputEventSink* inputEventSink;
+
 struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*/*source*/) {
         //this sink is for managing timers and GetCurrentMenuOpen function.
@@ -11179,9 +11455,13 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        //logger::debug("Menu Open Close Event, menu[{}], opened[{}]", event->menuName, event->opening);
+        //logger::trace("Menu Open Close Event, menu[{}], opened[{}]", event->menuName, event->opening);
 
         if (event->menuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
+
+            RE::BSFixedString bsMenuName = event->menuName;
+
+
             if (event->opening) {
                 lastMenuOpened = event->menuName;
 
@@ -11198,11 +11478,21 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                 }
                 menusCurrentlyOpen.push_back(event->menuName);
 
-                RE::BSFixedString bsMenuName = event->menuName;
-
                 if (gfuncs::GetIndexInVector(refActivatedMenus, bsMenuName) > -1) {
                     gfuncs::menuRef = gfuncs::lastPlayerActivatedRef;
                     logger::trace("Menu[{}] opened. saved menuRef[{}]", bsMenuName, gfuncs::GetFormName(gfuncs::menuRef));
+                }
+
+                if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
+                    numOfItemMenusCurrentOpen += 1;
+
+                    if (UIEvents::registeredUIEventDatas.size() > 0) {
+                        if (!inputEventSink->sinkAdded) {
+                            inputEventSink->sinkAdded = true;
+                            RE::BSInputDeviceManager::GetSingleton()->AddEventSink(inputEventSink);
+                            logger::trace("item menu [{}] opened. Added input event sink", bsMenuName);
+                        }
+                    }
                 }
             }
             else {
@@ -11223,6 +11513,18 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                     auto now = std::chrono::system_clock::now();
                     UpdateNoMenuModeTimers(gfuncs::timePointDiffToFloat(now, lastTimeMenuWasOpened));
                     logger::trace("inMenuMode = false");
+                }
+
+                if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
+                    numOfItemMenusCurrentOpen -= 1;
+
+                    if (numOfItemMenusCurrentOpen == 0) {
+                        if (inputEventSink->sinkAdded) {
+                            inputEventSink->sinkAdded = false;
+                            RE::BSInputDeviceManager::GetSingleton()->RemoveEventSink(inputEventSink);
+                            logger::trace("item menu [{}] closed. Removed input event sink", bsMenuName);
+                        }
+                    }
                 }
             }
         }
@@ -11473,8 +11775,47 @@ void AddSink(int index) {
             logger::debug("{}, EventEnum_OnProjectileImpact sink added", __func__);
         }
         break;
+
+    case EventEnum_OnItemCrafted:
+        if (!itemCraftedEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnItemCrafted]->isEmpty()) {
+            itemCraftedEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnItemCrafted]->sinkAdded = true;
+            UIEvents::InstallUiEventHook(UIEvents::UiItemMenuEnum_Crafting_Menu); //track crafting menu selection data, (mostly needed for item count).
+            RE::ItemCrafted::GetEventSource()->AddEventSink(itemCraftedEventSink);
+            logger::debug("{}, EventEnum_OnItemCrafted sink added", __func__);
+        }
+        break;
+
+    case EventEnum_OnItemsPickpocketed:
+        if (!itemsPickpocketedEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnItemsPickpocketed]->isEmpty()) {
+            itemsPickpocketedEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnItemsPickpocketed]->sinkAdded = true;
+            UIEvents::InstallUiEventHook(UIEvents::UiItemMenuEnum_ContainerMenu); //track container menu selection data, (to get the form taken / pickpocketed).
+            RE::ItemsPickpocketed::GetEventSource()->AddEventSink(itemsPickpocketedEventSink);
+            logger::debug("{}, EventEnum_OnItemsPickpocketed sink added", __func__);
+        }
+        break;
+
+    case EventEnum_OnLocationCleared:
+        if (!locationClearedEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnLocationCleared]->isEmpty()) {
+            locationClearedEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnLocationCleared]->sinkAdded = true;
+            RE::LocationCleared::GetEventSource()->AddEventSink(locationClearedEventSink);
+            logger::debug("{}, EventEnum_OnLocationCleared sink added", __func__);
+        }
+        break;
+
+    case EventEnum_OnEnterBleedout:
+        if (!enterBleedoutEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnEnterBleedout]->isEmpty()) {
+            enterBleedoutEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnEnterBleedout]->sinkAdded = true;
+            eventSourceholder->AddEventSink(enterBleedoutEventSink);
+            logger::debug("{}, EventEnum_OnEnterBleedout sink added", __func__);
+        }
+        break;
+
     }
-}
+} 
 
 void RemoveSink(int index) {
     logger::debug("removing sink {}", index);
@@ -11646,6 +11987,42 @@ void RemoveSink(int index) {
         if (eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded && eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
             eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded = false;
             logger::debug("{}, EventEnum_OnProjectileImpact sink removed", __func__);
+        }
+        break;
+
+    case EventEnum_OnItemCrafted:
+        if (itemCraftedEventSink->sinkAdded && eventDataPtrs[EventEnum_OnItemCrafted]->isEmpty()) {
+            itemCraftedEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnItemCrafted]->sinkAdded = false;
+            RE::ItemCrafted::GetEventSource()->RemoveEventSink(itemCraftedEventSink);
+            logger::debug("{}, EventEnum_OnItemCrafted sink removed", __func__);
+        }
+        break;
+
+    case EventEnum_OnItemsPickpocketed:
+        if (itemsPickpocketedEventSink->sinkAdded && eventDataPtrs[EventEnum_OnItemsPickpocketed]->isEmpty()) {
+            itemsPickpocketedEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnItemsPickpocketed]->sinkAdded = false;
+            RE::ItemsPickpocketed::GetEventSource()->RemoveEventSink(itemsPickpocketedEventSink);
+            logger::debug("{}, EventEnum_OnItemsPickpocketed sink removed", __func__);
+        }
+        break;
+
+    case EventEnum_OnLocationCleared:
+        if (locationClearedEventSink->sinkAdded && eventDataPtrs[EventEnum_OnLocationCleared]->isEmpty()) {
+            locationClearedEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnLocationCleared]->sinkAdded = false;
+            RE::LocationCleared::GetEventSource()->RemoveEventSink(locationClearedEventSink);
+            logger::debug("{}, EventEnum_OnLocationCleared sink removed", __func__);
+        }
+        break;
+
+    case EventEnum_OnEnterBleedout:
+        if (enterBleedoutEventSink->sinkAdded && eventDataPtrs[EventEnum_OnEnterBleedout]->isEmpty()) {
+            enterBleedoutEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnEnterBleedout]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(enterBleedoutEventSink);
+            logger::debug("{}, EventEnum_OnEnterBleedout sink removed", __func__);
         }
         break;
     }
@@ -12034,6 +12411,10 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_EndSheathe] = new EventData("OnEndSheatheGlobal", EventEnum_EndSheathe, 2, 'EA10');                     //actorActionEventSink
         eventDataPtrs[EventEnum_OnContainerChanged] = new EventData("OnContainerChangedGlobal", EventEnum_OnContainerChanged, 4, 'ECc0');
         eventDataPtrs[EventEnum_OnProjectileImpact] = new EventData("OnProjectileImpactGlobal", EventEnum_OnProjectileImpact, 5, 'PIi0');
+        eventDataPtrs[EventEnum_OnItemCrafted] = new EventData("OnItemCraftedGlobal", EventEnum_OnItemCrafted, 2, 'ICa0');
+        eventDataPtrs[EventEnum_OnItemsPickpocketed] = new EventData("OnItemsPickpocketedGlobal", EventEnum_OnItemsPickpocketed, 2, 'IPa0');
+        eventDataPtrs[EventEnum_OnLocationCleared] = new EventData("OnLocationClearedGlobal", EventEnum_OnLocationCleared, 1, 'LCa0');
+        eventDataPtrs[EventEnum_OnEnterBleedout] = new EventData("OnEnterBleedoutGlobal", EventEnum_OnEnterBleedout, 1, 'EBa0');
     }
 
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -12051,7 +12432,11 @@ void CreateEventSinks() {
     if (!openCloseEventSink) { openCloseEventSink = new OpenCloseEventSink(); }
     if (!actorActionEventSink) { actorActionEventSink = new ActorActionEventSink(); }
     if (!menuOpenCloseEventSink) { menuOpenCloseEventSink = new MenuOpenCloseEventSink(); }
-    //if (!inputEventSink) { inputEventSink = new InputEventSink(); }
+    if (!itemCraftedEventSink) { itemCraftedEventSink = new ItemCraftedEventSink(); }
+    if (!itemsPickpocketedEventSink) { itemsPickpocketedEventSink = new ItemsPickpocketedEventSink(); }
+    if (!locationClearedEventSink) { locationClearedEventSink = new LocationClearedEventSink(); }
+    if (!enterBleedoutEventSink) { enterBleedoutEventSink = new EnterBleedoutEventSink(); }
+    if (!inputEventSink) { inputEventSink = new InputEventSink(); }
 
     //always activate to track lastPlayerActivatedRef
     eventSourceholder->AddEventSink(activateEventSink);
@@ -12169,6 +12554,11 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("ExecuteConsoleCommand", "DbSkseFunctions", ExecuteConsoleCommand);
     vm->RegisterFunction("HasCollision", "DbSkseFunctions", HasCollision);
     vm->RegisterFunction("GetCurrentMusicType", "DbSkseFunctions", GetCurrentMusicType);
+
+    vm->RegisterFunction("GetFurnitureWorkbenchType", "DbSkseFunctions", GetFurnitureWorkbenchType);
+    vm->RegisterFunction("GetFurnitureWorkbenchSkillInt", "DbSkseFunctions", GetFurnitureWorkbenchSkillInt);
+    vm->RegisterFunction("GetFurnitureWorkbenchSkillString", "DbSkseFunctions", GetFurnitureWorkbenchSkillString);
+
     vm->RegisterFunction("GetNumberOfTracksInMusicType", "DbSkseFunctions", GetNumberOfTracksInMusicType);
     vm->RegisterFunction("GetMusicTypeTrackIndex", "DbSkseFunctions", GetMusicTypeTrackIndex);
     vm->RegisterFunction("SetMusicTypeTrackIndex", "DbSkseFunctions", SetMusicTypeTrackIndex);
@@ -12377,9 +12767,10 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             //    logger::info("kDeleteGame: sent right before deleting the .skse cosave and the .ess save");
             //    break;
 
-        //case SKSE::MessagingInterface::kInputLoaded:
-            //    logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
-            //    break;
+    case SKSE::MessagingInterface::kInputLoaded:
+        logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
+        
+        break;
 
     case SKSE::MessagingInterface::kNewGame:
         //logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
@@ -12400,6 +12791,8 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         SaveSkillBooks();
         logger::trace("kDataLoaded: sent after the data handler has loaded all its forms");
         break;
+
+        
 
         //default: //
             //    logger::info("Unknown system message of type: {}", message->type);
