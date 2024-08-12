@@ -142,18 +142,30 @@ EndEvent
 ;note that OnHitGlobal sends Ammo as well as projectile.  
 ;This is because the projectile in this event is bugged, it doesn't detect reliably. 
 ;This sends the Ammo the attacker has equipped if the Source is a bow or crossbow.
-Event OnHitGlobal(ObjectReference Attacker, ObjectReference Target, Form Source, Ammo akAmmo, Projectile akProjectile, bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)
+Event OnHitGlobal(ObjectReference Attacker, ObjectReference Target, Form Source, Ammo akAmmo, Projectile akProjectile, \
+	bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)
 EndEvent
 
 ;impactResults are: 0 = none, 1 = destroy, 2 = bounce, 3 = impale, 4 = stick
 ;for collided layer see DbSkseFunctions.GetCollisionLayerName()
+;projectileMarker is an xMarker that is placed at the projectile at the point of impact so you can use functions 
+;GetPosition, GetAngle and GetHeadingAngle to compare with the target
 ;damagedNodeName only works on actors. e.g "SHIELD", "NPC Head [Head]", "NPC R UpperArm [RUar]" ect.
+;projectileHitTranslation is only valid for actors. projectileHitTranslation.length will be 6 if the data is valid.
+;[0] = Xposition, [1] = Yposition, [2] = Zposition, 
+;[3] = XhitDirection, [4] = YhitDirection, [5] = ZhitDirection
 ;this event requires the iMaxArrowsSavedPerReference setting in DbSkseFunctions.ini to be greater than 0.
-Event OnProjectileImpactGlobal(ObjectReference shooter, ObjectReference target, Form Source, Ammo ammoSource, Projectile akProjectile, bool abSneakAttack, bool abHitBlocked, int impactResult, int collidedLayer, float distanceTraveled, string damagedNodeName)
+Event OnProjectileImpactGlobal(ObjectReference shooter, ObjectReference target, Form Source, Ammo ammoSource, \
+	Projectile akProjectile, bool abSneakAttack, bool abHitBlocked, int impactResult, int collidedLayer, \
+	float distanceTraveled, string damagedNodeName, ObjectReference projectileMarker, float[] projectileHitTranslation)
 EndEvent
 
 Event OnMagicEffectAppliedGlobal(ObjectReference Caster, ObjectReference Target, MagicEffect akEffect)
 Endevent
+
+Event OnActiveMagicEffectAppliedGlobal(ObjectReference Caster, ObjectReference Target, Form akSource, MagicEffect akEffect, \
+	ActiveMagicEffect akActiveEffect, int castringSource, int conditionStatus)
+EndEvent
 
 ;Event sent when an ObjectReference casts a spell. Source could be a spell, enchantment, potion or ingredient.
 Event OnSpellCastGlobal(ObjectReference Caster, Form Source)
@@ -204,6 +216,9 @@ EndEvent
 
 Event OnEnterBleedoutGlobal(Actor Victim)
 Endevent
+
+Event OnRaceSwitchCompleteGlobal(Actor akActor, Race akOldRace, Race akNewRace)
+EndEvent
 
 ;Note that this can be used as ItemAdded or ItemRemoved event. 
 Event OnContainerChangedGlobal(ObjectReference newContainer, ObjectReference oldContainer, ObjectReference itemReference, Form baseObj, int itemCount)

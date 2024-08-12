@@ -1,7 +1,9 @@
 Scriptname DbSkseFunctions Hidden 
-;compiled with CommonLib NG, so should work with Skyrim SE to Skyrim AE 1.6.640.0.8
+;compiled with CommonLib NG, so should work with Skyrim SE and AE
 
 Float Function GetVersion() Global Native
+
+Function BindCreateFormArrayFunction(string akFunctionName, string akScriptName) Global Native
 
 ;get and set text from system clipboard, for copy / paste functionality
 String Function GetClipBoardText() Global Native
@@ -172,6 +174,18 @@ ObjectReference[] function GetAllQuestObjectRefs() Global Native
 
 ;Get all quest object references in containerRef
 ObjectReference[] function GetQuestObjectRefsInContainer(ObjectReference containerRef) Global Native
+
+TextureSet Function GetProjectileBaseDecal(projectile akProjectile) Global Native
+Bool Function SetProjectileBaseDecal(projectile akProjectile, TextureSet decalTextureSet) Global Native
+
+Explosion Function GetProjectileBaseExplosion(projectile akProjectile) Global Native
+Bool Function SetProjectileBaseExplosion(projectile akProjectile, Explosion akExplosion) Global Native
+
+Float Function GetProjectileBaseCollisionRadius(projectile akProjectile) Global Native
+Bool Function SetProjectileBaseCollisionRadius(projectile akProjectile, Float radius) Global Native
+
+Float Function GetProjectileBaseCollisionConeSpread(projectile akProjectile) Global Native
+Bool Function SetProjectileBaseCollisionConeSpread(projectile akProjectile, Float coneSpread) Global Native
 
 ;get the type of the projectileRef
 ;projectile types are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow, 0 = unrecognized.
@@ -633,12 +647,14 @@ function SetBookRead(book akBook, bool read) Global Native
 ;if read is true, set all books in game as 'read', otherwise set all books in game as 'unread'
 function SetAllBooksRead(bool read) Global Native
 
-;not working currently, don't use. Will fix later.
-ActiveMagicEffect[] Function GetActiveEffectsOnActor(Actor akActor, Actor casterFilter = none, spell SpellFilter = none, MagicEffect effectFilter = none, bool MatchAll = true) Global Native
-
 ;get source that the ActiveMagicEffect came from
 ;Could be a spell, enchantment, potion, or ingredient. Use GetType() to find out which.
 Form Function GetActiveEffectSource(ActiveMagicEffect akEffect) Global Native
+
+; -1 = not applicable or not found 
+; 0 = conditions not met, the active effect is not affecting the reference it's on. 
+; 1 = conditions met, the active effect is affecting the reference it's on
+int Function GetActiveMagicEffectConditionStatus(ActiveMagicEffect akEffect) Global Native
 
 ;Get casting source that the ActiveMagicEffect came from
 ;kLeftHand = 0,
@@ -652,6 +668,15 @@ MagicEffect[] Function GetMagicEffectsForForm(Form akForm) Global Native
 
 ;is the form a magic item such as spell, potion, shout, enchantment, scroll ect...?
 bool Function IsFormMagicItem(Form akForm) Global Native
+
+;is the akMagicEffect currently affecting the ref?
+;if magicSource is not none, only returns true if the activeMagicEffect matches the akMagicEffect and it's condition status is true and comes from the magicSource (spell, shout, potion ect)
+;Otherwise, returns true if activeMagicEffect matches the akMagicEffect and it's condition status is true regardless of source.
+bool Function IsMagicEffectActiveOnRef(ObjectReference ref, MagicEffect akMagicEffect, Form magicSource = none) Global Native
+
+;if magicSource is not none, only dispels effects that come from the magicSource (spell, shout, potion ect)
+;Otherwise, dispels all activeMagicEffects that match the akMagicEffect
+Function DispelMagicEffectOnRef(ObjectReference ref, MagicEffect akMagicEffect, Form magicSource = none) Global Native
 
 Bool Function IsActorAttacking(actor akActor) Global Native
 Bool Function IsActorPowerAttacking(actor akActor) Global Native
@@ -667,7 +692,11 @@ Bool Function IsActorOnFlyingMount(actor akActor) Global Native
 Bool Function IsActorAMount(actor akActor) Global Native
 Bool Function IsActorInMidAir(actor akActor) Global Native
 Bool Function IsActorInRagdollState(actor akActor) Global Native
+Bool Function IsActorFleeing(actor akActor) Global Native
 int Function GetDetectionLevel(actor akActor, actor akTarget) Global Native
+
+;ward states are 0 = absorbing, 1 = break, 2 = none
+int Function GetActorWardState(actor akActor) Global Native
 
 String Function GetKeywordString(keyword akKeyword) Global Native
 
