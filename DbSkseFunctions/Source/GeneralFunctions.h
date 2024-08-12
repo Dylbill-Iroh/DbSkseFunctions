@@ -20,6 +20,7 @@ namespace gfuncs {
     RE::SkyrimVM* svm;
     RE::TESObjectREFR* lastPlayerActivatedRef = nullptr;
     RE::TESObjectREFR* menuRef = nullptr;
+    RE::Actor* playerRef;
 
     inline int GetRandomInt(int min, int max) {
         // return clib_util::RNG().generate<std::uint32_t>(a_min, a_max);
@@ -205,6 +206,33 @@ namespace gfuncs {
             return NULL;
         }
         return handle;
+    }
+
+    RE::Actor* GetPlayerDialogueTarget() {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (IsFormValid(form)) {
+                RE::Actor* actor = form->As<RE::Actor>();
+                if (IsFormValid(actor)) {
+                    RE::ObjectRefHandle dialogueTargetHandle = actor->GetActorRuntimeData().dialogueItemTarget;
+                    if (dialogueTargetHandle) {
+                        auto ptr = dialogueTargetHandle.get();
+                        if (ptr) {
+                            auto* ref = ptr.get();
+                            if (gfuncs::IsFormValid(ref)) {
+                                RE::Actor* dialogueActorRef = ref->As<RE::Actor>();
+                                if (gfuncs::IsFormValid(dialogueActorRef)) {
+                                    if (dialogueActorRef == playerRef) {
+                                        return actor;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return nullptr;
     }
 
     template< typename T >
@@ -770,5 +798,6 @@ namespace gfuncs {
             svm = RE::SkyrimVM::GetSingleton();
             std::srand((unsigned)std::time(NULL));
         }
+        if (!playerRef) { playerRef = RE::TESForm::LookupByID<RE::TESForm>(20)->As<RE::Actor>(); }
     }
 }

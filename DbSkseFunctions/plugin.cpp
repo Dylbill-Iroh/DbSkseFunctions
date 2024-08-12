@@ -49,15 +49,19 @@ std::vector<RE::BSFixedString> itemMenus = {
 std::chrono::system_clock::time_point lastTimeMenuWasOpened;
 std::chrono::system_clock::time_point lastTimeGameWasPaused;
 std::map<RE::TESObjectBOOK*, int> skillBooksMap;
+std::map<RE::Actor*, RE::TESRace*> savedActorRacesMap;
+bool actorRacesSaved = false;
 int gameTimerPollingInterval = 1500; //in milliseconds
 int iMaxArrowsSavedPerReference = 0;
 float secondsPassedGameNotPaused = 0.0;
 float lastFrameDelta = 0.1;
 std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
 RE::PlayerCharacter* player;
-RE::Actor* playerRef;
+//RE::Actor* gfuncs::playerRef;
+RE::TESForm* xMarker;
 RE::BSScript::IVirtualMachine* gvm;
 //RE::SkyrimVM* gfuncs::svm;
+RE::NiPoint3 zeroPosition{0.0, 0.0, 0.0};
 RE::UI* ui;
 RE::Calendar* calendar;
 RE::ScriptEventSourceHolder* eventSourceholder;
@@ -91,6 +95,8 @@ struct TrackedProjectileData {
     int collidedLayer;
     float distanceTraveled;
     std::string hitPartNodeName;
+    RE::TESObjectREFR* projectileMarker;
+    //RE::TESObjectREFR* targetMarker;
 
     //std::chrono::system_clock::time_point timeStamp;
     //uint32_t runTimeStamp;
@@ -152,6 +158,24 @@ void SaveSkillBooks() {
         }
     }
     //gfuncs::logFormMap(skillBooksMap);
+}
+
+void SaveActorRaces() {
+    if (!actorRacesSaved) {
+        actorRacesSaved = true;
+
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                RE::Actor* actor = form->As<RE::Actor>();
+                if (gfuncs::IsFormValid(actor)) {
+                    savedActorRacesMap[actor] = actor->GetRace();
+                }
+            }
+        }
+    }
+    //gfuncs::logFormMap(savedActorRacesMap);
 }
 
 std::map<int, std::string>ActorValueIntsMap = {
@@ -530,6 +554,36 @@ bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptNa
         }
     }
     return false;
+}
+
+RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedString& sScriptName) {
+    if (handle == NULL) {
+        return nullptr;
+    }
+
+    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+    if (!vm) {
+        return nullptr;
+    }
+
+    auto it = vm->attachedScripts.find(handle);
+    if (it != vm->attachedScripts.end()) {
+        for (auto& attachedScript : it->second) {
+            
+            if (attachedScript) {
+                auto* script = attachedScript.get();
+                if (script) {
+                    auto info = script->GetTypeInfo();
+                    if (info) {
+                        if (info->name == sScriptName) {
+                            return script;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return nullptr;
 }
 
 bool IsScriptAttachedToRef(RE::TESObjectREFR* ref, RE::BSFixedString sScriptName) {
@@ -1949,7 +2003,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(6.7);
+    return float(6.9);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2632,7 +2686,7 @@ std::vector<RE::TESForm*> GetAllConstructibleObjects(RE::StaticFunctionTag*, RE:
     if (gfuncs::IsFormValid(createdObject, false)) {
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false)) {
-                RE::BGSConstructibleObject* object = form->As<RE::BGSConstructibleObject>(); 
+                RE::BGSConstructibleObject* object = form->As<RE::BGSConstructibleObject>();
                 if (gfuncs::IsFormValid(object, false)) {
                     if (object->createdItem == createdObject) {
                         forms.push_back(form);
@@ -3267,6 +3321,93 @@ int GetProjectileType(RE::BGSProjectile* projectile) {
     }
     return 0;
 }
+
+RE::BGSTextureSet* GetProjectileBaseDecal(RE::StaticFunctionTag*, RE::BGSProjectile* projectile) {
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectile doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    if (gfuncs::IsFormValid(projectile->data.decalData)) {
+        return projectile->data.decalData;
+    }
+    return nullptr;
+}
+
+bool SetProjectileBaseDecal(RE::StaticFunctionTag*, RE::BGSProjectile* projectile, RE::BGSTextureSet* decalTextureSet) {
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectile doesn't exist or isn't valid", __func__);
+        return false;
+    }
+
+    projectile->data.decalData = decalTextureSet;
+
+    return (projectile->data.decalData == decalTextureSet);
+}
+
+RE::BGSExplosion* GetProjectileBaseExplosion(RE::StaticFunctionTag*, RE::BGSProjectile* projectile) {
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectile doesn't exist or isn't valid", __func__);
+        return nullptr;
+    }
+
+    if (gfuncs::IsFormValid(projectile->data.explosionType)) {
+        return projectile->data.explosionType;
+    }
+    return nullptr;
+}
+
+bool SetProjectileBaseExplosion(RE::StaticFunctionTag*, RE::BGSProjectile* projectile, RE::BGSExplosion* akExplosion) {
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectile doesn't exist or isn't valid", __func__);
+        return false;
+    }
+
+    projectile->data.explosionType = akExplosion;
+
+    return (projectile->data.explosionType == akExplosion);
+}
+
+float GetProjectileBaseCollisionRadius(RE::StaticFunctionTag*, RE::BGSProjectile* projectile) {
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectile doesn't exist or isn't valid", __func__);
+        return 0.0;
+    }
+
+    return projectile->data.collisionRadius;
+}
+
+bool SetProjectileBaseCollisionRadius(RE::StaticFunctionTag*, RE::BGSProjectile* projectile, float radius) {
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectile doesn't exist or isn't valid", __func__);
+        return false;
+    }
+
+    projectile->data.collisionRadius = radius;
+
+    return (projectile->data.collisionRadius == radius);
+}
+
+float GetProjectileBaseCollisionConeSpread(RE::StaticFunctionTag*, RE::BGSProjectile* projectile) {
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectile doesn't exist or isn't valid", __func__);
+        return 0.0;
+    }
+
+    return projectile->data.coneSpread;
+}
+
+bool SetProjectileBaseCollisionConeSpread(RE::StaticFunctionTag*, RE::BGSProjectile* projectile, float coneSpread) {
+    if (!gfuncs::IsFormValid(projectile)) {
+        logger::warn("{}: projectile doesn't exist or isn't valid", __func__);
+        return false;
+    }
+
+    projectile->data.coneSpread = coneSpread;
+
+    return (projectile->data.coneSpread == coneSpread);
+}
+
 
 int GetProjectileRefType(RE::StaticFunctionTag*, RE::TESObjectREFR* projectileRef) {
     if (!gfuncs::IsFormValid(projectileRef)) {
@@ -5561,7 +5702,7 @@ bool IsMenuOpen(RE::StaticFunctionTag*, std::string menuName) {
     std::transform(menuName.begin(), menuName.end(), menuName.begin(), tolower);
 
     for (auto& menu : menusCurrentlyOpen) {
-        std::string sMenu = menu.c_str(); 
+        std::string sMenu = menu.c_str();
         std::transform(sMenu.begin(), sMenu.end(), sMenu.begin(), tolower);
         if (sMenu == menuName) {
             return true;
@@ -5782,7 +5923,7 @@ std::string GetFurnitureWorkbenchSkillString(RE::StaticFunctionTag*, RE::TESFurn
 
     int value = static_cast<int>(akFurniture->workBenchData.usesSkill.get());
     return ActorValueIntsMap[value];
-} 
+}
 
 //function copied from More Informative Console
 RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
@@ -5971,7 +6112,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
 
     RE::TESWordOfPower* word = akShout->variations[0].word;
     if (gfuncs::IsFormValid(word)) {
-        //playerRef->UnlockWord(word);
+        //gfuncs::gfuncs::install->UnlockWord(word);
         logger::debug("{} unlock word 1 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID())); //didn't find a teachword function in NG, so using console command as workaround. 
         ExecuteConsoleCommand(nullptr, command, nullptr);
@@ -5980,7 +6121,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
 
     word = akShout->variations[1].word;
     if (gfuncs::IsFormValid(word)) {
-        //playerRef->UnlockWord(word);
+        //gfuncs::playerRef->UnlockWord(word);
         logger::debug("{} unlock word 2 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
         ExecuteConsoleCommand(nullptr, command, nullptr);
@@ -5989,7 +6130,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
 
     word = akShout->variations[2].word;
     if (gfuncs::IsFormValid(word)) {
-        //playerRef->UnlockWord(word);
+        //gfuncs::playerRef->UnlockWord(word);
         logger::debug("{} unlock word 3 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
         ExecuteConsoleCommand(nullptr, command, nullptr);
@@ -6323,6 +6464,41 @@ void SetAllBooksRead(RE::StaticFunctionTag*, bool read) {
     }
 }
 
+RE::TESForm* nullForm;
+
+RE::TESForm* FindNullForm() {
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+
+    for (auto& [id, form] : *allForms) {
+        if (form) {
+            if (form->GetFormType() == RE::FormType::None) {
+                logger::trace("null TESForm* found");
+                return form;
+            }
+        }
+    }
+    return nullptr;
+}
+
+int GetActiveMagicEffectConditionStatus(RE::StaticFunctionTag*, RE::ActiveEffect* akEffect) {
+    if (!akEffect) {
+        logger::warn("{} akEffect doesn't exist", __func__);
+        return -1;
+    }
+    if (akEffect->conditionStatus) {
+        //logger::trace("{}: conditionStatus found", __func__);
+        if (akEffect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
+            //logger::trace("{}: conditionStatus is kTrue", __func__);
+            return 1;
+        }
+        else if (akEffect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kFalse)) {
+            //logger::trace("{}: conditionStatus is kFalse", __func__);
+            return 0;
+        }
+    }
+    return -1;
+}
+
 RE::TESForm* GetActiveEffectSource(RE::StaticFunctionTag*, RE::ActiveEffect* akEffect) {
     if (!akEffect) {
         logger::warn("{} akEffect doesn't exist", __func__);
@@ -6376,6 +6552,128 @@ bool IsFormMagicItem(RE::StaticFunctionTag*, RE::TESForm* akForm) {
     }
     else {
         return false;
+    }
+}
+
+bool IsMagicEffectActiveOnRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE::EffectSetting* akMagicEffect, RE::TESForm* magicSource) {
+    //logger::trace("{}: called", __func__);
+
+    if (!gfuncs::IsFormValid(ref)) {
+        return false;
+    }
+
+    if (!gfuncs::IsFormValid(akMagicEffect)) {
+        return false;
+    }
+
+    RE::MagicTarget* magicTarget = ref->GetMagicTarget();
+
+    if (magicTarget) {
+        auto activeEffects = magicTarget->GetActiveEffectList();
+        if (activeEffects) {
+
+            if (gfuncs::IsFormValid(magicSource)) {
+                for (RE::ActiveEffect* effect : *activeEffects) {
+                    if (effect) {
+                        if (!IsBadReadPtr(effect, sizeof(effect))) {
+                            auto* baseEffect = effect->GetBaseObject();
+                            if (gfuncs::IsFormValid(baseEffect)) {
+                                if (baseEffect == akMagicEffect && effect->spell == magicSource) {
+                                    if (effect->conditionStatus) {
+                                        if (effect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
+                                            logger::trace("{}: conditionStatus for effect[{}] from source[{}] on ref[{}] is True",
+                                                __func__, gfuncs::GetFormName(baseEffect), gfuncs::GetFormName(magicSource), gfuncs::GetFormName(ref));
+
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                for (RE::ActiveEffect* effect : *activeEffects) {
+                    if (effect) {
+                        if (!IsBadReadPtr(effect, sizeof(effect))) {
+                            auto* baseEffect = effect->GetBaseObject();
+                            if (gfuncs::IsFormValid(baseEffect)) {
+                                if (baseEffect == akMagicEffect) {
+                                    if (effect->conditionStatus) {
+                                        if (effect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
+                                            logger::trace("{}: conditionStatus for effect[{}] on ref[{}] is True",
+                                                __func__, gfuncs::GetFormName(baseEffect), gfuncs::GetFormName(ref));
+
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+//Function DispelMagicEffectOnRef(ObjectReference ref, MagicEffect akMagicEffect, Form magicSource = none) Global Native
+void DispelMagicEffectOnRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE::EffectSetting* akMagicEffect, RE::TESForm* magicSource) {
+    //logger::trace("{}: called", __func__);
+
+    if (!gfuncs::IsFormValid(ref)) {
+        return;
+    }
+
+    if (!gfuncs::IsFormValid(akMagicEffect)) {
+        return;
+    }
+
+    auto effectName = gfuncs::GetFormName(akMagicEffect);
+    auto refName = gfuncs::GetFormName(ref);
+
+    RE::MagicTarget* magicTarget = ref->GetMagicTarget();
+
+    if (magicTarget) {
+        //logger::trace("{}: magicTarget found", __func__);
+
+        auto activeEffects = magicTarget->GetActiveEffectList();
+        if (activeEffects) {
+            if (gfuncs::IsFormValid(magicSource)) {
+                auto sourceName = gfuncs::GetFormName(magicSource);
+                for (RE::ActiveEffect* effect : *activeEffects) {
+                    if (effect) {
+                        if (!IsBadReadPtr(effect, sizeof(effect))) {
+                            auto* baseEffect = effect->GetBaseObject();
+                            if (gfuncs::IsFormValid(baseEffect)) {
+                                if (baseEffect == akMagicEffect && magicSource == effect->spell) {
+                                    logger::debug("{}: dispelling effect[{}] from source [{}] on ref[{}]", __func__, effectName, sourceName, refName);
+                                    effect->Dispel(true);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                for (RE::ActiveEffect* effect : *activeEffects) {
+                    if (effect) {
+                        if (!IsBadReadPtr(effect, sizeof(effect))) {
+                            auto* baseEffect = effect->GetBaseObject();
+                            if (gfuncs::IsFormValid(baseEffect)) {
+                                if (baseEffect == akMagicEffect) {
+                                    logger::debug("{}: dispelling effect[{}] on ref[{}]", __func__, effectName, refName);
+                                    effect->Dispel(true);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -6647,6 +6945,42 @@ bool IsActorOnFlyingMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
     }
 
     return condition_IsOnFlyingMount->IsTrue(akActor, nullptr);
+}
+
+RE::TESCondition* condition_IsFleeing;
+bool IsActorFleeing(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
+        logger::warn("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!condition_IsFleeing) {
+        logger::debug("creating condition_IsFleeing condition");
+        auto* conditionItem = new RE::TESConditionItem;
+        conditionItem->data.comparisonValue.f = 1.0f;
+        conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsFleeing;
+
+        condition_IsFleeing = new RE::TESCondition;
+        condition_IsFleeing->head = conditionItem;
+    }
+
+    return condition_IsFleeing->IsTrue(akActor, nullptr);
+}
+
+int GetActorWardState(RE::StaticFunctionTag*, RE::Actor* akActor) {
+    if (!gfuncs::IsFormValid(akActor)) {
+        logger::warn("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    auto* aiProcess = akActor->GetActorRuntimeData().currentProcess;
+    if (aiProcess) {
+        if (aiProcess->middleHigh) {
+            return static_cast<int>(aiProcess->middleHigh->wardState);
+        }
+    }
+
+    return 2;
 }
 
 bool IsActorAMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
@@ -6980,57 +7314,58 @@ float GetSoundCategoryFrequency(RE::StaticFunctionTag*, RE::BGSSoundCategory* ak
 }
 
 //event callbacks from papyrus=========================================================================================================================
-
+//no longer needed as not referencing ammo.projectile at all anymore
+// 
 //from papyrus
 void SaveProjectileForAmmo(RE::StaticFunctionTag*, RE::TESAmmo* akAmmo, RE::BGSProjectile* akProjectile) {
-    if (gfuncs::IsFormValid(akAmmo) && gfuncs::IsFormValid(akProjectile)) {
-        RE::TESForm* ammoProjectileForm = RE::TESForm::LookupByID(akAmmo->data.projectile->GetFormID());
-        if (!ammoProjectileForm) { //projectile for ammo not set correctly
-            akAmmo->data.projectile = akProjectile;
-            logger::debug("ammo {} projectile {} saved from papyrus", gfuncs::GetFormDataString(akAmmo), gfuncs::GetFormDataString(akAmmo->data.projectile));
-        }
-    }
+    //if (gfuncs::IsFormValid(akAmmo) && gfuncs::IsFormValid(akProjectile)) {
+    //    RE::TESForm* ammoProjectileForm = RE::TESForm::LookupByID(akAmmo->data.projectile->GetFormID());
+    //    if (!ammoProjectileForm) { //projectile for ammo not set correctly
+    //        akAmmo->data.projectile = akProjectile;
+    //        logger::debug("ammo {} projectile {} saved from papyrus", gfuncs::GetFormDataString(akAmmo), gfuncs::GetFormDataString(akAmmo->data.projectile));
+    //    }
+    //}
 }
 
 //initially ammo->data.projectile is not set correctly and causes CTDs if trying to access. 
 //This saves ammo projectiles from papyrus if necessarry so they are set correctly
 void SaveAllAmmoProjectilesFromPapyrus() {
-    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    if (!vm) {
-        return;
-    }
+    //auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+    //if (!vm) {
+    //    return;
+    //}
 
-    std::vector<RE::TESAmmo*> allAmmos;
-    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
-    for (auto& [id, form] : *allForms) {
-        if (gfuncs::IsFormValid(form)) {
-            RE::TESAmmo* ammo = form->As<RE::TESAmmo>();
-            if (gfuncs::IsFormValid(ammo)) {
-                allAmmos.push_back(ammo);
-            }
-        }
-    }
-    auto* args = RE::MakeFunctionArguments((std::vector<RE::TESAmmo*>)allAmmos);
-    RE::BSFixedString sEvent = "DbSkseFunctions_OnSaveAllAmmoProjectiles";
-    vm->SendEventAll(sEvent, args);
-    logger::debug("{} sending event to papyrus to save ammo projectiles. Size of ammos = {}", __func__, allAmmos.size());
+    //std::vector<RE::TESAmmo*> allAmmos;
+    //const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+    //for (auto& [id, form] : *allForms) {
+    //    if (gfuncs::IsFormValid(form)) {
+    //        RE::TESAmmo* ammo = form->As<RE::TESAmmo>();
+    //        if (gfuncs::IsFormValid(ammo)) {
+    //            allAmmos.push_back(ammo);
+    //        }
+    //    }
+    //}
+    //auto* args = RE::MakeFunctionArguments((std::vector<RE::TESAmmo*>)allAmmos);
+    //RE::BSFixedString sEvent = "DbSkseFunctions_OnSaveAllAmmoProjectiles";
+    //vm->SendEventAll(sEvent, args);
+    //logger::debug("{} sending event to papyrus to save ammo projectiles. Size of ammos = {}", __func__, allAmmos.size());
 }
 
 //called from DbSkseCppCallbackEvents papyrus script on init and game load
 void SetDbSkseCppCallbackEventsAttached(RE::StaticFunctionTag*) {
-    DbSkseCppCallbackEventsAttached = true;
-    logger::trace("{} called", __func__);
-    SaveAllAmmoProjectilesFromPapyrus();
+    //DbSkseCppCallbackEventsAttached = true;
+    //logger::trace("{} called", __func__);
+    //SaveAllAmmoProjectilesFromPapyrus();
 }
 
 void DbSkseCppCallbackLoad() {
-    if (!IsScriptAttachedToRef(playerRef, "DbSkseCppCallbackEvents")) {
-        logger::debug("{} attaching DbSkseCppCallbackEvents script to the player.", __func__);
-        ExecuteConsoleCommand(nullptr, "player.aps DbSkseCppCallbackEvents", nullptr);
-    }
-    else {
-        logger::debug("{} DbSkseCppCallbackEvents script already attached to the player", __func__);
-    }
+    //if (!IsScriptAttachedToRef(gfuncs::playerRef, "DbSkseCppCallbackEvents")) {
+    //    logger::debug("{} attaching DbSkseCppCallbackEvents script to the player.", __func__);
+    //    ExecuteConsoleCommand(nullptr, "player.aps DbSkseCppCallbackEvents", nullptr);
+    //}
+    //else {
+    //    logger::debug("{} DbSkseCppCallbackEvents script already attached to the player", __func__);
+    //}
 }
 
 //menu mode timer ===================================================================================================================================
@@ -9654,8 +9989,9 @@ enum EventsEnum {
     EventEnum_OnItemsPickpocketed,
     EventEnum_OnLocationCleared,
     EventEnum_OnEnterBleedout,
+    EventEnum_OnSwitchRaceComplete,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnEnterBleedout
+    EventEnum_Last = EventEnum_OnSwitchRaceComplete
 };
 
 struct EventData {
@@ -9679,7 +10015,7 @@ struct EventData {
     bool PlayerIsRegistered() {
         int max = eventParamMaps.size();
         for (int i = 0; i < max; i++) {
-            auto it = eventParamMaps[i].find(playerRef);
+            auto it = eventParamMaps[i].find(gfuncs::playerRef);
             if (it != eventParamMaps[i].end()) {
                 return true;
             }
@@ -9781,7 +10117,7 @@ struct EventData {
 
             if (eventSinkIndex == EventEnum_OnCombatStateChanged && paramFilterIndex == 0) {
                 logger::debug("{}: adding handle for Combat State change", __func__);
-                if (paramFilter->As<RE::Actor>() == playerRef) {
+                if (paramFilter->As<RE::Actor>() == gfuncs::playerRef) {
                     //playerForm = paramFilter;
                     bRegisteredForPlayerCombatChange = true;
                     logger::debug("{}: bRegisteredForPlayerCombatChange = true", __func__);
@@ -9900,38 +10236,6 @@ struct EventData {
 
 std::vector<EventData*> eventDataPtrs;
 
-//not used, caused CTDs and wasn't worth it to track projectile references this way
-//struct ObjectInitEventSink : public RE::BSTEventSink<RE::TESInitScriptEvent> {
-//    bool sinkAdded = false;
-//
-//    RE::BSEventNotifyControl ProcessEvent(const RE::TESInitScriptEvent* event, RE::BSTEventSource<RE::TESInitScriptEvent>* source) {
-//        if (!event) {
-//            logger::error("AnimationEventSink event doesn't exist");
-//            return RE::BSEventNotifyControl::kContinue;
-//        }
-//
-//        if (event->objectInitialized) {
-//            RE::TESObjectREFR* loadedRef = event->objectInitialized.get();
-//            if (loadedRef) {
-//                if (IsBadReadPtr(loadedRef, sizeof(loadedRef))) {
-//                    return RE::BSEventNotifyControl::kContinue;
-//                }
-//
-//                RE::Projectile* projectile = loadedRef->AsProjectile();
-//                if (gfuncs::IsFormValid(projectile)) {
-//                    if (IsBadReadPtr(projectile, sizeof(projectile))) {
-//                        return RE::BSEventNotifyControl::kContinue;
-//                    }
-//                }
-//            }
-//        }
-//
-//        return RE::BSEventNotifyControl::kContinue;
-//    }
-//};
-//
-//ObjectInitEventSink* objectInitEventSink;
-
 //one event sink per actor
 //track ammo
 struct AnimationEventSink : public RE::BSTEventSink<RE::BSAnimationGraphEvent> {
@@ -9986,11 +10290,20 @@ int GetImpactResultInt(RE::ImpactResult& result) {
     }
 }
 
-
-
-void SaveRecentProjectile(RE::Projectile* projectile, RE::TESObjectREFR* shooter, RE::TESObjectREFR* target, RE::TESAmmo* ammo, 
+void SaveRecentProjectile(RE::Projectile* projectile, RE::TESObjectREFR* shooter, RE::TESObjectREFR* target, RE::TESAmmo* ammo,
     float& gameTime, RE::BGSProjectile* projectileBase, int& impactResult, int& collidedLayer, float& distanceTraveled,
-    std::string hitPartNodeName/*, uint32_t& runTime, std::chrono::system_clock::time_point& timePoint*/) {
+    std::string hitPartNodeName, RE::TESObjectREFR* projectileMarker/*, uint32_t& runTime, std::chrono::system_clock::time_point& timePoint*/) {
+
+    /*RE::TESObjectREFR* targetMarker = nullptr;
+
+    if (gfuncs::IsFormValid(target)) {
+        if (xMarker) {
+            auto refPtr = target->PlaceObjectAtMe(xMarker->As<RE::TESBoundObject>(), false);
+            if (refPtr) {
+                targetMarker = refPtr.get();
+            }
+        }
+    }*/
 
     TrackedProjectileData data;
     data.gameTimeStamp = gameTime;
@@ -10006,6 +10319,8 @@ void SaveRecentProjectile(RE::Projectile* projectile, RE::TESObjectREFR* shooter
     data.collidedLayer = collidedLayer;
     data.distanceTraveled = distanceTraveled;
     data.hitPartNodeName = hitPartNodeName;
+    data.projectileMarker = projectileMarker;
+    //data.targetMarker = targetMarker;
 
     auto it = recentShotProjectiles.find(shooter);
     if (it != recentShotProjectiles.end()) {
@@ -10053,13 +10368,20 @@ struct ProjectileImpactHook
                 return killOnCollision;
             }
 
+            RE::TESObjectREFR* projectileMarker = nullptr;
+
+            if (xMarker) {
+                auto refPtr = projectile->PlaceObjectAtMe(xMarker->As<RE::TESBoundObject>(), false);
+                if (refPtr) {
+                    projectileMarker = refPtr.get();
+                }
+            }
 
             //logger::trace("impact event: getting runtimeData");
             auto& runtimeData = projectile->GetProjectileRuntimeData();
 
             //auto niTransform = runtimeData.unk0A8;
             //RE::NiPoint3 desiredTargetPoint;
-
 
             RE::BGSProjectile* projectileBase = projectile->GetProjectileBase();
             int impactResult = GetProjectileImpactResult(nullptr, projectile);
@@ -10100,9 +10422,9 @@ struct ProjectileImpactHook
                     collidedLayer = impactData->collidedLayer.underlying();
                 }
             }
-            
-            SaveRecentProjectile(projectile, shooter, target, ammo, gameHoursPassed, projectileBase, impactResult, collidedLayer, distanceTraveled, hitPartNodeName/*, runTime, now*/);
-            
+
+            SaveRecentProjectile(projectile, shooter, target, ammo, gameHoursPassed, projectileBase, impactResult, collidedLayer, distanceTraveled, hitPartNodeName, projectileMarker/*, runTime, now*/);
+
             return killOnCollision;
         }
         else {
@@ -10143,21 +10465,11 @@ struct ProjectileImpactHook
     }
 };
 
-
-
-void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source, bool SneakAttack, bool HitBlocked, float currentGameTime) {
+void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source, bool SneakAttack, bool HitBlocked, float currentGameTime, std::vector<float>& hitTranslation) {
     if (!eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded) {
         return;
     }
-
-    if (!gfuncs::IsFormValid(data.shooter)) {
-        return;
-    }
-
-    if (!gfuncs::IsFormValid(data.target)) {
-        return;
-    }
-
+   
     if (GameHoursToRealTimeSeconds(nullptr, (currentGameTime - data.lastImpactEventGameTimeStamp)) < 0.1) {
         return; //event for this shooter and target was sent less than 0.1 seconds ago. Skip
     }
@@ -10176,7 +10488,8 @@ void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source,
 
     auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)data.shooter, (RE::TESObjectREFR*)data.target, (RE::TESForm*)source,
         (RE::TESAmmo*)data.ammo, (RE::BGSProjectile*)data.projectileBase, (bool)SneakAttack, (bool)HitBlocked,
-        (int)data.impactResult, (int)data.collidedLayer, (float)data.distanceTraveled, (std::string)data.hitPartNodeName);
+        (int)data.impactResult, (int)data.collidedLayer, (float)data.distanceTraveled, (std::string)data.hitPartNodeName,
+        (RE::TESObjectREFR*)data.projectileMarker, (std::vector<float>)hitTranslation);
 
     SendEvents(handles, eventDataPtrs[EventEnum_OnProjectileImpact]->sEvent, args);
 
@@ -10186,6 +10499,9 @@ void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source,
 
     logger::trace("projectile impact: sneak[{}] blocked[{}] impactResult[{}] collidedLayer[{}] distanceTraveled[{}] hitPartNodeName[{}]",
         SneakAttack, HitBlocked, data.impactResult, data.collidedLayer, data.distanceTraveled, data.hitPartNodeName);
+
+    logger::trace("projectile impact: hitTranslation posX[{}] posY[{}] posZ[{}] directionX[{}] directionY[{}] directionZ[{}]",
+        hitTranslation[0], hitTranslation[1], hitTranslation[2], hitTranslation[3], hitTranslation[4], hitTranslation[5]);
 }
 
 TrackedProjectileData GetRecentTrackedProjectileData(RE::TESObjectREFR* shooter, RE::TESObjectREFR* target, float hitGameTime) {
@@ -10257,14 +10573,47 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
             bool bBashAttack = event->flags.any(RE::TESHitEvent::Flag::kBashAttack);
             bool HitBlocked = event->flags.any(RE::TESHitEvent::Flag::kHitBlocked);
         }
-        
+
         bool hitEventDataEmpty = eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty();
 
         if (!bBashAttack) {
             bool bowEquipped = formIsBowOrCrossbow(source);
+
             if (bowEquipped || gfuncs::IsFormValid(projectileForm)) {
-                auto recentProjectileData = GetRecentTrackedProjectileData(attacker, target, currentGameTime);
-                SendProjectileImpactEvent(recentProjectileData, source, SneakAttack, HitBlocked, currentGameTime);
+                if (iMaxArrowsSavedPerReference > 0) {
+
+                    auto recentProjectileData = GetRecentTrackedProjectileData(attacker, target, currentGameTime);
+
+                    if (gfuncs::IsFormValid(recentProjectileData.target) && gfuncs::IsFormValid(recentProjectileData.shooter)) {
+
+                        std::vector<float> hitTranslation;
+
+                        if (gfuncs::IsFormValid(recentProjectileData.target)) {
+                            RE::Actor* actor = target->As<RE::Actor>();
+                            if (gfuncs::IsFormValid(actor)) {
+                                auto* aiProcess = actor->GetActorRuntimeData().currentProcess;
+                                if (aiProcess) {
+                                    if (aiProcess->middleHigh) {
+                                        if (aiProcess->middleHigh->lastHitData) {
+                                            auto pos = aiProcess->middleHigh->lastHitData->hitPosition;
+                                            auto direction = aiProcess->middleHigh->lastHitData->hitDirection;
+                                            hitTranslation.push_back(pos.x);
+                                            hitTranslation.push_back(pos.y);
+                                            hitTranslation.push_back(pos.z);
+                                            hitTranslation.push_back(direction.x);
+                                            hitTranslation.push_back(direction.y);
+                                            hitTranslation.push_back(direction.z);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (hitTranslation.size() == 0) {
+                            hitTranslation.resize(1); //can't send empty array or it causes ctd
+                        }
+                        SendProjectileImpactEvent(recentProjectileData, source, SneakAttack, HitBlocked, currentGameTime, hitTranslation);
+                    }
+                }
             }
 
             if (bowEquipped && eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
@@ -10400,12 +10749,12 @@ void CheckForPlayerCombatStatusChange() {
         // RE::TESForm* Target = .attackedMember.get().get();
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->globalHandles; //
-        CombineEventHandles(handles, playerRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
+        CombineEventHandles(handles, gfuncs::playerRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
         CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
 
         gfuncs::RemoveDuplicates(handles);
 
-        auto* args = RE::MakeFunctionArguments((RE::Actor*)playerRef, (RE::Actor*)target, (int)combatState);
+        auto* args = RE::MakeFunctionArguments((RE::Actor*)gfuncs::playerRef, (RE::Actor*)target, (int)combatState);
         SendEvents(handles, eventDataPtrs[EventEnum_OnCombatStateChanged]->sEvent, args);
     }
 }
@@ -10480,8 +10829,8 @@ struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
         if (event->targetFurniture) {
             furnitureRef = event->targetFurniture.get();
         }
-        
-        int type = 1; 
+
+        int type = 1;
         if (event->type) {
             type = event->type.underlying();
         }
@@ -10533,7 +10882,7 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
             activatedRef = event->objectActivated.get();
         }
 
-        if (activatorRef == playerRef) {
+        if (activatorRef == gfuncs::playerRef) {
             if (gfuncs::IsFormValid(activatedRef)) {
                 gfuncs::lastPlayerActivatedRef = activatedRef;
             }
@@ -10722,7 +11071,7 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
             akActor = akActorRef->As<RE::Actor>();
         }
 
-        RE::TESForm* baseObject = nullptr; 
+        RE::TESForm* baseObject = nullptr;
         if (event->baseObject) {
             baseObject = RE::TESForm::LookupByID(event->baseObject);
         }
@@ -10910,7 +11259,7 @@ struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
 
         logger::trace("Lock Changed Event");
 
-        RE::TESObjectREFR* lockedObject = nullptr; 
+        RE::TESObjectREFR* lockedObject = nullptr;
         if (event->lockedObject) {
             lockedObject = event->lockedObject.get();
         }
@@ -11227,7 +11576,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
     bool sinkAdded = false;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::ItemCrafted::Event* event, RE::BSTEventSource<RE::ItemCrafted::Event>*/*source*/) {
-        
+
         if (!event) {
             logger::error("Item Crafted Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
@@ -11238,9 +11587,29 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
         int count = 1;
 
         RE::TESObjectREFR* workbenchRef = nullptr;
-        if (gfuncs::IsFormValid(gfuncs::menuRef)) {
-            workbenchRef = gfuncs::menuRef;
-            RE::TESForm* baseObj = workbenchRef->GetBaseObject(); 
+
+        auto* aiProcess = gfuncs::playerRef->GetActorRuntimeData().currentProcess;
+        if (aiProcess) {
+            if (aiProcess->middleHigh) {
+                if (aiProcess->middleHigh->occupiedFurniture) {
+                    auto refPtr = aiProcess->middleHigh->occupiedFurniture.get();
+                    if (refPtr) {
+                        //logger::trace("Item Crafted Event: occupiedFurniture found");
+                        workbenchRef = refPtr.get();
+                    }
+                }
+            }
+        }
+        
+        if (!gfuncs::IsFormValid(workbenchRef)) {
+            if (gfuncs::IsFormValid(gfuncs::menuRef)) {
+                workbenchRef = gfuncs::menuRef;
+                //logger::trace("Item Crafted Event: occupiedFurniture not valid, setting to gfuncs::menuRef");
+            }
+        }
+
+        if (gfuncs::IsFormValid(workbenchRef)) {
+            RE::TESForm* baseObj = workbenchRef->GetBaseObject();
             if (gfuncs::IsFormValid(baseObj)) {
                 RE::TESFurniture* furniture = baseObj->As<RE::TESFurniture>();
                 benchType = GetFurnitureWorkbenchType(nullptr, furniture);
@@ -11289,20 +11658,15 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
         RE::TESForm* akForm = UIEvents::uiSelectedFormData.form;
 
         RE::Actor* target = nullptr;
+
         if (gfuncs::IsFormValid(gfuncs::menuRef)) {
             target = gfuncs::menuRef->As<RE::Actor>();
         }
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnItemsPickpocketed]->globalHandles;
+        CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnItemsPickpocketed]->eventParamMaps[0]);
+        CombineEventHandles(handles, akForm, eventDataPtrs[EventEnum_OnItemsPickpocketed]->eventParamMaps[1]);
 
-        if (gfuncs::IsFormValid(target)) {
-            CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnItemsPickpocketed]->eventParamMaps[0]);
-        }
-
-        if (gfuncs::IsFormValid(akForm)) {
-            CombineEventHandles(handles, akForm, eventDataPtrs[EventEnum_OnItemsPickpocketed]->eventParamMaps[1]);
-        }
-        
         gfuncs::RemoveDuplicates(handles);
 
         auto* args = RE::MakeFunctionArguments((RE::Actor*)target, (RE::TESForm*)akForm, (int)event->numItems);
@@ -11326,7 +11690,7 @@ struct LocationClearedEventSink : public RE::BSTEventSink<RE::LocationCleared::E
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        RE::BGSLocation* location = playerRef->GetCurrentLocation();
+        RE::BGSLocation* location = gfuncs::playerRef->GetCurrentLocation();
         if (gfuncs::IsFormValid(location)) {
             bool locationCleared = location->IsCleared();
             while (!locationCleared) {
@@ -11349,6 +11713,7 @@ struct LocationClearedEventSink : public RE::BSTEventSink<RE::LocationCleared::E
             location = nullptr;
         }
 
+        gfuncs::RemoveDuplicates(handles);
         auto* args = RE::MakeFunctionArguments((RE::BGSLocation*)location);
 
         SendEvents(handles, eventDataPtrs[EventEnum_OnLocationCleared]->sEvent, args);
@@ -11386,6 +11751,7 @@ struct EnterBleedoutEventSink : public RE::BSTEventSink<RE::TESEnterBleedoutEven
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEnterBleedout]->globalHandles;
         CombineEventHandles(handles, akActor, eventDataPtrs[EventEnum_OnEnterBleedout]->eventParamMaps[0]);
 
+        gfuncs::RemoveDuplicates(handles);
         auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor);
 
         SendEvents(handles, eventDataPtrs[EventEnum_OnEnterBleedout]->sEvent, args);
@@ -11397,6 +11763,122 @@ struct EnterBleedoutEventSink : public RE::BSTEventSink<RE::TESEnterBleedoutEven
 };
 
 EnterBleedoutEventSink* enterBleedoutEventSink;
+
+//TESSwitchRaceCompleteEvent
+struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCompleteEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESSwitchRaceCompleteEvent* event, RE::BSTEventSource<RE::TESSwitchRaceCompleteEvent>*/*source*/) {
+        //logger::trace("SwitchRaceCompleteEvent");
+
+        if (!event) {
+            logger::error("Enter Bleedout Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::Actor* akActor = nullptr;
+        RE::TESRace* akOldRace = nullptr;
+        RE::TESRace* akNewRace = nullptr;
+
+        if (event->subject) {
+            auto* ref = event->subject.get();
+            if (gfuncs::IsFormValid(ref)) {
+                auto actor = ref->As<RE::Actor>();
+                if (gfuncs::IsFormValid(actor)) {
+                    akActor = actor;
+                    auto it = savedActorRacesMap.find(akActor);
+                    if (it != savedActorRacesMap.end()) {
+                        if (gfuncs::IsFormValid(it->second)) {
+                            akOldRace = it->second;
+                        }
+                    }
+                    RE::TESRace* race = actor->GetRace();
+                    if (gfuncs::IsFormValid(race)) {
+                        akNewRace = race;
+                        savedActorRacesMap[actor] = race;
+                    }
+                }
+            }
+        }
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnSwitchRaceComplete]->globalHandles;
+        CombineEventHandles(handles, akActor, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->eventParamMaps[0]);
+        CombineEventHandles(handles, akOldRace, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->eventParamMaps[1]);
+        CombineEventHandles(handles, akNewRace, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->eventParamMaps[2]);
+
+        gfuncs::RemoveDuplicates(handles);
+        auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESRace*)akOldRace, (RE::TESRace*)akNewRace);
+
+        SendEvents(handles, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->sEvent, args);
+
+        logger::trace("SwitchRaceCompleteEvent: Actor[{}] akOldRace[{}] akNewRace[{}]", 
+            gfuncs::GetFormName(akActor), gfuncs::GetFormName(akOldRace), gfuncs::GetFormName(akNewRace));
+
+        //EventEnum_OnSwitchRaceComplete
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+SwitchRaceCompleteEventSink* switchRaceCompleteEventSink;
+
+struct ObjectInitEventSink : public RE::BSTEventSink<RE::TESInitScriptEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESInitScriptEvent* event, RE::BSTEventSource<RE::TESInitScriptEvent>*/*source*/) {
+        if (!event) {
+            //logger::error("ObjectInitEvent doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (event->objectInitialized) {
+            RE::TESObjectREFR* loadedRef = event->objectInitialized.get();
+            if (gfuncs::IsFormValid(loadedRef)) {
+                RE::Actor* akActor = loadedRef->As<RE::Actor>();
+                if (gfuncs::IsFormValid(akActor)) {
+                    //logger::trace("ObjectInitEvent: Actor[{}] loaded", gfuncs::GetFormName(akActor));
+                    savedActorRacesMap[akActor] = akActor->GetRace();
+                    return RE::BSEventNotifyControl::kContinue;
+                }
+            }
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+ObjectInitEventSink* objectInitEventSink;
+
+//TESObjectLoadedEvent
+struct ObjectLoadedEventSink : public RE::BSTEventSink<RE::TESObjectLoadedEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent* event, RE::BSTEventSource<RE::TESObjectLoadedEvent>*/*source*/) {
+        //logger::trace("ObjectLoadedEvent");
+
+        if (!event) {
+            //logger::error("load object Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (event->loaded) {
+            RE::TESForm* akForm = RE::TESForm::LookupByID(event->formID);
+
+            if (gfuncs::IsFormValid(akForm)) {
+                RE::FormType type = akForm->GetFormType();
+
+                RE::Actor* akActor = akForm->As<RE::Actor>();
+                if (gfuncs::IsFormValid(akActor)) {
+                    logger::trace("ObjectLoadedEvent: Actor[{}] loaded", gfuncs::GetFormName(akActor));
+                    return RE::BSEventNotifyControl::kContinue;
+                }
+            }
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+ObjectLoadedEventSink* objectLoadedEventSink;
 
 bool IsItemMenuOpen() {
     for (auto& menu : itemMenus) {
@@ -11593,7 +12075,7 @@ bool AddHitEventSink() {
         return true;
     }
     return false;
-} 
+}
 
 bool RemoveHitEventSink() {
     if (hitEventSink->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty() && eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
@@ -11814,8 +12296,18 @@ void AddSink(int index) {
         }
         break;
 
+    case EventEnum_OnSwitchRaceComplete:
+        if (!switchRaceCompleteEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnSwitchRaceComplete]->isEmpty()) {
+            switchRaceCompleteEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnSwitchRaceComplete]->sinkAdded = true;
+            SaveActorRaces(); //save current actors loaded in game race's
+            eventSourceholder->AddEventSink(switchRaceCompleteEventSink);
+            eventSourceholder->AddEventSink(objectInitEventSink); //save new actors loaded races to send akOldRace parameter on switchRaceComplete event
+            logger::debug("{}, EventEnum_OnSwitchRaceComplete sink added", __func__);
+        }
+        break;
     }
-} 
+}
 
 void RemoveSink(int index) {
     logger::debug("removing sink {}", index);
@@ -12023,6 +12515,17 @@ void RemoveSink(int index) {
             eventDataPtrs[EventEnum_OnEnterBleedout]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(enterBleedoutEventSink);
             logger::debug("{}, EventEnum_OnEnterBleedout sink removed", __func__);
+        }
+        break;
+
+    case EventEnum_OnSwitchRaceComplete:
+        if (switchRaceCompleteEventSink->sinkAdded && eventDataPtrs[EventEnum_OnSwitchRaceComplete]->isEmpty()) {
+            switchRaceCompleteEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnSwitchRaceComplete]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(switchRaceCompleteEventSink);
+            eventSourceholder->RemoveEventSink(objectInitEventSink);
+            actorRacesSaved = false;
+            logger::debug("{}, EventEnum_OnSwitchRaceComplete sink removed", __func__);
         }
         break;
     }
@@ -12376,8 +12879,15 @@ void UnregisterActiveMagicEffectForGlobalEvent_All(RE::StaticFunctionTag*, RE::B
 
 void CreateEventSinks() {
     if (!player) { player = RE::PlayerCharacter::GetSingleton(); }
-    if (!playerRef) { playerRef = RE::TESForm::LookupByID<RE::TESForm>(20)->As<RE::Actor>(); }
     if (!eventSourceholder) { eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton(); }
+    if (!xMarker) { xMarker = RE::TESForm::LookupByID(59); }
+
+    if (xMarker) {
+        logger::trace("{}: xmarker [{}] found", __func__, gfuncs::GetFormName(xMarker));
+    }
+    else {
+        logger::warn("{}: xmarker form not found", __func__);
+    }
 
     if (eventDataPtrs.size() == 0) {
         eventDataPtrs.resize((EventEnum_Last + 1), nullptr);
@@ -12415,6 +12925,7 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_OnItemsPickpocketed] = new EventData("OnItemsPickpocketedGlobal", EventEnum_OnItemsPickpocketed, 2, 'IPa0');
         eventDataPtrs[EventEnum_OnLocationCleared] = new EventData("OnLocationClearedGlobal", EventEnum_OnLocationCleared, 1, 'LCa0');
         eventDataPtrs[EventEnum_OnEnterBleedout] = new EventData("OnEnterBleedoutGlobal", EventEnum_OnEnterBleedout, 1, 'EBa0');
+        eventDataPtrs[EventEnum_OnSwitchRaceComplete] = new EventData("OnRaceSwitchCompleteGlobal", EventEnum_OnSwitchRaceComplete, 3, 'SWr0');
     }
 
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -12436,10 +12947,15 @@ void CreateEventSinks() {
     if (!itemsPickpocketedEventSink) { itemsPickpocketedEventSink = new ItemsPickpocketedEventSink(); }
     if (!locationClearedEventSink) { locationClearedEventSink = new LocationClearedEventSink(); }
     if (!enterBleedoutEventSink) { enterBleedoutEventSink = new EnterBleedoutEventSink(); }
+    if (!switchRaceCompleteEventSink) { switchRaceCompleteEventSink = new SwitchRaceCompleteEventSink(); }
+    if (!objectInitEventSink) { objectInitEventSink = new ObjectInitEventSink(); }
+    if (!objectLoadedEventSink) { objectLoadedEventSink = new ObjectLoadedEventSink(); }
     if (!inputEventSink) { inputEventSink = new InputEventSink(); }
 
     //always activate to track lastPlayerActivatedRef
     eventSourceholder->AddEventSink(activateEventSink);
+
+    //eventSourceholder->AddEventSink(objectLoadedEventSink);
 
     //always active to track opened menus / game pausing
     ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
@@ -12511,6 +13027,14 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetAllRefaliases", "DbSkseFunctions", GetAllRefaliases);
     vm->RegisterFunction("GetAllQuestObjectRefs", "DbSkseFunctions", GetAllQuestObjectRefs);
     vm->RegisterFunction("GetQuestObjectRefsInContainer", "DbSkseFunctions", GetQuestObjectRefsInContainer);
+    vm->RegisterFunction("GetProjectileBaseDecal", "DbSkseFunctions", GetProjectileBaseDecal);
+    vm->RegisterFunction("SetProjectileBaseDecal", "DbSkseFunctions", SetProjectileBaseDecal);
+    vm->RegisterFunction("GetProjectileBaseExplosion", "DbSkseFunctions", GetProjectileBaseExplosion);
+    vm->RegisterFunction("SetProjectileBaseExplosion", "DbSkseFunctions", SetProjectileBaseExplosion);
+    vm->RegisterFunction("GetProjectileBaseCollisionRadius", "DbSkseFunctions", GetProjectileBaseCollisionRadius);
+    vm->RegisterFunction("SetProjectileBaseCollisionRadius", "DbSkseFunctions", SetProjectileBaseCollisionRadius);
+    vm->RegisterFunction("GetProjectileBaseCollisionConeSpread", "DbSkseFunctions", GetProjectileBaseCollisionConeSpread);
+    vm->RegisterFunction("SetProjectileBaseCollisionConeSpread", "DbSkseFunctions", SetProjectileBaseCollisionConeSpread);
     vm->RegisterFunction("GetProjectileRefType", "DbSkseFunctions", GetProjectileRefType);
     vm->RegisterFunction("GetAttachedProjectiles", "DbSkseFunctions", GetAttachedProjectiles);
     vm->RegisterFunction("GetAttachedProjectileRefs", "DbSkseFunctions", GetAttachedProjectileRefs);
@@ -12554,11 +13078,9 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("ExecuteConsoleCommand", "DbSkseFunctions", ExecuteConsoleCommand);
     vm->RegisterFunction("HasCollision", "DbSkseFunctions", HasCollision);
     vm->RegisterFunction("GetCurrentMusicType", "DbSkseFunctions", GetCurrentMusicType);
-
     vm->RegisterFunction("GetFurnitureWorkbenchType", "DbSkseFunctions", GetFurnitureWorkbenchType);
     vm->RegisterFunction("GetFurnitureWorkbenchSkillInt", "DbSkseFunctions", GetFurnitureWorkbenchSkillInt);
     vm->RegisterFunction("GetFurnitureWorkbenchSkillString", "DbSkseFunctions", GetFurnitureWorkbenchSkillString);
-
     vm->RegisterFunction("GetNumberOfTracksInMusicType", "DbSkseFunctions", GetNumberOfTracksInMusicType);
     vm->RegisterFunction("GetMusicTypeTrackIndex", "DbSkseFunctions", GetMusicTypeTrackIndex);
     vm->RegisterFunction("SetMusicTypeTrackIndex", "DbSkseFunctions", SetMusicTypeTrackIndex);
@@ -12580,10 +13102,13 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetBookSkill", "DbSkseFunctions", GetBookSkill);
     vm->RegisterFunction("SetBookRead", "DbSkseFunctions", SetBookRead);
     vm->RegisterFunction("SetAllBooksRead", "DbSkseFunctions", SetAllBooksRead);
+    vm->RegisterFunction("GetActiveMagicEffectConditionStatus", "DbSkseFunctions", GetActiveMagicEffectConditionStatus);
     vm->RegisterFunction("GetActiveEffectSource", "DbSkseFunctions", GetActiveEffectSource);
     vm->RegisterFunction("GetActiveEffectCastingSource", "DbSkseFunctions", GetActiveEffectCastingSource);
     vm->RegisterFunction("GetMagicEffectsForForm", "DbSkseFunctions", GetMagicEffectsForForm);
     vm->RegisterFunction("IsFormMagicItem", "DbSkseFunctions", IsFormMagicItem);
+    vm->RegisterFunction("IsMagicEffectActiveOnRef", "DbSkseFunctions", IsMagicEffectActiveOnRef);
+    vm->RegisterFunction("DispelMagicEffectOnRef", "DbSkseFunctions", DispelMagicEffectOnRef);
     vm->RegisterFunction("SetSoulGemSize", "DbSkseFunctions", SetSoulGemSize);
     vm->RegisterFunction("CanSoulGemHoldNPCSoul", "DbSkseFunctions", CanSoulGemHoldNPCSoul);
     vm->RegisterFunction("SetSoulGemCanHoldNPCSoul", "DbSkseFunctions", SetSoulGemCanHoldNPCSoul);
@@ -12598,6 +13123,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("IsActorIgnoringCombat", "DbSkseFunctions", IsActorIgnoringCombat);
     vm->RegisterFunction("IsActorUndead", "DbSkseFunctions", IsActorUndead);
     vm->RegisterFunction("IsActorOnFlyingMount", "DbSkseFunctions", IsActorOnFlyingMount);
+    vm->RegisterFunction("IsActorFleeing", "DbSkseFunctions", IsActorFleeing);
     vm->RegisterFunction("IsActorAMount", "DbSkseFunctions", IsActorAMount);
     vm->RegisterFunction("IsActorInMidAir", "DbSkseFunctions", IsActorInMidAir);
     vm->RegisterFunction("IsActorInRagdollState", "DbSkseFunctions", IsActorInRagdollState);
@@ -12769,7 +13295,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 
     case SKSE::MessagingInterface::kInputLoaded:
         logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
-        
+
         break;
 
     case SKSE::MessagingInterface::kNewGame:
@@ -12778,7 +13304,6 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         DbSkseCppCallbackEventsAttached = false;
         DbSkseCppCallbackLoad(); //attach papyrus DbSkseCppCallbackEvents script to the player and save all ammo projectiles
         RegisterActorsForBowDrawAnimEvents();
-
         //LogAndMessage("kNewGame: sent after a new game is created, before the game has loaded", trace);
         break;
 
@@ -12792,7 +13317,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         logger::trace("kDataLoaded: sent after the data handler has loaded all its forms");
         break;
 
-        
+
 
         //default: //
             //    logger::info("Unknown system message of type: {}", message->type);
@@ -12867,6 +13392,7 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     //gfuncs::DelayedFunction(&DbSkseCppCallbackLoad, 1200);
     DbSkseCppCallbackLoad();
     RegisterActorsForBowDrawAnimEvents();
+    SaveActorRaces();
 }
 
 void SaveCallback(SKSE::SerializationInterface* a_intfc) {
