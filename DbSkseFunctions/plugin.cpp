@@ -58,6 +58,7 @@ float lastFrameDelta = 0.1;
 std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
 RE::PlayerCharacter* player;
 //RE::Actor* gfuncs::playerRef;
+RE::TESForm* nullForm;
 RE::TESForm* xMarker;
 RE::BSScript::IVirtualMachine* gvm;
 //RE::SkyrimVM* gfuncs::svm;
@@ -2003,7 +2004,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(6.9);
+    return float(7.0);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -6464,7 +6465,6 @@ void SetAllBooksRead(RE::StaticFunctionTag*, bool read) {
     }
 }
 
-RE::TESForm* nullForm;
 
 RE::TESForm* FindNullForm() {
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
@@ -6980,7 +6980,7 @@ int GetActorWardState(RE::StaticFunctionTag*, RE::Actor* akActor) {
         }
     }
 
-    return 2;
+    return 0;
 }
 
 bool IsActorAMount(RE::StaticFunctionTag*, RE::Actor* akActor) {
@@ -10370,13 +10370,14 @@ struct ProjectileImpactHook
 
             RE::TESObjectREFR* projectileMarker = nullptr;
 
-            if (xMarker) {
-                auto refPtr = projectile->PlaceObjectAtMe(xMarker->As<RE::TESBoundObject>(), false);
-                if (refPtr) {
-                    projectileMarker = refPtr.get();
+            if (eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded) {
+                if (xMarker) {
+                    auto refPtr = projectile->PlaceObjectAtMe(xMarker->As<RE::TESBoundObject>(), false);
+                    if (refPtr) {
+                        projectileMarker = refPtr.get();
+                    }
                 }
             }
-
             //logger::trace("impact event: getting runtimeData");
             auto& runtimeData = projectile->GetProjectileRuntimeData();
 
@@ -10926,14 +10927,8 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
 
         RE::Actor* victim = nullptr;
         if (gfuncs::IsFormValid(victimRef)) {
-            if (victimRef->GetFormID() == 0) {
-                logger::error("death event: 0 victimRef pointer");
-                return RE::BSEventNotifyControl::kContinue;
-            }
-            else {
-                victim = static_cast<RE::Actor*>(victimRef);
-                logger::debug("death event: valid victimRef pointer");
-            }
+            victim = static_cast<RE::Actor*>(victimRef);
+            logger::debug("death event: valid victimRef pointer");
         }
         else {
             logger::error("death event: 0 victimRef doesn't exist or isn't valid");
@@ -10942,14 +10937,8 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
 
         RE::Actor* killer = nullptr;
         if (gfuncs::IsFormValid(killerRef)) {
-            //this is necessarry because when using console command kill or script command actor.kill() killer will be a bad ptr and cause ctd.
-            if (killerRef->GetFormID() == 0) {
-                logger::error("death event: 0 killerRef pointer");
-            }
-            else {
-                killer = static_cast<RE::Actor*>(killerRef);
-                logger::debug("death event: valid killerRef pointer");
-            }
+            killer = static_cast<RE::Actor*>(killerRef);
+            logger::debug("death event: valid killerRef pointer");
         }
 
         bool dead = event->dead;
@@ -13246,7 +13235,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("CancelGameTimer", "DbActiveMagicEffectTimer", CancelGameTimerOnActiveMagicEffect);
     vm->RegisterFunction("GetTimeElapsedOnGameTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnGameTimerActiveMagicEffect);
     vm->RegisterFunction("GetTimeLeftOnGameTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnGameTimerActiveMagicEffect);
-
+    
     logger::trace("Papyrus Functions Bound");
 
     return true;
@@ -13309,6 +13298,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 
     case SKSE::MessagingInterface::kDataLoaded:
         // RE::ConsoleLog::GetSingleton()->Print("DbSkseFunctions Installed");
+        if (!nullForm) { nullForm = FindNullForm(); }
         gfuncs::Install();
         SKSE::GetPapyrusInterface()->Register(BindPapyrusFunctions);
         SetSettingsFromIniFile();

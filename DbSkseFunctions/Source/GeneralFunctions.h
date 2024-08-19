@@ -30,7 +30,7 @@ namespace gfuncs {
 
 
     //get the int after start char in string s. Example: GetIntAfterCharInString("arrows (21)") returns 21
-    int GetIntAfterCharInString(std::string s, char startChar = '(', int iDefault = 0, int startIndex = 0) {
+    inline int GetIntAfterCharInString(std::string s, char startChar = '(', int iDefault = 0, int startIndex = 0) {
         int iStart = -1;
         int iEnd = -1;
         int L = s.length();
@@ -68,6 +68,10 @@ namespace gfuncs {
         }
 
         if (IsBadReadPtr(form, sizeof(form))) {
+            return false;
+        }
+
+        if (form->GetFormID() == 0) {
             return false;
         }
 
@@ -124,8 +128,8 @@ namespace gfuncs {
         return name;
     }
 
-    std::string GetFormDataString(RE::TESForm* akForm, std::string nullString = "null", std::string noNameString = "No Name") {
-        if (!gfuncs::IsFormValid(akForm)) {
+    inline std::string GetFormDataString(RE::TESForm* akForm, std::string nullString = "null", std::string noNameString = "No Name") {
+        if (!IsFormValid(akForm)) {
             return nullString;
         }
 
@@ -138,7 +142,7 @@ namespace gfuncs {
         return name;
     }
 
-    void logFormMap(auto& map) {
+    inline void logFormMap(auto& map) {
         logger::trace("logging form map");
         for (auto const& x : map)
         {
@@ -149,7 +153,7 @@ namespace gfuncs {
         }
     }
 
-    void DelayedFunction(auto function, int delay) {
+    inline void DelayedFunction(auto function, int delay) {
         std::thread t([=]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(delay));
             function();
@@ -157,7 +161,7 @@ namespace gfuncs {
         t.detach();
     }
 
-    float timePointDiffToFloat(std::chrono::system_clock::time_point end, std::chrono::system_clock::time_point start) {
+    inline float timePointDiffToFloat(std::chrono::system_clock::time_point end, std::chrono::system_clock::time_point start) {
         std::chrono::duration<float> timeElapsed = end - start;
         return timeElapsed.count();
     }
@@ -208,7 +212,7 @@ namespace gfuncs {
         return handle;
     }
 
-    RE::Actor* GetPlayerDialogueTarget() {
+    inline RE::Actor* GetPlayerDialogueTarget() {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             if (IsFormValid(form)) {
@@ -219,9 +223,9 @@ namespace gfuncs {
                         auto ptr = dialogueTargetHandle.get();
                         if (ptr) {
                             auto* ref = ptr.get();
-                            if (gfuncs::IsFormValid(ref)) {
+                            if (IsFormValid(ref)) {
                                 RE::Actor* dialogueActorRef = ref->As<RE::Actor>();
-                                if (gfuncs::IsFormValid(dialogueActorRef)) {
+                                if (IsFormValid(dialogueActorRef)) {
                                     if (dialogueActorRef == playerRef) {
                                         return actor;
                                     }
@@ -236,7 +240,7 @@ namespace gfuncs {
     }
 
     template< typename T >
-    std::string IntToHex(T i)
+    inline std::string IntToHex(T i)
     {
         std::stringstream stream;
         stream << ""
@@ -246,11 +250,11 @@ namespace gfuncs {
     }
 
     template <class T>
-    void RemoveFromVectorByValue(std::vector<T>& v, T value) {
+    inline void RemoveFromVectorByValue(std::vector<T>& v, T value) {
         v.erase(std::remove(v.begin(), v.end(), value), v.end());
     }
 
-    void String_ReplaceAll(std::string& s, std::string searchString, std::string replaceString) {
+    inline void String_ReplaceAll(std::string& s, std::string searchString, std::string replaceString) {
         if (s == "" || searchString == "") {
             return;
         }
@@ -265,7 +269,7 @@ namespace gfuncs {
         }
     }
 
-    void String_ReplaceAll(std::string& s, std::vector<std::string> searchStrings, std::vector<std::string> replaceStrings) {
+    inline void String_ReplaceAll(std::string& s, std::vector<std::string> searchStrings, std::vector<std::string> replaceStrings) {
         int m = searchStrings.size();
         if (replaceStrings.size() < m) {
             m = replaceStrings.size();
