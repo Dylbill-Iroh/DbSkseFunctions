@@ -2004,7 +2004,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(7.0);
+    return float(7.1);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -13195,20 +13195,20 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetTimeLeftOnGameTimer", "DbFormTimer", GetTimeLeftOnGameTimerForm);
 
     //Alias
-    vm->RegisterFunction("StartTimer", "DbAliasTimer", StartMenuModeTimerOnAlias);
-    vm->RegisterFunction("CancelTimer", "DbAliasTimer", CancelMenuModeTimerOnAlias);
-    vm->RegisterFunction("GetTimeElapsedOnTimer", "DbAliasTimer", GetTimeElapsedOnMenuModeTimerAlias);
-    vm->RegisterFunction("GetTimeLeftOnTimer", "DbAliasTimer", GetTimeLeftOnMenuModeTimerAlias);
+    vm->RegisterFunction("StartTimer", "DbAliasTimer", StartTimerOnAlias);
+    vm->RegisterFunction("CancelTimer", "DbAliasTimer", CancelTimerOnAlias);
+    vm->RegisterFunction("GetTimeElapsedOnTimer", "DbAliasTimer", GetTimeElapsedOnTimerAlias);
+    vm->RegisterFunction("GetTimeLeftOnTimer", "DbAliasTimer", GetTimeLeftOnTimerAlias);
 
-    vm->RegisterFunction("StartNoMenuModeTimer", "DbAliasTimer", StartTimerOnAlias);
-    vm->RegisterFunction("CancelNoMenuModeTimer", "DbAliasTimer", CancelTimerOnAlias);
-    vm->RegisterFunction("GetTimeElapsedOnNoMenuModeTimer", "DbAliasTimer", GetTimeElapsedOnTimerAlias);
-    vm->RegisterFunction("GetTimeLeftOnNoMenuModeTimer", "DbAliasTimer", GetTimeLeftOnTimerAlias);
+    vm->RegisterFunction("StartNoMenuModeTimer", "DbAliasTimer", StartNoMenuModeTimerOnAlias);
+    vm->RegisterFunction("CancelNoMenuModeTimer", "DbAliasTimer", CancelNoMenuModeTimerOnAlias);
+    vm->RegisterFunction("GetTimeElapsedOnNoMenuModeTimer", "DbAliasTimer", GetTimeElapsedOnNoMenuModeTimerAlias);
+    vm->RegisterFunction("GetTimeLeftOnNoMenuModeTimer", "DbAliasTimer", GetTimeLeftOnNoMenuModeTimerAlias);
 
-    vm->RegisterFunction("StartMenuModeTimer", "DbAliasTimer", StartTimerOnAlias);
-    vm->RegisterFunction("CancelMenuModeTimer", "DbAliasTimer", CancelTimerOnAlias);
-    vm->RegisterFunction("GetTimeElapsedOnMenuModeTimer", "DbAliasTimer", GetTimeElapsedOnTimerAlias);
-    vm->RegisterFunction("GetTimeLeftOnMenuModeTimer", "DbAliasTimer", GetTimeLeftOnTimerAlias);
+    vm->RegisterFunction("StartMenuModeTimer", "DbAliasTimer", StartMenuModeTimerOnAlias);
+    vm->RegisterFunction("CancelMenuModeTimer", "DbAliasTimer", CancelMenuModeTimerOnAlias);
+    vm->RegisterFunction("GetTimeElapsedOnMenuModeTimer", "DbAliasTimer", GetTimeElapsedOnMenuModeTimerAlias);
+    vm->RegisterFunction("GetTimeLeftOnMenuModeTimer", "DbAliasTimer", GetTimeLeftOnMenuModeTimerAlias);
 
     vm->RegisterFunction("StartGameTimer", "DbAliasTimer", StartGameTimerOnAlias);
     vm->RegisterFunction("CancelGameTimer", "DbAliasTimer", CancelGameTimerOnAlias);
@@ -13216,20 +13216,20 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetTimeLeftOnGameTimer", "DbAliasTimer", GetTimeLeftOnGameTimerAlias);
 
     //ActiveMagicEffect
-    vm->RegisterFunction("StartTimer", "DbActiveMagicEffectTimer", StartMenuModeTimerOnActiveMagicEffect);
-    vm->RegisterFunction("CancelTimer", "DbActiveMagicEffectTimer", CancelMenuModeTimerOnActiveMagicEffect);
-    vm->RegisterFunction("GetTimeElapsedOnTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnMenuModeTimerActiveMagicEffect);
-    vm->RegisterFunction("GetTimeLeftOnTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnMenuModeTimerActiveMagicEffect);
+    vm->RegisterFunction("StartTimer", "DbActiveMagicEffectTimer", StartTimerOnActiveMagicEffect);
+    vm->RegisterFunction("CancelTimer", "DbActiveMagicEffectTimer", CancelTimerOnActiveMagicEffect);
+    vm->RegisterFunction("GetTimeElapsedOnTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnTimerActiveMagicEffect);
+    vm->RegisterFunction("GetTimeLeftOnTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnTimerActiveMagicEffect);
 
-    vm->RegisterFunction("StartNoMenuModeTimer", "DbActiveMagicEffectTimer", StartTimerOnActiveMagicEffect);
-    vm->RegisterFunction("CancelNoMenuModeTimer", "DbActiveMagicEffectTimer", CancelTimerOnActiveMagicEffect);
-    vm->RegisterFunction("GetTimeElapsedOnNoMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnTimerActiveMagicEffect);
-    vm->RegisterFunction("GetTimeLeftOnNoMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnTimerActiveMagicEffect);
+    vm->RegisterFunction("StartNoMenuModeTimer", "DbActiveMagicEffectTimer", StartNoMenuModeTimerOnActiveMagicEffect);
+    vm->RegisterFunction("CancelNoMenuModeTimer", "DbActiveMagicEffectTimer", CancelNoMenuModeTimerOnActiveMagicEffect);
+    vm->RegisterFunction("GetTimeElapsedOnNoMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnNoMenuModeTimerActiveMagicEffect);
+    vm->RegisterFunction("GetTimeLeftOnNoMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnNoMenuModeTimerActiveMagicEffect);
 
-    vm->RegisterFunction("StartMenuModeTimer", "DbActiveMagicEffectTimer", StartTimerOnActiveMagicEffect);
-    vm->RegisterFunction("CancelMenuModeTimer", "DbActiveMagicEffectTimer", CancelTimerOnActiveMagicEffect);
-    vm->RegisterFunction("GetTimeElapsedOnMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnTimerActiveMagicEffect);
-    vm->RegisterFunction("GetTimeLeftOnMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnTimerActiveMagicEffect);
+    vm->RegisterFunction("StartMenuModeTimer", "DbActiveMagicEffectTimer", StartMenuModeTimerOnActiveMagicEffect);
+    vm->RegisterFunction("CancelMenuModeTimer", "DbActiveMagicEffectTimer", CancelMenuModeTimerOnActiveMagicEffect);
+    vm->RegisterFunction("GetTimeElapsedOnMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnMenuModeTimerActiveMagicEffect);
+    vm->RegisterFunction("GetTimeLeftOnMenuModeTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnMenuModeTimerActiveMagicEffect);
 
     vm->RegisterFunction("StartGameTimer", "DbActiveMagicEffectTimer", StartGameTimerOnActiveMagicEffect);
     vm->RegisterFunction("CancelGameTimer", "DbActiveMagicEffectTimer", CancelGameTimerOnActiveMagicEffect);
