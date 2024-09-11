@@ -431,6 +431,22 @@ namespace gfuncs {
         return -1;
     }
 
+    inline RE::BGSBaseAlias* GetQuestAliasById(RE::TESQuest* quest, int id) {
+        if (gfuncs::IsFormValid(quest)) {
+            if (quest->aliases.size() > 0) {
+                for (int i = 0; i < quest->aliases.size(); i++) {
+                    if (quest->aliases[i]) {
+                        if (quest->aliases[i]->aliasID == id) {
+                            return quest->aliases[i];
+                        }
+                    }
+                }
+            }
+        }
+
+        return nullptr;
+    }
+
     inline RE::BSFixedString GetBSUIMessageDataTypeString(RE::BSUIMessageData* msgData) {
         if (msgData) {
             RE::UserEvents* userEvents = RE::UserEvents::GetSingleton();

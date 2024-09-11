@@ -2004,7 +2004,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(7.1);
+    return float(7.3);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2197,7 +2197,7 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
         for (int i = 0; i < numOfForms; i++) {
             auto* akForm = akForms[i];
             std::string formName = "";
-            if (akForm) {
+            if (gfuncs::IsFormValid(akForm)) {
                 formName = GetFormEditorId(nullptr, akForm, "");
             }
 
@@ -2392,12 +2392,12 @@ std::string GetFormDescription(RE::StaticFunctionTag*, RE::TESForm* akForm, int 
 
     if (s == "") {
         if (noneStringType == 2) {
-            if (akForm) {
+            if (gfuncs::IsFormValid(akForm)) {
                 s = gfuncs::IntToHex(akForm->GetFormID());
             }
         }
         else if (noneStringType == 1) {
-            if (akForm) {
+            if (gfuncs::IsFormValid(akForm)) {
                 s = GetFormEditorId(nullptr, akForm, "");
             }
         }
@@ -2707,6 +2707,233 @@ std::vector<RE::TESForm*> GetAllConstructibleObjects(RE::StaticFunctionTag*, RE:
         }
     }
     return forms;
+}
+
+std::vector<RE::TESObjectARMO*> GetAllArmorsForSlotMask(RE::StaticFunctionTag*, int slotMask) {
+    std::vector<RE::TESObjectARMO*> armors;
+
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+
+    for (auto& [id, form] : *allForms) {
+        if (gfuncs::IsFormValid(form, false)) {
+            RE::TESObjectARMO* armor = form->As<RE::TESObjectARMO>();
+            if (gfuncs::IsFormValid(armor)) {
+                int mask = static_cast<int>(armor->GetSlotMask());
+                if (mask == slotMask) {
+                    armors.push_back(armor);
+                }
+            }
+        }
+    }
+
+    return armors;
+}
+
+RE::TESWorldSpace* GetCellWorldSpace(RE::StaticFunctionTag*, RE::TESObjectCELL* akCell) {
+    //logger::trace("{}: called", __func__);
+    if (gfuncs::IsFormValid(akCell)) {
+        RE::TESWorldSpace* worldSpace = akCell->GetRuntimeData().worldSpace;
+        if (gfuncs::IsFormValid(worldSpace)) {
+            return worldSpace;
+        }
+    }
+
+    return nullptr;
+}
+
+RE::BGSLocation* GetCellLocation(RE::StaticFunctionTag*, RE::TESObjectCELL* akCell) {
+    //logger::trace("{}: called", __func__);
+    if (gfuncs::IsFormValid(akCell)) {
+        RE::BGSLocation* location = akCell->GetLocation();
+        if (gfuncs::IsFormValid(location)) {
+            return location;
+        }
+    }
+
+    return nullptr;
+}
+
+//TESNPC is ActorBase in papyrus
+std::vector<RE::TESObjectCELL*> GetAllInteriorCells(RE::StaticFunctionTag*, RE::BGSLocation* akLocation, RE::TESNPC* akOwner, int matchMode) {
+    //logger::trace("{}: called", __func__);
+    std::vector<RE::TESObjectCELL*> cells;
+
+    if (!gfuncs::IsFormValid(akLocation)) {
+        akLocation = nullptr;
+    }
+
+    if (!gfuncs::IsFormValid(akOwner)) {
+        akOwner = nullptr;
+    }
+
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+
+    if (matchMode == 1) {
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false)) {
+                RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
+                if (gfuncs::IsFormValid(cell)) {
+                    if (cell->IsInteriorCell()) {
+                        RE::BGSLocation* location = cell->GetLocation();
+                        RE::TESNPC* npc = cell->GetActorOwner();
+
+                        if (!gfuncs::IsFormValid(location)) {
+                            location = nullptr;
+                        }
+
+                        if (!gfuncs::IsFormValid(npc)) {
+                            npc = nullptr;
+                        }
+
+                        if (npc == akOwner && location == akLocation) {
+                            cells.push_back(cell);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (matchMode == 0) {
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false)) {
+                RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
+                if (gfuncs::IsFormValid(cell)) {
+                    if (cell->IsInteriorCell()) {
+                        bool matched = false;
+                        RE::BGSLocation* location = cell->GetLocation();
+                        if (gfuncs::IsFormValid(location)) {
+                            if (location == akLocation) {
+                                matched = true;
+                                cells.push_back(cell);
+                            }
+                        }
+                        if (!matched) {
+                            RE::TESNPC* npc = cell->GetActorOwner();
+                            if (gfuncs::IsFormValid(npc)) {
+                                if (npc == akOwner) {
+                                    cells.push_back(cell);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else {
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false)) {
+                RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
+                if (gfuncs::IsFormValid(cell)) {
+                    if (cell->IsInteriorCell()) {
+                        cells.push_back(cell);
+                    }
+                }
+            }
+        }
+    }
+
+    //logger::trace("{}: cells size = {}", __func__, cells.size());
+    return cells;
+}
+
+std::vector<RE::TESObjectCELL*> GetAllExteriorCells(RE::StaticFunctionTag*, RE::BGSLocation* akLocation, RE::TESWorldSpace* akWorldSpace, int matchMode) {
+    std::vector<RE::TESObjectCELL*> cells;
+
+    if (!gfuncs::IsFormValid(akLocation)) {
+        akLocation = nullptr;
+    }
+
+    if (!gfuncs::IsFormValid(akWorldSpace)) {
+        akWorldSpace = nullptr;
+    } 
+
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+
+    if (matchMode == 1) {
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false)) {
+                RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
+                if (gfuncs::IsFormValid(cell)) {
+                    if (cell->IsExteriorCell()) {
+                        RE::BGSLocation* location = cell->GetLocation();
+                        RE::TESWorldSpace* worldSpace = cell->GetRuntimeData().worldSpace;
+
+                        if (!gfuncs::IsFormValid(location)) {
+                            location = nullptr;
+                        } 
+
+                        if (!gfuncs::IsFormValid(worldSpace)) {
+                            worldSpace = nullptr;
+                        }
+                        
+                        if (worldSpace == akWorldSpace && location == akLocation) {
+                            cells.push_back(cell);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (matchMode == 0) {
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false)) {
+                RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
+                if (gfuncs::IsFormValid(cell)) {
+                    if (cell->IsExteriorCell()) {
+                        bool matched = false;
+                        RE::TESWorldSpace* worldSpace = cell->GetRuntimeData().worldSpace;
+                        if (gfuncs::IsFormValid(worldSpace)) {
+                            if (worldSpace == akWorldSpace) {
+                                matched = true;
+                                cells.push_back(cell);
+                            }
+                        }
+                        if (!matched) {
+                            RE::BGSLocation* location = cell->GetLocation();
+                            if (gfuncs::IsFormValid(location)) {
+                                if (location == akLocation) {
+                                    cells.push_back(cell);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else {
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false)) {
+                RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
+                if (gfuncs::IsFormValid(cell)) {
+                    if (cell->IsExteriorCell()) {
+                        cells.push_back(cell);
+                    }
+                }
+            }
+        }
+    }
+
+    return cells;
+}
+
+std::vector<RE::TESObjectCELL*> GetAttachedCells(RE::StaticFunctionTag*) {
+    std::vector<RE::TESObjectCELL*> cells;
+
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+
+    for (auto& [id, form] : *allForms) {
+        if (gfuncs::IsFormValid(form, false)) {
+            RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
+            if (gfuncs::IsFormValid(cell)) {
+                if (cell->IsAttached()) {
+                    cells.push_back(cell);
+                }
+            }
+        }
+    }
+    return cells;
 }
 
 
@@ -6485,18 +6712,18 @@ int GetActiveMagicEffectConditionStatus(RE::StaticFunctionTag*, RE::ActiveEffect
         logger::warn("{} akEffect doesn't exist", __func__);
         return -1;
     }
-    if (akEffect->conditionStatus) {
-        //logger::trace("{}: conditionStatus found", __func__);
-        if (akEffect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
-            //logger::trace("{}: conditionStatus is kTrue", __func__);
-            return 1;
-        }
-        else if (akEffect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kFalse)) {
-            //logger::trace("{}: conditionStatus is kFalse", __func__);
-            return 0;
-        }
+
+    if (akEffect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
+        //logger::trace("{}: conditionStatus is kTrue", __func__);
+        return 1;
     }
-    return -1;
+    else if (akEffect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kFalse)) {
+        //logger::trace("{}: conditionStatus is kFalse", __func__);
+        return 0;
+    }
+    else {
+        return -1;
+    }
 }
 
 RE::TESForm* GetActiveEffectSource(RE::StaticFunctionTag*, RE::ActiveEffect* akEffect) {
@@ -6579,13 +6806,11 @@ bool IsMagicEffectActiveOnRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE
                             auto* baseEffect = effect->GetBaseObject();
                             if (gfuncs::IsFormValid(baseEffect)) {
                                 if (baseEffect == akMagicEffect && effect->spell == magicSource) {
-                                    if (effect->conditionStatus) {
-                                        if (effect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
-                                            logger::trace("{}: conditionStatus for effect[{}] from source[{}] on ref[{}] is True",
-                                                __func__, gfuncs::GetFormName(baseEffect), gfuncs::GetFormName(magicSource), gfuncs::GetFormName(ref));
+                                    if (effect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
+                                        logger::trace("{}: conditionStatus for effect[{}] from source[{}] on ref[{}] is True",
+                                            __func__, gfuncs::GetFormName(baseEffect), gfuncs::GetFormName(magicSource), gfuncs::GetFormName(ref));
 
-                                            return true;
-                                        }
+                                        return true;
                                     }
                                 }
                             }
@@ -6600,13 +6825,11 @@ bool IsMagicEffectActiveOnRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE
                             auto* baseEffect = effect->GetBaseObject();
                             if (gfuncs::IsFormValid(baseEffect)) {
                                 if (baseEffect == akMagicEffect) {
-                                    if (effect->conditionStatus) {
-                                        if (effect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
-                                            logger::trace("{}: conditionStatus for effect[{}] on ref[{}] is True",
-                                                __func__, gfuncs::GetFormName(baseEffect), gfuncs::GetFormName(ref));
+                                    if (effect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
+                                        logger::trace("{}: conditionStatus for effect[{}] on ref[{}] is True",
+                                            __func__, gfuncs::GetFormName(baseEffect), gfuncs::GetFormName(ref));
 
-                                            return true;
-                                        }
+                                        return true;
                                     }
                                 }
                             }
@@ -9990,8 +10213,10 @@ enum EventsEnum {
     EventEnum_OnLocationCleared,
     EventEnum_OnEnterBleedout,
     EventEnum_OnSwitchRaceComplete,
+    EventEnum_OnActorFootStep,
+    EventEnum_OnQuestObjectiveStateChanged,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnSwitchRaceComplete
+    EventEnum_Last = EventEnum_OnQuestObjectiveStateChanged
 };
 
 struct EventData {
@@ -10046,11 +10271,11 @@ struct EventData {
     }
 
     void InsertIntoFormHandles(RE::VMHandle handle, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& eventFormHandles) {
-        if (akForm) {
+        if (gfuncs::IsFormValid(akForm)) {
             auto it = eventFormHandles.find(akForm);
-            if (it != eventFormHandles.end()) { //form found in activator param map
+            if (it != eventFormHandles.end()) { //form found in param map
                 int handleIndex = gfuncs::GetIndexInVector(it->second, handle);
-                if (handleIndex == -1) { //handle not already added for this form (activator param)
+                if (handleIndex == -1) { //handle not already added for this form param
                     it->second.push_back(handle);
                     logger::debug("{}: akForm[{}] ID[{:x}] found, handles sixe[{}]", __func__, gfuncs::GetFormName(akForm), akForm->GetFormID(), it->second.size());
                 }
@@ -10066,9 +10291,9 @@ struct EventData {
     }
 
     void EraseFromFormHandles(RE::VMHandle handle, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& eventFormHandles) {
-        if (akForm) {
+        if (gfuncs::IsFormValid(akForm)) {
             auto it = eventFormHandles.find(akForm);
-            if (it != eventFormHandles.end()) { //form found in activator param map
+            if (it != eventFormHandles.end()) { //form found in param map
                 int handleIndex = gfuncs::GetIndexInVector(it->second, handle);
                 if (handleIndex != -1) { //handle not already added for this form (activator param)
                     auto itb = it->second.begin() + handleIndex;
@@ -10126,7 +10351,16 @@ struct EventData {
         }
     }
 
-    void RemoveHandle(RE::VMHandle handle, RE::TESForm* paramFilter, int paramFilterIndex) {
+    void CheckAndRemoveSink() {
+        std::thread t([=]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500)); //wait for 1.5 seconds before checking removeSinkIfEmpty
+            removeSinkIfEmpty();
+
+            });
+        t.detach();
+    }
+
+    void RemoveHandle(RE::VMHandle handle, RE::TESForm* paramFilter, int paramFilterIndex, bool removeSink = true) {
         int gIndex = gfuncs::GetIndexInVector(globalHandles, handle);
 
         if (!paramFilter) {
@@ -10147,12 +10381,9 @@ struct EventData {
             EraseFromFormHandles(handle, paramFilter, eventParamMaps[paramFilterIndex]);
         }
 
-        std::thread t([=]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1500)); //wait for 1.5 seconds before checking removeSinkIfEmpty
-            removeSinkIfEmpty();
-
-            });
-        t.detach();
+        if (removeSink) {
+            CheckAndRemoveSink();
+        }
     }
 
     void RemoveAllHandles(RE::VMHandle handle) {
@@ -10563,17 +10794,11 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
         }
 
         RE::TESAmmo* ammo = nullptr;
-        bool powerAttack = false;
-        bool SneakAttack = false;
-        bool bBashAttack = false;
-        bool HitBlocked = false;
 
-        if (event->flags) {
-            bool powerAttack = event->flags.any(RE::TESHitEvent::Flag::kPowerAttack);
-            bool SneakAttack = event->flags.any(RE::TESHitEvent::Flag::kSneakAttack);
-            bool bBashAttack = event->flags.any(RE::TESHitEvent::Flag::kBashAttack);
-            bool HitBlocked = event->flags.any(RE::TESHitEvent::Flag::kHitBlocked);
-        }
+        bool powerAttack = event->flags.any(RE::TESHitEvent::Flag::kPowerAttack);
+        bool SneakAttack = event->flags.any(RE::TESHitEvent::Flag::kSneakAttack);
+        bool bBashAttack = event->flags.any(RE::TESHitEvent::Flag::kBashAttack);
+        bool HitBlocked = event->flags.any(RE::TESHitEvent::Flag::kHitBlocked);
 
         bool hitEventDataEmpty = eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty();
 
@@ -10780,11 +11005,7 @@ struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
             Target = event->targetActor.get();
         }
 
-        int combatState = 0;
-
-        if (event->newState) {
-            combatState = static_cast<int>(event->newState.get());
-        }
+        int combatState = static_cast<int>(event->newState.get());
 
         //RE::Actor* actorRef = actorObjRef->As<RE::Actor>();
         //logger::trace("Actor {} changed to combat state to {} with", gfuncs::GetFormName(actorObjRef), combatState);
@@ -10831,10 +11052,7 @@ struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
             furnitureRef = event->targetFurniture.get();
         }
 
-        int type = 1;
-        if (event->type) {
-            type = event->type.underlying();
-        }
+        int type = event->type.underlying();
 
         RE::BSFixedString sEvent;
         int eventIndex;
@@ -11753,7 +11971,6 @@ struct EnterBleedoutEventSink : public RE::BSTEventSink<RE::TESEnterBleedoutEven
 
 EnterBleedoutEventSink* enterBleedoutEventSink;
 
-//TESSwitchRaceCompleteEvent
 struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCompleteEvent> {
     bool sinkAdded = false;
 
@@ -11761,7 +11978,7 @@ struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCo
         //logger::trace("SwitchRaceCompleteEvent");
 
         if (!event) {
-            logger::error("Enter Bleedout Event is nullptr");
+            logger::error("Switch Race Complete Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -11809,6 +12026,100 @@ struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCo
 };
 
 SwitchRaceCompleteEventSink* switchRaceCompleteEventSink;
+
+struct FootstepEventSink : public RE::BSTEventSink<RE::BGSFootstepEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::BGSFootstepEvent* event, RE::BSTEventSource<RE::BGSFootstepEvent>*/*source*/) {
+        if (!event) {
+            logger::error("footstep Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::Actor* akActor = nullptr;
+
+        RE::BGSActorEvent* actorEvent = const_cast<RE::BGSFootstepEvent*>(event);
+        if (actorEvent) {
+            if (actorEvent->actor) {
+                auto ptr = actorEvent->actor.get();
+                if (ptr) {
+                    auto* actor = ptr.get(); 
+                    if (gfuncs::IsFormValid(actor)) {
+                        akActor = actor;
+                    }
+                }
+            }
+        }
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActorFootStep]->globalHandles;
+        CombineEventHandles(handles, akActor, eventDataPtrs[EventEnum_OnActorFootStep]->eventParamMaps[0]);
+
+        gfuncs::RemoveDuplicates(handles);
+        auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor, (std::string)event->tag);
+
+        SendEvents(handles, eventDataPtrs[EventEnum_OnActorFootStep]->sEvent, args);
+
+        logger::trace("FootstepEvent: Actor[{}] tag[{}]",
+            gfuncs::GetFormName(akActor), event->tag);
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+FootstepEventSink* footstepEventSink;
+
+struct QuestObjectiveEventSink : public RE::BSTEventSink<RE::ObjectiveState::Event> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::ObjectiveState::Event* event, RE::BSTEventSource<RE::ObjectiveState::Event>*/*source*/) {
+        if (!event) {
+            logger::error("QuestObjective Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (!event->objective) {
+            logger::error("QuestObjective Event->objective is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        int oldState = static_cast<int>(event->oldState);
+        int newState = static_cast<int>(event->newState);
+        int objectiveIndex = event->objective->index;
+        std::string displayText = event->objective->displayText.c_str();
+        RE::TESQuest* akQuest = nullptr;
+        std::vector<RE::BGSBaseAlias*> ojbectiveAliases;
+
+        if (gfuncs::IsFormValid(event->objective->ownerQuest)) {
+            akQuest = event->objective->ownerQuest;
+            for (int i = 0; i < event->objective->numTargets; i++) {
+                auto* target = event->objective->targets[i];
+                if (target) {
+                    auto* alias = gfuncs::GetQuestAliasById(akQuest, target->alias);
+                    if (alias) {
+                        ojbectiveAliases.push_back(alias);
+                    }
+                }
+            }
+        }
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->globalHandles;
+        CombineEventHandles(handles, akQuest, eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->eventParamMaps[0]);
+
+        gfuncs::RemoveDuplicates(handles);
+
+        auto* args = RE::MakeFunctionArguments((RE::TESQuest*)akQuest, (std::string)displayText, (int)oldState, (int)newState,
+            (int)objectiveIndex, (std::vector<RE::BGSBaseAlias*>)ojbectiveAliases);
+
+        SendEvents(handles, eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->sEvent, args);
+
+        logger::trace("QuestObjective Event: quest[{}] displayText[{}] objectiveIndex[{}] oldState[{}] newState[{}] targets[{}]",
+            gfuncs::GetFormName(akQuest), displayText, objectiveIndex, oldState, newState, event->objective->numTargets);
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+QuestObjectiveEventSink* questObjectiveEventSink;
 
 struct ObjectInitEventSink : public RE::BSTEventSink<RE::TESInitScriptEvent> {
     bool sinkAdded = false;
@@ -12295,6 +12606,24 @@ void AddSink(int index) {
             logger::debug("{}, EventEnum_OnSwitchRaceComplete sink added", __func__);
         }
         break;
+
+    case EventEnum_OnActorFootStep:
+        if (!footstepEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnActorFootStep]->isEmpty()) {
+            footstepEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnActorFootStep]->sinkAdded = true;
+            RE::BGSFootstepManager::GetSingleton()->AddEventSink(footstepEventSink);
+            logger::debug("{}, EventEnum_OnActorFootStep sink added", __func__);
+        }
+        break;
+
+    case EventEnum_OnQuestObjectiveStateChanged:
+        if (!questObjectiveEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->isEmpty()) {
+            questObjectiveEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->sinkAdded = true;
+            RE::ObjectiveState::GetEventSource()->AddEventSink(questObjectiveEventSink);
+            logger::debug("{}, EventEnum_OnQuestObjectiveStateChanged sink added", __func__);
+        }
+        break;
     }
 }
 
@@ -12517,6 +12846,24 @@ void RemoveSink(int index) {
             logger::debug("{}, EventEnum_OnSwitchRaceComplete sink removed", __func__);
         }
         break;
+
+    case EventEnum_OnActorFootStep:
+        if (footstepEventSink->sinkAdded && eventDataPtrs[EventEnum_OnActorFootStep]->isEmpty()) {
+            footstepEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnActorFootStep]->sinkAdded = false;
+            RE::BGSFootstepManager::GetSingleton()->RemoveEventSink(footstepEventSink);
+            logger::debug("{}, EventEnum_OnActorFootStep sink removed", __func__);
+        }
+        break;
+
+    case EventEnum_OnQuestObjectiveStateChanged:
+        if (questObjectiveEventSink->sinkAdded && eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->isEmpty()) {
+            questObjectiveEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->sinkAdded = false;
+            RE::ObjectiveState::GetEventSource()->RemoveEventSink(questObjectiveEventSink);
+            logger::debug("{}, EventEnum_OnQuestObjectiveStateChanged sink removed", __func__);
+        }
+        break;
     }
 }
 
@@ -12623,6 +12970,60 @@ bool IsActiveMagicEffectRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSF
     }
 }
 
+bool RegisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int paramFilterIndex, RE::VMHandle& handle) {
+    if (!gfuncs::IsFormValid(list)) {
+        return false;
+    } 
+
+    int size = list->forms.size();
+
+    if (size <= 0) {
+        return false;
+    }
+
+    for (int i = 0; i < size; i++) {
+        auto* form = list->forms[i]; 
+        if (gfuncs::IsFormValid(form)) {
+            RE::BGSListForm* nestedList = form->As<RE::BGSListForm>();
+            if (gfuncs::IsFormValid(nestedList)) {
+                RegisterFormListForGlobalEvent(nestedList, eventIndex, paramFilterIndex, handle);
+            }
+            else {
+                eventDataPtrs[eventIndex]->AddHandle(handle, form, paramFilterIndex);
+            }
+        }
+    }
+
+    return true;
+} 
+
+bool UnregisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int paramFilterIndex, RE::VMHandle& handle) {
+    if (!gfuncs::IsFormValid(list)) {
+        return false;
+    }
+
+    int size = list->forms.size();
+
+    if (size <= 0) {
+        return false;
+    }
+
+    for (int i = 0; i < size; i++) {
+        auto* form = list->forms[i];
+        if (gfuncs::IsFormValid(form)) {
+            RE::BGSListForm* nestedList = form->As<RE::BGSListForm>();
+            if (gfuncs::IsFormValid(nestedList)) {
+                UnregisterFormListForGlobalEvent(nestedList, eventIndex, paramFilterIndex, handle);
+            }
+            else {
+                eventDataPtrs[eventIndex]->RemoveHandle(handle, form, paramFilterIndex, false);
+            }
+        }
+    }
+
+    return true;
+}
+
 //register
 void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
     logger::trace("{} {}", __func__, asEvent);
@@ -12642,10 +13043,25 @@ void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEven
     }
 
     int index = GetEventIndex(eventDataPtrs, asEvent);
+    if (index != -1) { 
+        bool paramFilterIsFormList = false;
+        if (gfuncs::IsFormValid(paramFilter)) {
+            auto* akFormList = paramFilter->As<RE::BGSListForm>();
+            if (gfuncs::IsFormValid(akFormList)) {
+                paramFilterIsFormList = true;
+                if (RegisterFormListForGlobalEvent(akFormList, index, paramFilterIndex, handle)) {
+                    AddSink(index);
+                }
+                else {
+                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to register", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                }
+            }
+        }
 
-    if (index != -1) {
-        eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
-        AddSink(index);
+        if (!paramFilterIsFormList) {
+            eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
+            AddSink(index);
+        }
     }
     else {
         logger::error("{}: event [{}] not recognized", __func__, asEvent);
@@ -12671,8 +13087,24 @@ void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEve
 
     int index = GetEventIndex(eventDataPtrs, asEvent);
     if (index != -1) {
-        eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
-        AddSink(index);
+        bool paramFilterIsFormList = false;
+        if (gfuncs::IsFormValid(paramFilter)) {
+            auto* akFormList = paramFilter->As<RE::BGSListForm>();
+            if (gfuncs::IsFormValid(akFormList)) {
+                paramFilterIsFormList = true;
+                if (RegisterFormListForGlobalEvent(akFormList, index, paramFilterIndex, handle)) {
+                    AddSink(index);
+                }
+                else {
+                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to register", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                }
+            }
+        }
+
+        if (!paramFilterIsFormList) {
+            eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
+            AddSink(index);
+        }
     }
     else {
         logger::error("{}: event [{}] not recognized", __func__, asEvent);
@@ -12698,8 +13130,24 @@ void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixed
 
     int index = GetEventIndex(eventDataPtrs, asEvent);
     if (index != -1) {
-        eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
-        AddSink(index);
+        bool paramFilterIsFormList = false;
+        if (gfuncs::IsFormValid(paramFilter)) {
+            auto* akFormList = paramFilter->As<RE::BGSListForm>();
+            if (gfuncs::IsFormValid(akFormList)) {
+                paramFilterIsFormList = true;
+                if (RegisterFormListForGlobalEvent(akFormList, index, paramFilterIndex, handle)) {
+                    AddSink(index);
+                }
+                else {
+                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to register", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                }
+            }
+        }
+
+        if (!paramFilterIsFormList) {
+            eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
+            AddSink(index);
+        }
     }
     else {
         logger::error("{}: event [{}] not recognized", __func__, asEvent);
@@ -12726,7 +13174,23 @@ void UnregisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEv
 
     int index = GetEventIndex(eventDataPtrs, asEvent);
     if (index != -1) {
-        eventDataPtrs[index]->RemoveHandle(handle, paramFilter, paramFilterIndex);
+        bool paramFilterIsFormList = false;
+        if (gfuncs::IsFormValid(paramFilter)) {
+            auto* akFormList = paramFilter->As<RE::BGSListForm>();
+            if (gfuncs::IsFormValid(akFormList)) {
+                bool paramFilterIsFormList = true;
+                if (UnregisterFormListForGlobalEvent(akFormList, index, paramFilterIndex, handle)) {
+                    eventDataPtrs[index]->CheckAndRemoveSink();
+                }
+                else {
+                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to unregister", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                }
+            }
+        }
+
+        if (!paramFilterIsFormList) {
+            eventDataPtrs[index]->RemoveHandle(handle, paramFilter, paramFilterIndex);
+        }
     }
     else {
         logger::error("{}: event [{}] not recognized", __func__, asEvent);
@@ -12752,7 +13216,23 @@ void UnregisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asE
 
     int index = GetEventIndex(eventDataPtrs, asEvent);
     if (index != -1) {
-        eventDataPtrs[index]->RemoveHandle(handle, paramFilter, paramFilterIndex);
+        bool paramFilterIsFormList = false;
+        if (gfuncs::IsFormValid(paramFilter)) {
+            auto* akFormList = paramFilter->As<RE::BGSListForm>();
+            if (gfuncs::IsFormValid(akFormList)) {
+                bool paramFilterIsFormList = true;
+                if (UnregisterFormListForGlobalEvent(akFormList, index, paramFilterIndex, handle)) {
+                    eventDataPtrs[index]->CheckAndRemoveSink();
+                }
+                else {
+                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to unregister", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                }
+            }
+        }
+
+        if (!paramFilterIsFormList) {
+            eventDataPtrs[index]->RemoveHandle(handle, paramFilter, paramFilterIndex);
+        }
     }
     else {
         logger::error("{}: event [{}] not recognized", __func__, asEvent);
@@ -12778,7 +13258,23 @@ void UnregisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFix
 
     int index = GetEventIndex(eventDataPtrs, asEvent);
     if (index != -1) {
-        eventDataPtrs[index]->RemoveHandle(handle, paramFilter, paramFilterIndex);
+        bool paramFilterIsFormList = false;
+        if (gfuncs::IsFormValid(paramFilter)) {
+            auto* akFormList = paramFilter->As<RE::BGSListForm>();
+            if (gfuncs::IsFormValid(akFormList)) {
+                bool paramFilterIsFormList = true;
+                if (UnregisterFormListForGlobalEvent(akFormList, index, paramFilterIndex, handle)) {
+                    eventDataPtrs[index]->CheckAndRemoveSink();
+                }
+                else {
+                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to unregister", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                }
+            }
+        }
+
+        if (!paramFilterIsFormList) {
+            eventDataPtrs[index]->RemoveHandle(handle, paramFilter, paramFilterIndex);
+        }
     }
     else {
         logger::error("{}: event [{}] not recognized", __func__, asEvent);
@@ -12915,6 +13411,8 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_OnLocationCleared] = new EventData("OnLocationClearedGlobal", EventEnum_OnLocationCleared, 1, 'LCa0');
         eventDataPtrs[EventEnum_OnEnterBleedout] = new EventData("OnEnterBleedoutGlobal", EventEnum_OnEnterBleedout, 1, 'EBa0');
         eventDataPtrs[EventEnum_OnSwitchRaceComplete] = new EventData("OnRaceSwitchCompleteGlobal", EventEnum_OnSwitchRaceComplete, 3, 'SWr0');
+        eventDataPtrs[EventEnum_OnActorFootStep] = new EventData("OnActorFootStepGlobal", EventEnum_OnActorFootStep, 1, 'AFs0');
+        eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged] = new EventData("OnQuestObjectiveStateChangedGlobal", EventEnum_OnQuestObjectiveStateChanged, 1, 'QOs0');
     }
 
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -12937,11 +13435,13 @@ void CreateEventSinks() {
     if (!locationClearedEventSink) { locationClearedEventSink = new LocationClearedEventSink(); }
     if (!enterBleedoutEventSink) { enterBleedoutEventSink = new EnterBleedoutEventSink(); }
     if (!switchRaceCompleteEventSink) { switchRaceCompleteEventSink = new SwitchRaceCompleteEventSink(); }
+    if (!footstepEventSink) { footstepEventSink = new FootstepEventSink(); }
+    if (!questObjectiveEventSink) { questObjectiveEventSink = new QuestObjectiveEventSink(); }
     if (!objectInitEventSink) { objectInitEventSink = new ObjectInitEventSink(); }
     if (!objectLoadedEventSink) { objectLoadedEventSink = new ObjectLoadedEventSink(); }
     if (!inputEventSink) { inputEventSink = new InputEventSink(); }
 
-    //always activate to track lastPlayerActivatedRef
+    //always active to track lastPlayerActivatedRef
     eventSourceholder->AddEventSink(activateEventSink);
 
     //eventSourceholder->AddEventSink(objectLoadedEventSink);
@@ -13009,6 +13509,14 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
     vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
+
+    vm->RegisterFunction("GetAllArmorsForSlotMask", "DbSkseFunctions", GetAllArmorsForSlotMask);
+    vm->RegisterFunction("GetCellWorldSpace", "DbSkseFunctions", GetCellWorldSpace);
+    vm->RegisterFunction("GetCellLocation", "DbSkseFunctions", GetCellLocation);
+    vm->RegisterFunction("GetAllInteriorCells", "DbSkseFunctions", GetAllInteriorCells);
+    vm->RegisterFunction("GetAllExteriorCells", "DbSkseFunctions", GetAllExteriorCells);
+    vm->RegisterFunction("GetAttachedCells", "DbSkseFunctions", GetAttachedCells);
+
     vm->RegisterFunction("GetAllFormsWithName", "DbSkseFunctions", GetAllFormsWithName);
     vm->RegisterFunction("GetAllFormsWithScriptAttached", "DbSkseFunctions", GetAllFormsWithScriptAttached);
     vm->RegisterFunction("GetAllAliasesWithScriptAttached", "DbSkseFunctions", GetAllAliasesWithScriptAttached);
