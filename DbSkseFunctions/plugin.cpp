@@ -831,91 +831,101 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
     int m = akFormlist->forms.size();
 
     if (noneStringType == 2 && maxCharacters > 0) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            if (!gfuncs::IsFormValid(akForm)) {
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            if (!gfuncs::IsFormValid(form)) {
                 descriptions.push_back(nullFormString);
-                continue;
+                return RE::BSContainer::ForEachResult::kContinue;
             }
-            std::string description = GetDescription(akForm, newLineReplacer);
-            if (description == "" && akForm) {
-                description = gfuncs::IntToHex(akForm->GetFormID());
+            std::string description = GetDescription(form, newLineReplacer);
+            if (description == "" && form) {
+                description = gfuncs::IntToHex(form->GetFormID());
             }
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            descriptions.push_back(description);
-        }
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else if (noneStringType == 1 && maxCharacters > 0) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            if (!gfuncs::IsFormValid(akForm)) {
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            if (!gfuncs::IsFormValid(form)) {
                 descriptions.push_back(nullFormString);
-                continue;
+                return RE::BSContainer::ForEachResult::kContinue;
             }
-            std::string description = GetDescription(akForm, newLineReplacer);
-            if (description == "" && akForm) {
-                description = GetFormEditorId(nullptr, akForm, "");
+            std::string description = GetDescription(form, newLineReplacer);
+            if (description == "" && form) {
+                description = GetFormEditorId(nullptr, form, "");
             }
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
             descriptions.push_back(description);
-        }
+
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else if (noneStringType == 2) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            if (!gfuncs::IsFormValid(akForm)) {
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            if (!gfuncs::IsFormValid(form)) {
                 descriptions.push_back(nullFormString);
-                continue;
+                return RE::BSContainer::ForEachResult::kContinue;
             }
-            std::string description = GetDescription(akForm, newLineReplacer);
-            if (description == "" && akForm) {
-                description = gfuncs::IntToHex(akForm->GetFormID());
+            std::string description = GetDescription(form, newLineReplacer);
+            if (description == "" && form) {
+                description = gfuncs::IntToHex(form->GetFormID());
             }
             descriptions.push_back(description);
-        }
+
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else if (noneStringType == 1) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            if (!gfuncs::IsFormValid(akForm)) {
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            if (!gfuncs::IsFormValid(form)) {
                 descriptions.push_back(nullFormString);
-                continue;
+                return RE::BSContainer::ForEachResult::kContinue;
             }
-            std::string description = GetDescription(akForm, newLineReplacer);
-            if (description == "" && akForm) {
-                description = GetFormEditorId(nullptr, akForm, "");
+            std::string description = GetDescription(form, newLineReplacer);
+            if (description == "" && form) {
+                description = GetFormEditorId(nullptr, form, "");
             }
             descriptions.push_back(description);
-        }
+
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else if (maxCharacters > 0) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            if (!gfuncs::IsFormValid(akForm)) {
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            if (!gfuncs::IsFormValid(form)) {
                 descriptions.push_back(nullFormString);
-                continue;
+                return RE::BSContainer::ForEachResult::kContinue;
             }
-            std::string description = GetDescription(akForm, newLineReplacer);
+            std::string description = GetDescription(form, newLineReplacer);
             if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
             descriptions.push_back(description);
-        }
+
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            if (!gfuncs::IsFormValid(akForm)) {
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            if (!gfuncs::IsFormValid(form)) {
                 descriptions.push_back(nullFormString);
-                continue;
+                return RE::BSContainer::ForEachResult::kContinue;
             }
-            std::string description = GetDescription(akForm, newLineReplacer);
+            std::string description = GetDescription(form, newLineReplacer);
             descriptions.push_back(description);
-        }
+
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
 
     if (sortOption == 1 || sortOption == 2) {
@@ -1011,73 +1021,79 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
 
     std::vector<std::string> descriptions;
     if (noneStringType == 2 && maxCharacters > 0) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            std::string description = GetDescription(akForm, newLineReplacer);
-            if (description == "" && akForm) {
-                description = gfuncs::IntToHex(akForm->GetFormID());
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            std::string description = GetDescription(form, newLineReplacer);
+            if (description == "" && form) {
+                description = gfuncs::IntToHex(form->GetFormID());
             }
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
-        }
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else if (noneStringType == 1 && maxCharacters > 0) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            std::string description = GetDescription(akForm, newLineReplacer);
-            if (description == "" && akForm) {
-                description = GetFormEditorId(nullptr, akForm, "");
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            std::string description = GetDescription(form, newLineReplacer);
+            if (description == "" && form) {
+                description = GetFormEditorId(nullptr, form, "");
             }
             else if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
-        }
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else if (noneStringType == 2) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            std::string description = GetDescription(akForm, newLineReplacer);
-            if (description == "" && akForm) {
-                description = gfuncs::IntToHex(akForm->GetFormID());
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            std::string description = GetDescription(form, newLineReplacer);
+            if (description == "" && form) {
+                description = gfuncs::IntToHex(form->GetFormID());
             }
-            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
-        }
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else if (noneStringType == 1) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            std::string description = GetDescription(akForm, newLineReplacer);
-            if (description == "" && akForm) {
-                description = GetFormEditorId(nullptr, akForm, "");
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            std::string description = GetDescription(form, newLineReplacer);
+            if (description == "" && form) {
+                description = GetFormEditorId(nullptr, form, "");
             }
-            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
-        }
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else if (maxCharacters > 0) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            std::string description = GetDescription(akForm, newLineReplacer);
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            std::string description = GetDescription(form, newLineReplacer);
             if (description.size() > maxCharacters) {
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
-            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
-        }
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            std::string description = GetDescription(akForm, newLineReplacer);
-            std::string name = static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "", false));
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            std::string description = GetDescription(form, newLineReplacer);
+            std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
-        }
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
 
     if (sortOption == 3 || sortOption == 4) {
@@ -1131,30 +1147,33 @@ std::vector<std::string> GetFormNamesAsStrings(RE::BGSListForm* akFormlist, int 
     int m = akFormlist->forms.size();
 
     if (noneStringType == 2) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
             std::string noName = "";
-            if (gfuncs::IsFormValid(akForm)) {
-                noName = gfuncs::IntToHex(akForm->GetFormID());
+            if (gfuncs::IsFormValid(form)) {
+                noName = gfuncs::IntToHex(form->GetFormID());
             }
-            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, noName)));
-        }
+            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, noName)));
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else if (noneStringType == 1) {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
             std::string noName = "";
-            if (gfuncs::IsFormValid(akForm)) {
-                noName = GetFormEditorId(nullptr, akForm, "");
+            if (gfuncs::IsFormValid(form)) {
+                noName = GetFormEditorId(nullptr, form, "");
             }
-            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, noName)));
-        }
+            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, noName)));
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
     else {
-        for (int i = 0; i < m; i++) {
-            RE::TESForm* akForm = akFormlist->forms[i];
-            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(akForm, nullFormString, "")));
-        }
+        akFormlist->ForEachForm([&](auto& akForm) {
+            auto* form = &akForm;
+            formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "")));
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
     }
 
     if (sortOption == 1 || sortOption == 2) {
@@ -1192,16 +1211,17 @@ std::vector<std::string> GetFormEditorIdsAsStrings(std::vector<RE::TESForm*> akF
 std::vector<std::string> GetFormEditorIdsAsStrings(RE::BGSListForm* akFormlist, int sortOption, std::string nullFormString) {
     std::vector<std::string> formNames;
 
-    int m = akFormlist->forms.size();
+    //int m = akFormlist->forms.size();
 
-    for (int i = 0; i < m; i++) {
-        RE::TESForm* akForm = akFormlist->forms[i];
+    akFormlist->ForEachForm([&](auto& akForm) {
+        auto* form = &akForm;
         std::string name = nullFormString;
-        if (gfuncs::IsFormValid(akForm)) {
-            name = GetFormEditorId(nullptr, akForm, "");
+        if (gfuncs::IsFormValid(form)) {
+            name = GetFormEditorId(nullptr, form, "");
         }
         formNames.push_back(name);
-    }
+        return RE::BSContainer::ForEachResult::kContinue;
+    });
 
     if (sortOption == 1 || sortOption == 2) {
         std::sort(formNames.begin(), formNames.end());
@@ -2004,7 +2024,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(7.3);
+    return float(7.4);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2278,10 +2298,11 @@ std::vector<RE::TESForm*> FormListToArray(RE::StaticFunctionTag*, RE::BGSListFor
         return returnForms;
     }
 
-    int m = akFormlist->forms.size();
-    for (int i = 0; i < m; i++) {
-        returnForms.push_back(akFormlist->forms[i]);
-    }
+    akFormlist->ForEachForm([&](auto& akForm) {
+        auto* form = &akForm;
+        returnForms.push_back(form);
+        return RE::BSContainer::ForEachResult::kContinue;
+    });
 
     if (sortOption >= 1 && sortOption <= 6) {
         return SortFormArray(nullptr, returnForms, sortOption);
@@ -7289,10 +7310,12 @@ RE::BGSListForm* CreateFormList(RE::StaticFunctionTag*, RE::BGSListForm* formLis
         logger::debug("{} success", __func__);
         if (gfuncs::IsFormValid(formListFiller)) {
             logger::debug("{} IsDynamicForm[{}]", __func__, formListFiller->IsDynamicForm());
-            int max = formListFiller->forms.size();
-            for (int i = 0; i < max; i++) {
-                newForm->AddForm(formListFiller->forms[i]);
-            }
+
+            formListFiller->ForEachForm([&](auto& akForm) {
+                auto* form = &akForm;
+                newForm->AddForm(form);
+                return RE::BSContainer::ForEachResult::kContinue;
+            });
         }
     }
     return newForm;
@@ -12975,15 +12998,12 @@ bool RegisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int p
         return false;
     } 
 
-    int size = list->forms.size();
+    int iCount = 0;
 
-    if (size <= 0) {
-        return false;
-    }
-
-    for (int i = 0; i < size; i++) {
-        auto* form = list->forms[i]; 
+    list->ForEachForm([&](auto& akForm) {
+        auto* form = &akForm;
         if (gfuncs::IsFormValid(form)) {
+            iCount++;
             RE::BGSListForm* nestedList = form->As<RE::BGSListForm>();
             if (gfuncs::IsFormValid(nestedList)) {
                 RegisterFormListForGlobalEvent(nestedList, eventIndex, paramFilterIndex, handle);
@@ -12992,8 +13012,13 @@ bool RegisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int p
                 eventDataPtrs[eventIndex]->AddHandle(handle, form, paramFilterIndex);
             }
         }
-    }
+        return RE::BSContainer::ForEachResult::kContinue;
+    });
 
+    int size = list->forms.size();
+
+    logger::trace("{}: size[{}] scriptAddedFormCount[{}] iCount[{}]", __func__, size, list->scriptAddedFormCount, iCount);
+    
     return true;
 } 
 
@@ -13002,14 +13027,8 @@ bool UnregisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int
         return false;
     }
 
-    int size = list->forms.size();
-
-    if (size <= 0) {
-        return false;
-    }
-
-    for (int i = 0; i < size; i++) {
-        auto* form = list->forms[i];
+    list->ForEachForm([&](auto& akForm) {
+        auto* form = &akForm;
         if (gfuncs::IsFormValid(form)) {
             RE::BGSListForm* nestedList = form->As<RE::BGSListForm>();
             if (gfuncs::IsFormValid(nestedList)) {
@@ -13019,7 +13038,12 @@ bool UnregisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int
                 eventDataPtrs[eventIndex]->RemoveHandle(handle, form, paramFilterIndex, false);
             }
         }
-    }
+        return RE::BSContainer::ForEachResult::kContinue;
+    }); 
+
+    int size = list->forms.size();
+
+    logger::trace("{}: size[{}] scriptAddedFormCount[{}]", __func__, size, list->scriptAddedFormCount);
 
     return true;
 }
