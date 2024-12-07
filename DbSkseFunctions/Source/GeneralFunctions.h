@@ -355,6 +355,21 @@ namespace gfuncs {
         return -1;
     }
 
+    inline int GetIndexInVector(std::vector<RE::BSSoundHandle> v, RE::BSSoundHandle element) {
+        if (v.size() == 0) {
+            return -1;
+        }
+
+        int m = v.size();
+        for (int i = 0; i < m; i++) {
+            if (v[i].soundID == element.soundID) {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     inline int GetIndexInVector(std::vector<RE::VMHandle> v, RE::VMHandle& element) {
         if (element == NULL) {
             return -1;
@@ -431,6 +446,27 @@ namespace gfuncs {
         return -1;
     }
 
+    inline RE::NiAVObject* GetNiAVObjectForRef(RE::TESObjectREFR* ref) {
+        if (!IsFormValid(ref)) {
+            return nullptr;
+        }
+
+        RE::NiAVObject* obj = ref->Get3D(); 
+        if (!obj) {
+            obj = ref->Get3D1(false);
+
+            if (!obj) {
+                obj = ref->Get3D2();
+
+                if (!obj) {
+                    obj = ref->Get3D1(true);
+                }
+            }
+        }
+
+        return obj;
+    }
+
     inline RE::BGSBaseAlias* GetQuestAliasById(RE::TESQuest* quest, int id) {
         if (gfuncs::IsFormValid(quest)) {
             if (quest->aliases.size() > 0) {
@@ -445,6 +481,28 @@ namespace gfuncs {
         }
 
         return nullptr;
+    }
+
+    inline int GetWeatherType(RE::TESWeather* weather) {
+        if (gfuncs::IsFormValid(weather)) {
+            const auto flags = weather->data.flags;
+            if (flags.any(RE::TESWeather::WeatherDataFlag::kNone)) {
+                return -1;
+            }
+            if (flags.any(RE::TESWeather::WeatherDataFlag::kPleasant)) {
+                return 0;
+            }
+            if (flags.any(RE::TESWeather::WeatherDataFlag::kCloudy)) {
+                return 1;
+            }
+            if (flags.any(RE::TESWeather::WeatherDataFlag::kRainy)) {
+                return 2;
+            }
+            if (flags.any(RE::TESWeather::WeatherDataFlag::kSnow)) {
+                return 3;
+            }
+        }
+        return -2;
     }
 
     inline RE::BSFixedString GetBSUIMessageDataTypeString(RE::BSUIMessageData* msgData) {

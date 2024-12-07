@@ -2024,7 +2024,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(7.4);
+    return float(7.5);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2957,6 +2957,89 @@ std::vector<RE::TESObjectCELL*> GetAttachedCells(RE::StaticFunctionTag*) {
     return cells;
 }
 
+std::vector<RE::TESWeather*> GetAvailableWeathers(RE::StaticFunctionTag*, int type) {
+    std::vector<RE::TESWeather*> weathers;
+
+    auto* sky = RE::Sky::GetSingleton();
+
+    if (sky) {
+        auto* climate = sky->currentClimate;
+        if (gfuncs::IsFormValid(climate)) {
+            if (type == -2) {
+                logger::info("testing 123");
+                //for (auto& weatherType : climate->weatherList) {
+                //    if (weatherType) {
+                //        auto* weather = weatherType->weather;
+                //        if (gfuncs::IsFormValid(weather)) {
+                //            weathers.push_back(weather);
+                //            int akType = gfuncs::GetWeatherType(weather);
+                //            logger::critical("{}: akType[{}] chance[{}]", __func__, akType, weatherType->chance);
+                //        }
+                //    }
+                //}
+
+                //auto endit = climate->weatherList.end();
+                //for (auto it = climate->weatherList.begin(); it != endit; it++) {
+                //    auto weatherType = *it;
+                //    if (weatherType) {
+                //        auto* weather = weatherType->weather;
+                //        if (gfuncs::IsFormValid(weather)) {
+                //            weathers.push_back(weather);
+                //            int akType = gfuncs::GetWeatherType(weather);
+                //            logger::critical("{}: akType[{}] chance[{}]", __func__, akType, weatherType->chance);
+                //        }
+                //    }
+                //}
+
+                auto* dataHandler = RE::TESDataHandler::GetSingleton(); 
+                if (dataHandler) {
+                    auto* regionDataManager = dataHandler->GetRegionDataManager();
+                    if (regionDataManager) {
+                        auto* lastLoadedRegion = regionDataManager->GetLastLoadedRegion();
+                        if (lastLoadedRegion) {
+                            auto* dataList = lastLoadedRegion->dataList;
+                            if (dataList) {
+                                for (const auto& regionData : dataList->regionDataList) {
+                                    if (regionData) {
+                                        //if (regionData->IsLoaded()) {
+                                            auto* regionDataWeather = regionDataManager->AsRegionDataWeather(regionData);
+                                            if (regionDataWeather) {
+                                                for (const auto& weatherType : regionDataWeather->weatherTypes) {
+                                                    if (weatherType) {
+                                                        auto* weather = weatherType->weather;
+                                                        if (gfuncs::IsFormValid(weather)) {
+                                                            weathers.push_back(weather);
+                                                            int akType = gfuncs::GetWeatherType(weather);
+                                                            logger::critical("{}: akType[{}] chance[{}]", __func__, akType, weatherType->chance);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        //}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                for (auto& weatherType : climate->weatherList) {
+                    if (weatherType) {
+                        auto* weather = weatherType->weather;
+                        int akType = gfuncs::GetWeatherType(weather);
+                        if (akType == type) {
+                            weathers.push_back(weather);
+                        }
+                        logger::critical("{}: akType[{}] chance[{}]", __func__, akType, weatherType->chance);
+                    }
+                }
+            }
+        }
+    }
+
+    return weathers;
+}
 
 std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::string sFormName, int nameMatchMode, std::vector<int> formTypes, int formTypeMatchMode) {
     std::vector<RE::TESForm*> forms;
@@ -7379,18 +7462,35 @@ RE::TESSound* CreateSoundMarker(RE::StaticFunctionTag*) {
     return newForm;
 }
 
+std::vector<RE::BSSoundHandle> playedSoundHandles;
 RE::BSFixedString soundFinishEvent = "OnSoundFinish";
 void CreateSoundEvent(RE::TESForm* soundOrDescriptor, RE::BSSoundHandle& soundHandle, std::vector<RE::VMHandle> vmHandles, int intervalCheck) {
     std::thread t([=]() {
-        //wait for sound to finish playing, then send events for handles.
+        playedSoundHandles.push_back(soundHandle);
+        //wait for sound to finish playing, then send events for handles. state 2 == stopped
         while (soundHandle.state.underlying() != 2 && soundHandle.IsValid()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(intervalCheck));
+        } 
+        //remove sound handle from playedSoundHandles vector
+        int soundHandleIndex = gfuncs::GetIndexInVector(playedSoundHandles, soundHandle);
+        if (soundHandleIndex > -1) {
+            playedSoundHandles.erase(playedSoundHandles.begin() + soundHandleIndex);
         }
         auto* args = RE::MakeFunctionArguments((RE::TESForm*)soundOrDescriptor, (int)soundHandle.soundID);
-
         SendEvents(vmHandles, soundFinishEvent, args);
         });
     t.detach();
+}
+
+RE::BSSoundHandle* GetSoundHandleById(int id) {
+    for (int i = 0; i < playedSoundHandles.size(); i++) {
+        RE::BSSoundHandle soundHandle = playedSoundHandles[i];
+        if (soundHandle.soundID == id && soundHandle.state.underlying() != 2 && soundHandle.IsValid()) {
+            return &soundHandle;
+        }
+    }
+    RE::BSSoundHandle returnSoundHandle;
+    return &returnSoundHandle;
 }
 
 int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* akSource, float volume,
@@ -7440,9 +7540,7 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
         }
     }
 
-    if (vmHandles.size() > 0) {
-        CreateSoundEvent(akSound, soundHandle, vmHandles, 1000);
-    }
+    CreateSoundEvent(akSound, soundHandle, vmHandles, 1000);
     return soundHandle.soundID;
 }
 
@@ -7493,10 +7591,32 @@ int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSo
         }
     }
 
-    if (vmHandles.size() > 0) {
-        CreateSoundEvent(akSoundDescriptor, soundHandle, vmHandles, 1000);
-    }
+    CreateSoundEvent(akSoundDescriptor, soundHandle, vmHandles, 1000);
     return soundHandle.soundID;
+}
+
+bool SetSoundInstanceSource(RE::StaticFunctionTag*, int instanceID, RE::TESObjectREFR* ref) {
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::critical("{} error: ref doesn't exist.", __func__);
+        return false;
+    }
+
+    RE::BSSoundHandle* soundHandle = GetSoundHandleById(instanceID);
+    if (soundHandle->state.underlying() != 2 && soundHandle->IsValid()) {
+        RE::NiAVObject* obj3d = gfuncs::GetNiAVObjectForRef(ref);
+        if (!obj3d) {
+            logger::critical("{} error: couldn't get 3d for ref: {}", __func__, gfuncs::GetFormName(ref));
+            return false;
+        }
+        else {
+            soundHandle->SetObjectToFollow(obj3d);
+            logger::critical("{}: sound set to follow ref: {}", __func__, gfuncs::GetFormName(ref));
+            return true;
+        }
+    }
+
+    logger::critical("{} error: sound is no longer playing or valid. Not set to follow ref: {}", __func__, gfuncs::GetFormName(ref));
+    return false;
 }
 
 RE::BGSSoundCategory* GetParentSoundCategory(RE::StaticFunctionTag*, RE::BGSSoundCategory* akSoundCategory) {
@@ -13533,13 +13653,14 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
     vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
-
     vm->RegisterFunction("GetAllArmorsForSlotMask", "DbSkseFunctions", GetAllArmorsForSlotMask);
     vm->RegisterFunction("GetCellWorldSpace", "DbSkseFunctions", GetCellWorldSpace);
     vm->RegisterFunction("GetCellLocation", "DbSkseFunctions", GetCellLocation);
     vm->RegisterFunction("GetAllInteriorCells", "DbSkseFunctions", GetAllInteriorCells);
     vm->RegisterFunction("GetAllExteriorCells", "DbSkseFunctions", GetAllExteriorCells);
     vm->RegisterFunction("GetAttachedCells", "DbSkseFunctions", GetAttachedCells);
+
+    vm->RegisterFunction("GetAvailableWeathers", "DbSkseFunctions", GetAvailableWeathers);
 
     vm->RegisterFunction("GetAllFormsWithName", "DbSkseFunctions", GetAllFormsWithName);
     vm->RegisterFunction("GetAllFormsWithScriptAttached", "DbSkseFunctions", GetAllFormsWithScriptAttached);
@@ -13659,6 +13780,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("CreateSoundMarker", "DbSkseFunctions", CreateSoundMarker);
     vm->RegisterFunction("PlaySound", "DbSkseFunctions", PlaySound);
     vm->RegisterFunction("PlaySoundDescriptor", "DbSkseFunctions", PlaySoundDescriptor);
+    vm->RegisterFunction("SetSoundInstanceSource", "DbSkseFunctions", SetSoundInstanceSource);
     vm->RegisterFunction("GetParentSoundCategory", "DbSkseFunctions", GetParentSoundCategory);
     vm->RegisterFunction("GetSoundCategoryForSoundDescriptor", "DbSkseFunctions", GetSoundCategoryForSoundDescriptor);
     vm->RegisterFunction("SetSoundCategoryForSoundDescriptor", "DbSkseFunctions", SetSoundCategoryForSoundDescriptor);
