@@ -3,8 +3,6 @@ Scriptname DbSkseFunctions Hidden
 
 Float Function GetVersion() Global Native
 
-Function BindCreateFormArrayFunction(string akFunctionName, string akScriptName) Global Native
-
 ;get and set text from system clipboard, for copy / paste functionality
 String Function GetClipBoardText() Global Native
 Bool Function SetClipBoardText(String s) Global Native
@@ -145,6 +143,28 @@ String[] Function GetAllLoadedModDescriptions(int sortOption = 0, int maxCharact
 ;if none is passed in, get's all constructible objects in game.
 ConstructibleObject[] Function GetAllConstructibleObjects(Form createdObject) global native
 
+;Get all armors in game that use the slotMask
+Armor[] Function GetAllArmorsForSlotMask(int slotMask) global native
+
+WorldSpace function GetCellWorldSpace(cell akCell) global native
+
+Location Function GetCellLocation(cell akCell) global native
+
+;Get all interior cells in game that match the akLocation and or akOwner 
+;if matchMode == 0, get all cells in game where either the passed in akLocation or akOwner match.
+;if matchMode == 1, get all cells in game where both the passed in akLocation and akOwner match. 
+;if matchMode == anything else, get all interior cells in game
+cell[] Function GetAllInteriorCells(Location akLocation, Actorbase akOwner, int matchMode = 0) global native
+
+;Get all exterior cells in game that match the akLocation and or akWorldSpace 
+;if matchMode == 0, get all cells in game where either the passed in akLocation or akWorldSpace match.
+;if matchMode == 1, get all cells in game where both the passed in akLocation and akWorldSpace match. 
+;if matchMode == anything else, get all interior cells in game
+cell[] Function GetAllExteriorCells(Location akLocation, WorldSpace akWorldSpace, int matchMode = 0) global native
+
+;Get all cells currently attached
+cell[] Function GetAttachedCells() global native
+
 ;Get all forms who's name (with GetName()) match the sFormName.
 ;nameMatchMode 0 = exact match, 1 = name contains sFormName.  
 ;formTypeMatchMode 1 = forms that have a type in formTypes.
@@ -154,7 +174,7 @@ Form[] Function GetAllFormsWithName(string sFormName, int nameMatchMode = 0, int
 
 ;formTypeMatchMode 1 = forms that have a type in formTypes.
 ;formTypeMatchMode 0 = forms that do not have a type in formTypes. 
-;formTypeMatchMode -1 (or if formTypes == none) = formType filter is ignored completely, get all forms regardless of type that match (or contain) sFormName.
+;formTypeMatchMode -1 (or if formTypes == none) = formType filter is ignored completely, get all forms regardless of type that have the script with sScriptName attached
 Form[] Function GetAllFormsWithScriptAttached(string sScriptName, int[] formTypes = none, int formTypeMatchMode = 0) Global Native 
 
 Alias[] Function GetAllAliasesWithScriptAttached(string sScriptName) Global Native 
@@ -695,7 +715,7 @@ Bool Function IsActorInRagdollState(actor akActor) Global Native
 Bool Function IsActorFleeing(actor akActor) Global Native
 int Function GetDetectionLevel(actor akActor, actor akTarget) Global Native
 
-;ward states are 0 = absorbing, 1 = break, 2 = none
+;ward states are 0 = none, 1 = absorbing, 2 = break  
 int Function GetActorWardState(actor akActor) Global Native
 
 String Function GetKeywordString(keyword akKeyword) Global Native
@@ -722,7 +742,14 @@ Sound Function CreateSoundMarker() Global Native
 int Function PlaySound(Sound akSound, ObjectReference akSource, float volume = 1.0, Form eventReceiverForm = none, Alias eventReceiverAlias = none, activeMagicEffect eventReceiverActiveEffect = none) Global Native 
 int Function PlaySoundDescriptor(SoundDescriptor akSoundDescriptor, ObjectReference akSource, float volume = 1.0, Form eventReceiverForm = none, Alias eventReceiverAlias = none, activeMagicEffect eventReceiverActiveEffect = none) Global Native 
 
+;set the sound source for the currently playing soundId to the passed in ref.
+;this function will only work for sounds playing from PlaySound or PlaySoundDescriptor from this script 
+;I also found a strange bug. If the sound's source is the player and the player is in first person, this function will fail to set the ref as the new source. 
+;If however the player is in third person, this function will succeed in setting the ref as the new source for the sound instanceID
+Bool Function SetSoundInstanceSource(int instanceID, ObjectReference ref) Global Native
+
 ;sends the sound or soundDescriptor played and the instanceID
+;only works for sounds played from PlaySound or PlaySoundDescriptor from this script
 Event OnSoundFinish(Form SoundOrDescriptor, int instanceID)
 EndEvent
 
