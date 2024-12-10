@@ -2024,7 +2024,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(7.5);
+    return float(7.6);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -7462,20 +7462,22 @@ RE::TESSound* CreateSoundMarker(RE::StaticFunctionTag*) {
     return newForm;
 }
 
-std::vector<RE::BSSoundHandle> playedSoundHandles;
+std::map<int, RE::BSSoundHandle> playedSoundHandlesMap;
 RE::BSFixedString soundFinishEvent = "OnSoundFinish";
 void CreateSoundEvent(RE::TESForm* soundOrDescriptor, RE::BSSoundHandle& soundHandle, std::vector<RE::VMHandle> vmHandles, int intervalCheck) {
     std::thread t([=]() {
-        playedSoundHandles.push_back(soundHandle);
+        playedSoundHandlesMap[int(soundHandle.soundID)] = soundHandle;
         //wait for sound to finish playing, then send events for handles. state 2 == stopped
         while (soundHandle.state.underlying() != 2 && soundHandle.IsValid()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(intervalCheck));
         } 
-        //remove sound handle from playedSoundHandles vector
-        int soundHandleIndex = gfuncs::GetIndexInVector(playedSoundHandles, soundHandle);
-        if (soundHandleIndex > -1) {
-            playedSoundHandles.erase(playedSoundHandles.begin() + soundHandleIndex);
+        
+        //remove sound handle from playedSoundHandlesMap
+        auto it = playedSoundHandlesMap.find(soundHandle.soundID);
+        if (it != playedSoundHandlesMap.end()) {
+            playedSoundHandlesMap.erase(it);
         }
+
         auto* args = RE::MakeFunctionArguments((RE::TESForm*)soundOrDescriptor, (int)soundHandle.soundID);
         SendEvents(vmHandles, soundFinishEvent, args);
         });
@@ -7483,14 +7485,14 @@ void CreateSoundEvent(RE::TESForm* soundOrDescriptor, RE::BSSoundHandle& soundHa
 }
 
 RE::BSSoundHandle* GetSoundHandleById(int id) {
-    for (int i = 0; i < playedSoundHandles.size(); i++) {
-        RE::BSSoundHandle soundHandle = playedSoundHandles[i];
-        if (soundHandle.soundID == id && soundHandle.state.underlying() != 2 && soundHandle.IsValid()) {
-            return &soundHandle;
+    auto it = playedSoundHandlesMap.find(id);
+    if (it != playedSoundHandlesMap.end()) {
+        if (it->second.soundID == id) {
+            return &it->second;
         }
     }
-    RE::BSSoundHandle returnSoundHandle;
-    return &returnSoundHandle;
+
+    return nullptr;
 }
 
 int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* akSource, float volume,
@@ -7597,25 +7599,30 @@ int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSo
 
 bool SetSoundInstanceSource(RE::StaticFunctionTag*, int instanceID, RE::TESObjectREFR* ref) {
     if (!gfuncs::IsFormValid(ref)) {
-        logger::critical("{} error: ref doesn't exist.", __func__);
+        logger::warn("{} error: ref doesn't exist or isn't valid.", __func__);
         return false;
     }
 
     RE::BSSoundHandle* soundHandle = GetSoundHandleById(instanceID);
+    if (!soundHandle) {
+        logger::warn("{} error: couldn't find sound handle for instanceID [{}]", __func__, instanceID);
+        return false;
+    }
+
     if (soundHandle->state.underlying() != 2 && soundHandle->IsValid()) {
         RE::NiAVObject* obj3d = gfuncs::GetNiAVObjectForRef(ref);
         if (!obj3d) {
-            logger::critical("{} error: couldn't get 3d for ref: {}", __func__, gfuncs::GetFormName(ref));
+            logger::warn("{} error: couldn't get 3d for ref: [{}]", __func__, gfuncs::GetFormName(ref));
             return false;
         }
         else {
             soundHandle->SetObjectToFollow(obj3d);
-            logger::critical("{}: sound set to follow ref: {}", __func__, gfuncs::GetFormName(ref));
+            logger::debug("{}: instanceID [{}] set to follow ref: [{}]", __func__, instanceID, gfuncs::GetFormName(ref));
             return true;
         }
     }
 
-    logger::critical("{} error: sound is no longer playing or valid. Not set to follow ref: {}", __func__, gfuncs::GetFormName(ref));
+    logger::warn("{} error: instanceID [{}] is no longer playing or valid. Not set to follow ref: [{}]", __func__, instanceID, gfuncs::GetFormName(ref));
     return false;
 }
 
