@@ -36,18 +36,17 @@ Scriptname MyRefAliasScript extends ReferenceAlias
 
 Event OnInit()
 	;these two lines achieve the same thing
-    DbSkseEvents.RegisterAliasForGlobalEvent("OnLoadGameGlobal", self)
-    DbSkseEvents.RegisterFormForGlobalEvent("OnLoadGameGlobal", self.GetReference())
+    DbSkseEvents.RegisterAliasForGlobalEvent("OnWaitStartGlobal", self)
+    DbSkseEvents.RegisterFormForGlobalEvent("OnWaitStartGlobal", self.GetReference())
 EndEvent
-
 
 Same goes for ActiveMagicEffects:
 Scriptname MyRefAliasScript extends ReferenceAlias 
 
 Event OnEffectStart(Actor akTarget, Actor akCaster)
 	;these two lines achieve the same thing
-    DbSkseEvents.RegisterAliasForGlobalEvent("OnLoadGameGlobal", self)
-    DbSkseEvents.RegisterFormForGlobalEvent("OnLoadGameGlobal", akTarget)
+    DbSkseEvents.RegisterAliasForGlobalEvent("OnWaitStartGlobal", self)
+    DbSkseEvents.RegisterFormForGlobalEvent("OnWaitStartGlobal", akTarget)
 EndEvent
 /;
 
@@ -102,7 +101,6 @@ bool function ToggleGlobalEventOnActiveMagicEffect(String sEvent, ActiveMagicEff
 		return True
 	endif
 EndFunction
-
 
 ;events ===========================================================================================================================================================================
 ;as of version 6.3 OnLoadGameGlobal doesn't have to be registered for, it is always sent.
@@ -208,6 +206,10 @@ Endevent
 Event OnWeaponSwingGlobal(Actor akActor, Form Source, int slot)
 Endevent 
 
+;type can be "FootLeft", "FootRight", "FootSprintLeft", "FootSprintRight", "JumpUp", "JumpDown" ect.
+Event OnActorFootStepGlobal(Actor akActor, string type)
+EndEvent
+
 Event OnDeathGlobal(Actor Victim, Actor Killer)
 EndEvent
 
@@ -253,6 +255,16 @@ Event OnItemsPickpocketedGlobal(Actor akTarget, Form itemTaken, int count)
 Endevent
 
 Event OnLocationClearedGlobal(Location akLocation)
+EndEvent
+
+;states for oldState and newState are: 
+;Dormant = 0,
+;Displayed = 1,
+;Completed = 2,
+;CompletedDisplayed = 3,
+;Failed = 4,
+;FailedDisplayed = 5
+Event OnQuestObjectiveStateChangedGlobal(Quest akQuest, string displayText, int oldState, int newState, int objectiveIndex, alias[] ojbectiveAliases)
 EndEvent
 
 ;UI Item Menu Events ========================================================================================================================

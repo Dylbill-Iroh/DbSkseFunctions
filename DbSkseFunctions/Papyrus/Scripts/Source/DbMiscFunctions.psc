@@ -323,7 +323,9 @@ Float Angle = 0.0, Float Distance = 100.0, float afZOffset = 0.0, bool abMatchRo
     MoveToLocalOffset(Ref, PlaceAtMeRef, Angle, Distance, afZOffset, abMatchRotation)
     If !abInitiallyDisabled 
         Ref.Enable()
-    Endif
+    Endif 
+
+    return ref
 Endfunction
 
 ;Apply Havok Impulse from left / right angle + Z direction. No requirements.
@@ -435,6 +437,22 @@ ObjectReference Function CreateXMarkerRef(Bool PersistentRef = false, ObjectRefe
         Return xMarkerRef 
     Endif 
 EndFunction 
+
+;unequip all items on actor with delay in between. 
+;requires skse and po3's papyrus extender
+Function UnequipAllItems(Actor akActor, bool abPreventEquip = false, bool abSilent = true, float delay = 0.1) Global
+    Debug.trace("DbMiscFunctions UnequipAllItems on " + GetFormName(akActor) + "\nDelay = " + delay)
+    Utility.waitMenuMode(delay)
+    form[] equippedItems = po3_skseFunctions.AddAllEquippedItemsToArray(akActor)
+    int i = equippedItems.length 
+    while i > 0 
+        i -= 1 
+        if equippedItems[i]
+            akActor.UnEquipItem(equippedItems[i], abPreventEquip, abSilent)
+            Utility.waitMenuMode(delay)
+        Endif
+    EndWhile
+EndFunction
 
 ;remove all items from ref which must be a container or actor to optional otherContainer
 ;requires skse and papyrus extender and SSE 
