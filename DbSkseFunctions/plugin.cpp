@@ -570,7 +570,7 @@ RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedS
     auto it = vm->attachedScripts.find(handle);
     if (it != vm->attachedScripts.end()) {
         for (auto& attachedScript : it->second) {
-            
+
             if (attachedScript) {
                 auto* script = attachedScript.get();
                 if (script) {
@@ -845,7 +845,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
                 description = description.substr(0, maxCharacters) + overMaxCharacterSuffix;
             }
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else if (noneStringType == 1 && maxCharacters > 0) {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -864,7 +864,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
             descriptions.push_back(description);
 
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else if (noneStringType == 2) {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -880,7 +880,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
             descriptions.push_back(description);
 
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else if (noneStringType == 1) {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -896,7 +896,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
             descriptions.push_back(description);
 
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else if (maxCharacters > 0) {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -912,7 +912,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
             descriptions.push_back(description);
 
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -925,7 +925,7 @@ std::vector<std::string> GetFormDescriptionsAsStrings(RE::BGSListForm* akFormlis
             descriptions.push_back(description);
 
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
 
     if (sortOption == 1 || sortOption == 2) {
@@ -1033,7 +1033,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else if (noneStringType == 1 && maxCharacters > 0) {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -1048,7 +1048,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else if (noneStringType == 2) {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -1060,7 +1060,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else if (noneStringType == 1) {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -1072,7 +1072,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else if (maxCharacters > 0) {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -1084,7 +1084,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -1093,7 +1093,7 @@ std::vector<std::string> getFormNamesAndDescriptionsAsStrings(RE::BGSListForm* a
             std::string name = static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "", false));
             descriptions.push_back(name + "||" + description);
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
 
     if (sortOption == 3 || sortOption == 4) {
@@ -1155,7 +1155,7 @@ std::vector<std::string> GetFormNamesAsStrings(RE::BGSListForm* akFormlist, int 
             }
             formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, noName)));
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else if (noneStringType == 1) {
         akFormlist->ForEachForm([&](auto& akForm) {
@@ -1166,14 +1166,14 @@ std::vector<std::string> GetFormNamesAsStrings(RE::BGSListForm* akFormlist, int 
             }
             formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, noName)));
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
     else {
         akFormlist->ForEachForm([&](auto& akForm) {
             auto* form = &akForm;
             formNames.push_back(static_cast<std::string>(gfuncs::GetFormName(form, nullFormString, "")));
             return RE::BSContainer::ForEachResult::kContinue;
-        });
+            });
     }
 
     if (sortOption == 1 || sortOption == 2) {
@@ -1221,7 +1221,7 @@ std::vector<std::string> GetFormEditorIdsAsStrings(RE::BGSListForm* akFormlist, 
         }
         formNames.push_back(name);
         return RE::BSContainer::ForEachResult::kContinue;
-    });
+        });
 
     if (sortOption == 1 || sortOption == 2) {
         std::sort(formNames.begin(), formNames.end());
@@ -2024,7 +2024,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(7.6);
+    return float(7.7);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2302,7 +2302,7 @@ std::vector<RE::TESForm*> FormListToArray(RE::StaticFunctionTag*, RE::BGSListFor
         auto* form = &akForm;
         returnForms.push_back(form);
         return RE::BSContainer::ForEachResult::kContinue;
-    });
+        });
 
     if (sortOption >= 1 && sortOption <= 6) {
         return SortFormArray(nullptr, returnForms, sortOption);
@@ -2867,7 +2867,7 @@ std::vector<RE::TESObjectCELL*> GetAllExteriorCells(RE::StaticFunctionTag*, RE::
 
     if (!gfuncs::IsFormValid(akWorldSpace)) {
         akWorldSpace = nullptr;
-    } 
+    }
 
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
 
@@ -2882,12 +2882,12 @@ std::vector<RE::TESObjectCELL*> GetAllExteriorCells(RE::StaticFunctionTag*, RE::
 
                         if (!gfuncs::IsFormValid(location)) {
                             location = nullptr;
-                        } 
+                        }
 
                         if (!gfuncs::IsFormValid(worldSpace)) {
                             worldSpace = nullptr;
                         }
-                        
+
                         if (worldSpace == akWorldSpace && location == akLocation) {
                             cells.push_back(cell);
                         }
@@ -2957,89 +2957,6 @@ std::vector<RE::TESObjectCELL*> GetAttachedCells(RE::StaticFunctionTag*) {
     return cells;
 }
 
-std::vector<RE::TESWeather*> GetAvailableWeathers(RE::StaticFunctionTag*, int type) {
-    std::vector<RE::TESWeather*> weathers;
-
-    auto* sky = RE::Sky::GetSingleton();
-
-    if (sky) {
-        auto* climate = sky->currentClimate;
-        if (gfuncs::IsFormValid(climate)) {
-            if (type == -2) {
-                logger::info("testing 123");
-                //for (auto& weatherType : climate->weatherList) {
-                //    if (weatherType) {
-                //        auto* weather = weatherType->weather;
-                //        if (gfuncs::IsFormValid(weather)) {
-                //            weathers.push_back(weather);
-                //            int akType = gfuncs::GetWeatherType(weather);
-                //            logger::critical("{}: akType[{}] chance[{}]", __func__, akType, weatherType->chance);
-                //        }
-                //    }
-                //}
-
-                //auto endit = climate->weatherList.end();
-                //for (auto it = climate->weatherList.begin(); it != endit; it++) {
-                //    auto weatherType = *it;
-                //    if (weatherType) {
-                //        auto* weather = weatherType->weather;
-                //        if (gfuncs::IsFormValid(weather)) {
-                //            weathers.push_back(weather);
-                //            int akType = gfuncs::GetWeatherType(weather);
-                //            logger::critical("{}: akType[{}] chance[{}]", __func__, akType, weatherType->chance);
-                //        }
-                //    }
-                //}
-
-                auto* dataHandler = RE::TESDataHandler::GetSingleton(); 
-                if (dataHandler) {
-                    auto* regionDataManager = dataHandler->GetRegionDataManager();
-                    if (regionDataManager) {
-                        auto* lastLoadedRegion = regionDataManager->GetLastLoadedRegion();
-                        if (lastLoadedRegion) {
-                            auto* dataList = lastLoadedRegion->dataList;
-                            if (dataList) {
-                                for (const auto& regionData : dataList->regionDataList) {
-                                    if (regionData) {
-                                        //if (regionData->IsLoaded()) {
-                                            auto* regionDataWeather = regionDataManager->AsRegionDataWeather(regionData);
-                                            if (regionDataWeather) {
-                                                for (const auto& weatherType : regionDataWeather->weatherTypes) {
-                                                    if (weatherType) {
-                                                        auto* weather = weatherType->weather;
-                                                        if (gfuncs::IsFormValid(weather)) {
-                                                            weathers.push_back(weather);
-                                                            int akType = gfuncs::GetWeatherType(weather);
-                                                            logger::critical("{}: akType[{}] chance[{}]", __func__, akType, weatherType->chance);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        //}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            else {
-                for (auto& weatherType : climate->weatherList) {
-                    if (weatherType) {
-                        auto* weather = weatherType->weather;
-                        int akType = gfuncs::GetWeatherType(weather);
-                        if (akType == type) {
-                            weathers.push_back(weather);
-                        }
-                        logger::critical("{}: akType[{}] chance[{}]", __func__, akType, weatherType->chance);
-                    }
-                }
-            }
-        }
-    }
-
-    return weathers;
-}
 
 std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::string sFormName, int nameMatchMode, std::vector<int> formTypes, int formTypeMatchMode) {
     std::vector<RE::TESForm*> forms;
@@ -7398,7 +7315,7 @@ RE::BGSListForm* CreateFormList(RE::StaticFunctionTag*, RE::BGSListForm* formLis
                 auto* form = &akForm;
                 newForm->AddForm(form);
                 return RE::BSContainer::ForEachResult::kContinue;
-            });
+                });
         }
     }
     return newForm;
@@ -7470,8 +7387,8 @@ void CreateSoundEvent(RE::TESForm* soundOrDescriptor, RE::BSSoundHandle& soundHa
         //wait for sound to finish playing, then send events for handles. state 2 == stopped
         while (soundHandle.state.underlying() != 2 && soundHandle.IsValid()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(intervalCheck));
-        } 
-        
+        }
+
         //remove sound handle from playedSoundHandlesMap
         auto it = playedSoundHandlesMap.find(soundHandle.soundID);
         if (it != playedSoundHandlesMap.end()) {
@@ -10851,7 +10768,7 @@ void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source,
     if (!eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded) {
         return;
     }
-   
+
     if (GameHoursToRealTimeSeconds(nullptr, (currentGameTime - data.lastImpactEventGameTimeStamp)) < 0.1) {
         return; //event for this shooter and target was sent less than 0.1 seconds ago. Skip
     }
@@ -11957,7 +11874,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
                 }
             }
         }
-        
+
         if (!gfuncs::IsFormValid(workbenchRef)) {
             if (gfuncs::IsFormValid(gfuncs::menuRef)) {
                 workbenchRef = gfuncs::menuRef;
@@ -12167,7 +12084,7 @@ struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCo
 
         SendEvents(handles, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->sEvent, args);
 
-        logger::trace("SwitchRaceCompleteEvent: Actor[{}] akOldRace[{}] akNewRace[{}]", 
+        logger::trace("SwitchRaceCompleteEvent: Actor[{}] akOldRace[{}] akNewRace[{}]",
             gfuncs::GetFormName(akActor), gfuncs::GetFormName(akOldRace), gfuncs::GetFormName(akNewRace));
 
         //EventEnum_OnSwitchRaceComplete
@@ -12193,7 +12110,7 @@ struct FootstepEventSink : public RE::BSTEventSink<RE::BGSFootstepEvent> {
             if (actorEvent->actor) {
                 auto ptr = actorEvent->actor.get();
                 if (ptr) {
-                    auto* actor = ptr.get(); 
+                    auto* actor = ptr.get();
                     if (gfuncs::IsFormValid(actor)) {
                         akActor = actor;
                     }
@@ -13123,7 +13040,7 @@ bool IsActiveMagicEffectRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSF
 bool RegisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int paramFilterIndex, RE::VMHandle& handle) {
     if (!gfuncs::IsFormValid(list)) {
         return false;
-    } 
+    }
 
     int iCount = 0;
 
@@ -13140,14 +13057,14 @@ bool RegisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int p
             }
         }
         return RE::BSContainer::ForEachResult::kContinue;
-    });
+        });
 
     int size = list->forms.size();
 
     logger::trace("{}: size[{}] scriptAddedFormCount[{}] iCount[{}]", __func__, size, list->scriptAddedFormCount, iCount);
-    
+
     return true;
-} 
+}
 
 bool UnregisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int paramFilterIndex, RE::VMHandle& handle) {
     if (!gfuncs::IsFormValid(list)) {
@@ -13166,7 +13083,7 @@ bool UnregisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int
             }
         }
         return RE::BSContainer::ForEachResult::kContinue;
-    }); 
+        });
 
     int size = list->forms.size();
 
@@ -13194,7 +13111,7 @@ void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEven
     }
 
     int index = GetEventIndex(eventDataPtrs, asEvent);
-    if (index != -1) { 
+    if (index != -1) {
         bool paramFilterIsFormList = false;
         if (gfuncs::IsFormValid(paramFilter)) {
             auto* akFormList = paramFilter->As<RE::BGSListForm>();
@@ -13660,14 +13577,13 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
     vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
+
     vm->RegisterFunction("GetAllArmorsForSlotMask", "DbSkseFunctions", GetAllArmorsForSlotMask);
     vm->RegisterFunction("GetCellWorldSpace", "DbSkseFunctions", GetCellWorldSpace);
     vm->RegisterFunction("GetCellLocation", "DbSkseFunctions", GetCellLocation);
     vm->RegisterFunction("GetAllInteriorCells", "DbSkseFunctions", GetAllInteriorCells);
     vm->RegisterFunction("GetAllExteriorCells", "DbSkseFunctions", GetAllExteriorCells);
     vm->RegisterFunction("GetAttachedCells", "DbSkseFunctions", GetAttachedCells);
-
-    vm->RegisterFunction("GetAvailableWeathers", "DbSkseFunctions", GetAvailableWeathers);
 
     vm->RegisterFunction("GetAllFormsWithName", "DbSkseFunctions", GetAllFormsWithName);
     vm->RegisterFunction("GetAllFormsWithScriptAttached", "DbSkseFunctions", GetAllFormsWithScriptAttached);
@@ -13896,7 +13812,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("CancelGameTimer", "DbActiveMagicEffectTimer", CancelGameTimerOnActiveMagicEffect);
     vm->RegisterFunction("GetTimeElapsedOnGameTimer", "DbActiveMagicEffectTimer", GetTimeElapsedOnGameTimerActiveMagicEffect);
     vm->RegisterFunction("GetTimeLeftOnGameTimer", "DbActiveMagicEffectTimer", GetTimeLeftOnGameTimerActiveMagicEffect);
-    
+
     logger::trace("Papyrus Functions Bound");
 
     return true;
@@ -14075,7 +13991,7 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     bIsSavingSerialization = false;
     logger::trace("SaveCallback complete");
 }
-
+ 
 //init================================================================================================================================================================
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
