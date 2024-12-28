@@ -22,3 +22,7 @@ Because this uses [CommonLibSSE NG](https://github.com/CharmedBaryon/CommonLibSS
       Value: `C:\path\to\wherever\your\vcpkg\folder\is`
 
 <img src="https://raw.githubusercontent.com/SkyrimDev/Images/main/images/screenshots/Setting%20Environment%20Variables/VCPKG_ROOT.png" height="150">
+
+# Support Me
+- [Buy me a Coffee](https://ko-fi.com/dylbill)
+- [Become a Patron](https://www.patreon.com/Dylbill)
