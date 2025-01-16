@@ -3,6 +3,8 @@ Scriptname DbSkseFunctions Hidden
 
 Float Function GetVersion() Global Native
 
+bool function LoadMostRecentSaveGame() Global Native
+
 ;get and set text from system clipboard, for copy / paste functionality
 String Function GetClipBoardText() Global Native
 Bool Function SetClipBoardText(String s) Global Native
@@ -165,12 +167,18 @@ cell[] Function GetAllExteriorCells(Location akLocation, WorldSpace akWorldSpace
 ;Get all cells currently attached
 cell[] Function GetAttachedCells() global native
 
+;Get forms currently favorited by the player
+;formTypeMatchMode 1 = forms who match a type in formTypes.
+;formTypeMatchMode 0 = forms that match none of the types in formTypes. 
+;formTypeMatchMode -1 (or if formTypes == none) = formType filter is ignored completely, get all favorited forms regardless of type.
+Form[] function GetFavorites(int[] formTypes = none, int formTypeMatchMode = 1) Global Native
+
 ;Get all forms who's name (with GetName()) match the sFormName.
 ;nameMatchMode 0 = exact match, 1 = name contains sFormName.  
-;formTypeMatchMode 1 = forms that have a type in formTypes.
-;formTypeMatchMode 0 = forms that do not have a type in formTypes. 
+;formTypeMatchMode 1 = forms who match a type in formTypes.
+;formTypeMatchMode 0 = forms that match none of the types in formTypes. 
 ;formTypeMatchMode -1 (or if formTypes == none) = formType filter is ignored completely, get all forms regardless of type that match (or contain) sFormName.
-Form[] Function GetAllFormsWithName(string sFormName, int nameMatchMode = 0, int[] formTypes = none, int formTypeMatchMode = 0) Global Native 
+Form[] Function GetAllFormsWithName(string sFormName, int nameMatchMode = 0, int[] formTypes = none, int formTypeMatchMode = 1) Global Native 
 
 ;formTypeMatchMode 1 = forms that have a type in formTypes.
 ;formTypeMatchMode 0 = forms that do not have a type in formTypes. 
@@ -192,7 +200,7 @@ ReferenceAlias[] function GetAllRefaliases(bool onlyQuestObjects = false, bool o
 ;Get all quest object references in game
 ObjectReference[] function GetAllQuestObjectRefs() Global Native
 
-;Get all quest object references in containerRef
+;Get all quest object references in the containerRef
 ObjectReference[] function GetQuestObjectRefsInContainer(ObjectReference containerRef) Global Native
 
 TextureSet Function GetProjectileBaseDecal(projectile akProjectile) Global Native
@@ -406,8 +414,7 @@ Function SetCollision(ObjectReference ref, bool enabled) Global
     Endif
 EndFunction
 
-
-;set the max Soul size the soulGem can hold 0 = no soul to 5 = grand.
+;set the max Soul size the soulGem (base form) can hold. 0 = no soul up to 5 = grand.
 Function SetSoulGemSize(SoulGem akSoulGem, int level) Global Native 
 
 ;can the soulGem hold an NPC soul? I.E is it a black soul gem?
@@ -415,8 +422,6 @@ bool Function CanSoulGemHoldNPCSoul(SoulGem akSoulGem) Global Native
 
 ;set soul gem can hold npc soul, I.E make it a black soul gem or not.
 Function SetSoulGemCanHoldNPCSoul(SoulGem akSoulGem, bool canHold) Global Native 
-
-
 
 ;get MusicType that's currently playing
 MusicType Function GetCurrentMusicType() Global Native 
@@ -698,6 +703,8 @@ bool Function IsMagicEffectActiveOnRef(ObjectReference ref, MagicEffect akMagicE
 ;Otherwise, dispels all activeMagicEffects that match the akMagicEffect
 Function DispelMagicEffectOnRef(ObjectReference ref, MagicEffect akMagicEffect, Form magicSource = none) Global Native
 
+;would the akActor be stealing the akTarget if they took it?
+Bool Function WouldActorBeStealing(actor akActor, ObjectReference akTarget) Global Native
 Bool Function IsActorAttacking(actor akActor) Global Native
 Bool Function IsActorPowerAttacking(actor akActor) Global Native
 Bool Function IsActorSpeaking(actor akActor) Global Native
@@ -752,8 +759,6 @@ Bool Function SetSoundInstanceSource(int instanceID, ObjectReference ref) Global
 ;only works for sounds played from PlaySound or PlaySoundDescriptor from this script
 Event OnSoundFinish(Form SoundOrDescriptor, int instanceID)
 EndEvent
-
-String[] Function GetSoundDescriptorSoundFileNames(SoundDescriptor akSoundDescriptor) Global Native
 
 SoundCategory Function GetParentSoundCategory(SoundCategory akSoundCategory) Global Native 
 SoundCategory Function GetSoundCategoryForSoundDescriptor(SoundDescriptor akSoundDescriptor) Global Native 
@@ -844,3 +849,24 @@ bool function SetMapMarkerIconType(ObjectReference MapMarker, int iconType) Glob
 string function GetMapMarkerName(ObjectReference MapMarker) Global Native
 
 bool function SetMapMarkerName(ObjectReference MapMarker, String Name) Global Native
+
+Form function GetCellOrWorldSpaceOriginForRef(ObjectReference ref) Global Native
+
+;This function is usefull if you have to move a map marker from one worldspace to another using MoveTo and have it display on the world map.
+;This function will only be successfull if the passed in ref has been moved from its original worldspace or interior cell so...
+;use moveto on the ref first before this function is used.
+bool function SetCellOrWorldSpaceOriginForRef(ObjectReference ref, Form cellOrWorldSpace) Global Native
+
+; get all map marker refs valid for the current world space or interior cell grid, (can potentially be viewed on the current map)
+; for the filter params:
+; -1 = filter is ignored 
+;  0 = (false) only get markers that are not visible or can't be fast traveled to 
+;  1 = (true)  only get markers that are visible or that can be fast traveled to
+ObjectReference[] function GetCurrentMapMarkerRefs(int visibleFilter = -1, int canTravelToFilter = -1) Global Native
+
+; get all map marker refs in game
+; for the filter params:
+; -1 = filter is ignored 
+;  0 = (false) only get markers that are not visible or can't be fast traveled to 
+;  1 = (true)  only get markers that are visible or that can be fast traveled to
+ObjectReference[] function GetAllMapMarkerRefs(int visibleFilter = -1, int canTravelToFilter = -1) Global Native

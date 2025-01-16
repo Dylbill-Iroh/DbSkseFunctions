@@ -267,6 +267,28 @@ EndEvent
 Event OnQuestObjectiveStateChangedGlobal(Quest akQuest, string displayText, int oldState, int newState, int objectiveIndex, alias[] ojbectiveAliases)
 EndEvent
 
+;Position Player events are triggered whenever the player enters a new space, i.e fast traveling, going through a load door or a script calling MoveTo on the player. 
+;OnPositionPlayerStart is right before the Loading Menu opens. 
+;If the player is moving to an exterior the akWorldSpace will exist but the akInteriorCell will not and vice versa for moving to an interior.
+;The fastTravelMarker will only exist if the player fast travels or Game.FastTravel(objectReference destination) is called 
+;The moveToRef will only exist if moveTo is called on the player (can be from a papyrus script or console command), ie Game.GetPlayer().moveTo(ref)
+;Also note that the parameters for these PositionPlayer events only work on Skyrim SE and AE, not VR. 
+;The events will be sent on VR but the parameters will all be none
+Event OnPositionPlayerStartGlobal(ObjectReference fastTravelMarker, ObjectReference moveToRef, WorldSpace akWorldSpace, Cell akInteriorCell)
+EndEvent
+
+;OnPositionPlayerFinish is after the game is done loading when the player moves into a new space. 
+;The parameters here will be the same from the last OnPositionPlayerStart event.
+Event OnPositionPlayerFinishGlobal(ObjectReference fastTravelMarker, ObjectReference moveToRef, WorldSpace akWorldSpace, Cell akInteriorCell)
+EndEvent
+
+;Event triggered when the player moves from one cell to another
+;Note that if the akPreviousCell is unloaded it will be none. 
+;This happens when the player fast travels to a new worldspace 
+;or when the player moves outside of the current cell grid and the previous cell is unloaded.
+Event OnPlayerChangeCellGlobal(Cell akNewCell, Cell akPreviousCell)
+EndEvent
+
 ;UI Item Menu Events ========================================================================================================================
 
 ;register the eventReceiver to receive the OnUiItemMenuEvent from UI item menus.
