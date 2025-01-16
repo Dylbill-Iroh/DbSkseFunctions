@@ -2024,7 +2024,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(7.7);
+    return float(7.8);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -2957,6 +2957,83 @@ std::vector<RE::TESObjectCELL*> GetAttachedCells(RE::StaticFunctionTag*) {
     return cells;
 }
 
+std::vector<RE::TESForm*> GetFavorites(RE::StaticFunctionTag*, std::vector<int> formTypes, int formTypeMatchMode) {
+    logger::trace("{} called", __func__);
+
+    std::vector<RE::TESForm*> forms;
+
+    auto inventory = gfuncs::playerRef->GetInventory();
+
+    if (inventory.size() == 0) {
+        return forms;
+    }
+
+    if (formTypes.size() > 0 && formTypeMatchMode == 1) {
+        for (auto it = inventory.begin(); it != inventory.end(); it++) {
+            auto invData = it->second.second.get();
+            if (invData) {
+                if (invData->IsFavorited()) {
+                    if (gfuncs::IsFormValid(invData->object)) {
+                        RE::TESForm* form = invData->object;
+                        if (gfuncs::IsFormValid(form)) {
+                            int formType = static_cast<int>(form->GetFormType());
+                            for (int& i : formTypes) {
+                                if (i == formType) {
+                                    forms.push_back(form);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (formTypes.size() > 0 && formTypeMatchMode == 0) {
+        for (auto it = inventory.begin(); it != inventory.end(); it++) {
+            auto invData = it->second.second.get();
+            if (invData) {
+                if (invData->IsFavorited()) {
+                    if (gfuncs::IsFormValid(invData->object)) {
+                        RE::TESForm* form = invData->object;
+                        if (gfuncs::IsFormValid(form)) {
+                            int formType = static_cast<int>(form->GetFormType());
+                            bool matchedType = false;
+                            for (int& i : formTypes) {
+                                if (i == formType) {
+                                    matchedType = true;
+                                    break;
+                                }
+                            }
+                            if (!matchedType) {
+                                forms.push_back(form);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else {
+        for (auto it = inventory.begin(); it != inventory.end(); it++) {
+            auto invData = it->second.second.get();
+            if (invData) {
+                if (invData->IsFavorited()) {
+                    if (gfuncs::IsFormValid(invData->object)) {
+                        RE::TESForm* akForm = invData->object;
+                        if (gfuncs::IsFormValid(akForm)) {
+                            forms.push_back(akForm);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    logger::trace("{} number of favorites = {}", __func__, forms.size());
+
+    return forms;
+}
 
 std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::string sFormName, int nameMatchMode, std::vector<int> formTypes, int formTypeMatchMode) {
     std::vector<RE::TESForm*> forms;
@@ -2982,6 +3059,7 @@ std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::strin
                     for (int& i : formTypes) {
                         if (i == formType) {
                             forms.push_back(form);
+                            break;
                         }
                     }
                 }
@@ -3023,6 +3101,7 @@ std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::strin
                     for (int& i : formTypes) {
                         if (i == formType) {
                             forms.push_back(form);
+                            break;
                         }
                     }
                 }
@@ -3386,21 +3465,21 @@ std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {
     return questItems;
 }
 
-std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
-    logger::debug("{} called", __func__);
+std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunctionTag*, RE::TESObjectREFR* containerRef) {
+    logger::trace("{} called", __func__);
 
     std::vector<RE::TESObjectREFR*> questItems;
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
-    if (!gfuncs::IsFormValid(ref)) {
-        logger::warn("{} ref doesn't exist", __func__);
+    if (!gfuncs::IsFormValid(containerRef)) {
+        logger::warn("{} containerRef doesn't exist", __func__);
         return questItems;
     }
 
-    auto inventory = ref->GetInventory();
+    auto inventory = containerRef->GetInventory();
 
     if (inventory.size() == 0) {
-        logger::warn("{} {} ref doesn't contain any items", __func__, gfuncs::GetFormName(ref, "", "", true));
+        logger::warn("{} {} containerRef doesn't contain any items", __func__, gfuncs::GetFormName(containerRef, "", "", true));
         return questItems;
     }
 
@@ -3423,8 +3502,11 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
                                     if (refAlias) {
                                         RE::TESObjectREFR* akRef = refAlias->GetReference();
                                         if (gfuncs::IsFormValid(akRef)) {
-                                            if (inventory.contains(akRef->GetObjectReference())) {
-                                                questItems.push_back(akRef);
+                                            RE::TESBoundObject* boundObj = akRef->GetObjectReference();
+                                            if (gfuncs::IsFormValid(boundObj)) {
+                                                if (inventory.contains(boundObj)) {
+                                                    questItems.push_back(akRef);
+                                                }
                                             }
                                         }
                                     }
@@ -3436,7 +3518,7 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
             }
         }
     }
-    logger::debug("{} number of refs is {}", __func__, questItems.size());
+    logger::trace("{} number of refs is {}", __func__, questItems.size());
     return questItems;
 }
 
@@ -5964,8 +6046,42 @@ std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
     return lastMenuOpened;
 }
 
+RE::TESForm* GetLoadMenuLocation() {
+    if (!ui) {
+        logger::error("{}: couldn't find ui", __func__);
+        return nullptr;
+    }
+
+    auto loadingMenuGPtr = ui->GetMenu(RE::LoadingMenu::MENU_NAME);
+    if (!loadingMenuGPtr) {
+        logger::error("{}: couldn't find loadingMenu", __func__);
+        return nullptr;
+    }
+
+    auto* uiMenu = loadingMenuGPtr.get();
+    if (!uiMenu) {
+        logger::error("{}: couldn't find uiMenu from loadingMenuGPtr", __func__);
+        return nullptr;
+    }
+
+    RE::LoadingMenu* loadingMenu = static_cast<RE::LoadingMenu*>(uiMenu);
+    if (!loadingMenu) {
+        logger::error("{}: couldn't find loadingMenu from uiMenu", __func__);
+        return nullptr;
+    }
+
+    auto data = loadingMenu->GetRuntimeData();
+    if (gfuncs::IsFormValid(data.currentLocation)) {
+        return data.currentLocation;
+    }
+    else {
+        return nullptr;
+    }
+}
+
 bool IsMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     LogAndMessage("IsMapMarker function called");
+
     if (!gfuncs::IsFormValid(mapMarker)) {
         LogAndMessage("IsMapMarker: mapMarker doesn't exist", warn);
         return false;
@@ -5983,6 +6099,497 @@ bool IsMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
         return false;
     }
 
+    return true;
+}
+
+bool LoadMostRecentSaveGame(RE::StaticFunctionTag*) {
+    //auto manager = RE::UISaveLoadManager::ProcessEvent();
+    auto* manager = RE::BGSSaveLoadManager::GetSingleton();
+    if (!manager) {
+        logger::error("{}: BGSSaveLoadManager not found", __func__);
+        return false;
+    }
+
+    logger::trace("{}: loading most recent save", __func__);
+    
+    return manager->LoadMostRecentSaveGame();
+}
+
+// Get all map markers valid for the current worldspace or interior cell grid
+RE::BSTArray<RE::ObjectRefHandle>* GetPlayerMapMarkers() {
+    std::uint32_t offset = 0;
+    if (REL::Module::IsAE())
+        offset = 0x500;
+    else if (REL::Module::IsSE())
+        offset = 0x4F8;
+    else
+        offset = 0xAE8;
+    return reinterpret_cast<RE::BSTArray<RE::ObjectRefHandle>*>((uintptr_t)player + offset);
+}
+
+std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int visibleFilter, int canTravelToFilter) {
+    std::vector<RE::TESObjectREFR*> allMapMarkers;
+
+    if (visibleFilter == 1 && canTravelToFilter == 1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == true && !ref->IsDisabled()) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == true) {
+                                    allMapMarkers.push_back(ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } 
+    else if (visibleFilter == 1 && canTravelToFilter == 0) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == true && !ref->IsDisabled()) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == false) {
+                                    allMapMarkers.push_back(ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 0 && canTravelToFilter == 1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == false || ref->IsDisabled()) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == true) {
+                                    allMapMarkers.push_back(ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } 
+    else if (visibleFilter == 0 && canTravelToFilter == 0) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == false || ref->IsDisabled()) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == false) {
+                                    allMapMarkers.push_back(ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } 
+    else if (canTravelToFilter == 1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == true) {
+                                allMapMarkers.push_back(ref);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (canTravelToFilter == 0) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == false) {
+                                allMapMarkers.push_back(ref);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == true && !ref->IsDisabled()) {
+                                allMapMarkers.push_back(ref);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 0) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == false || ref->IsDisabled()) {
+                                allMapMarkers.push_back(ref);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            allMapMarkers.push_back(ref);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return allMapMarkers;
+}
+
+// get all map markers valid for the current world space or interior cell grid
+std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, int visibleFilter, int canTravelToFilter) {
+    auto* playerMapMarkers = GetPlayerMapMarkers();
+
+    std::vector<RE::TESObjectREFR*> allMapMarkers;
+
+    if (!playerMapMarkers) {
+        return allMapMarkers;
+    }
+
+    if (playerMapMarkers->size() == 0) {
+        return allMapMarkers;
+    }
+
+    if (visibleFilter == 1 && canTravelToFilter == 1) {
+        for (auto& mapMarker : *playerMapMarkers) {
+            if (mapMarker) {
+                auto refPtr = mapMarker.get();
+                if (refPtr) {
+                    auto* ref = refPtr.get();
+                    if (gfuncs::IsFormValid(ref)) {
+                        auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                        if (marker) {
+                            if (marker->mapData) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == true && !ref->IsDisabled()) {
+                                    if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == true) {
+                                        allMapMarkers.push_back(ref);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } 
+    else if (visibleFilter == 1 && canTravelToFilter == 0) {
+        for (auto& mapMarker : *playerMapMarkers) {
+            if (mapMarker) {
+                auto refPtr = mapMarker.get();
+                if (refPtr) {
+                    auto* ref = refPtr.get();
+                    if (gfuncs::IsFormValid(ref)) {
+                        auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                        if (marker) {
+                            if (marker->mapData) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == true && !ref->IsDisabled()) {
+                                    if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == false) {
+                                        allMapMarkers.push_back(ref);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 0 && canTravelToFilter == 1) {
+        for (auto& mapMarker : *playerMapMarkers) {
+            if (mapMarker) {
+                auto refPtr = mapMarker.get();
+                if (refPtr) {
+                    auto* ref = refPtr.get();
+                    if (gfuncs::IsFormValid(ref)) {
+                        auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                        if (marker) {
+                            if (marker->mapData) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == false || ref->IsDisabled()) {
+                                    if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == true) {
+                                        allMapMarkers.push_back(ref);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } 
+    else if (visibleFilter == 0 && canTravelToFilter == 0) {
+        for (auto& mapMarker : *playerMapMarkers) {
+            if (mapMarker) {
+                auto refPtr = mapMarker.get();
+                if (refPtr) {
+                    auto* ref = refPtr.get();
+                    if (gfuncs::IsFormValid(ref)) {
+                        auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                        if (marker) {
+                            if (marker->mapData) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == false || ref->IsDisabled()) {
+                                    if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == false) {
+                                        allMapMarkers.push_back(ref);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } 
+    else if (canTravelToFilter == 1) {
+        for (auto& mapMarker : *playerMapMarkers) {
+            if (mapMarker) {
+                auto refPtr = mapMarker.get();
+                if (refPtr) {
+                    auto* ref = refPtr.get();
+                    if (gfuncs::IsFormValid(ref)) {
+                        auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                        if (marker) {
+                            if (marker->mapData) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == true) {
+                                    allMapMarkers.push_back(ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (canTravelToFilter == 0) {
+        for (auto& mapMarker : *playerMapMarkers) {
+            if (mapMarker) {
+                auto refPtr = mapMarker.get();
+                if (refPtr) {
+                    auto* ref = refPtr.get();
+                    if (gfuncs::IsFormValid(ref)) {
+                        auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                        if (marker) {
+                            if (marker->mapData) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == false) {
+                                    allMapMarkers.push_back(ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 1) {
+        for (auto& mapMarker : *playerMapMarkers) {
+            if (mapMarker) {
+                auto refPtr = mapMarker.get();
+                if (refPtr) {
+                    auto* ref = refPtr.get();
+                    if (gfuncs::IsFormValid(ref)) {
+                        auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                        if (marker) {
+                            if (marker->mapData) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == true && !ref->IsDisabled()) {
+                                    allMapMarkers.push_back(ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 0) {
+        for (auto& mapMarker : *playerMapMarkers) {
+            if (mapMarker) {
+                auto refPtr = mapMarker.get();
+                if (refPtr) {
+                    auto* ref = refPtr.get();
+                    if (gfuncs::IsFormValid(ref)) {
+                        auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                        if (marker) {
+                            if (marker->mapData) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == false || ref->IsDisabled()) {
+                                    allMapMarkers.push_back(ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else {
+        for (auto& mapMarker : *playerMapMarkers) {
+            if (mapMarker) {
+                auto refPtr = mapMarker.get();
+                if (refPtr) {
+                    auto* ref = refPtr.get();
+                    if (gfuncs::IsFormValid(ref)) {
+                        auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                        if (marker) {
+                            if (marker->mapData) {
+                                allMapMarkers.push_back(ref);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return allMapMarkers;
+}
+
+RE::TESForm* GetRefWorldSpaceOrCell(RE::TESObjectREFR* ref) {
+    RE::TESForm* form = ref->GetWorldspace();
+    if (!gfuncs::IsFormValid(form)) {
+        form = ref->GetParentCell();
+    }
+    if (!gfuncs::IsFormValid(form)) {
+        return nullptr;
+    }
+    return form;
+}
+
+RE::TESForm* GetCellOrWorldSpaceOriginForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref doesn't exist", __func__);
+        return nullptr;
+    }
+
+    auto* originData = ref->extraList.GetByType<RE::ExtraStartingWorldOrCell>();
+    if (!originData) {
+        logger::debug("{}: originData for ref({}) not found, getting current worldspace or cell.", __func__, gfuncs::GetFormDataString(ref));
+
+        //origin data on a reference will only exist if it has been moved from its original worldspace or interior cell
+        return GetRefWorldSpaceOrCell(ref);
+    }
+
+    if (!gfuncs::IsFormValid(originData->startingWorldOrCell)) {
+        logger::debug("{}: originData->startingWorldOrCell for ref({}) doesn't exist, getting current worldspace or cell.", __func__, gfuncs::GetFormDataString(ref));
+        return GetRefWorldSpaceOrCell(ref);
+    }
+
+    return originData->startingWorldOrCell;
+}
+
+bool SetCellOrWorldSpaceOriginForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE::TESForm* cellOrWorldSpace) {
+    if (!gfuncs::IsFormValid(ref)) {
+        logger::warn("{}: ref doesn't exist", __func__);
+        return false;
+    }
+
+    if (!gfuncs::IsFormValid(cellOrWorldSpace)) {
+        logger::warn("{}: cellOrWorldSpace doesn't exist", __func__);
+        return false;
+    }
+
+    auto* originData = ref->extraList.GetByType<RE::ExtraStartingWorldOrCell>();
+    if (!originData) {
+        logger::warn("{}: originData for ref({}) not found", __func__, gfuncs::GetFormDataString(ref));
+        return false;
+    }
+
+    originData->startingWorldOrCell = cellOrWorldSpace;
+
+    if (IsMapMarker(nullptr, ref)) {
+        RE::TESWorldSpace* newOriginWorld = static_cast<RE::TESWorldSpace*>(cellOrWorldSpace);
+
+        if (gfuncs::IsFormValid(newOriginWorld)) {
+            RE::TESWorldSpace* currentWorld = player->GetWorldspace();
+            if (gfuncs::IsFormValid(currentWorld)) {
+                if (newOriginWorld == currentWorld) {
+                    auto* mapMarkers = GetPlayerMapMarkers();
+                    if (mapMarkers) {
+                        //logger::critical("{}: currentMapMarkers size is {}", __func__, mapMarkers->size());
+
+                        auto refHandle = ref->GetHandle();
+                        if (!gfuncs::IsObjectInBSTArray(mapMarkers, refHandle)) {
+                            //logger::critical("{}: adding ref to currentMapMarkers", __func__);
+                            mapMarkers->push_back(refHandle);
+                        }
+                        else {
+                            //logger::critical("{}: ref already in currentMapMarkers", __func__);
+                        }
+                    }
+                    else {
+                        //logger::critical("{}: currentMapMarkers not found", __func__);
+                    }
+                }
+            }
+        }
+    }
+    //ref->Update3DPosition(false);
+
+    logger::trace("{}: ref({}) origin set to \n({})", __func__, gfuncs::GetFormDataString(ref), 
+        gfuncs::GetFormDataString(cellOrWorldSpace));
+    //SaveAndLoad();
+
+    //return (originData->startingWorldOrCell == cellOrWorldSpace);
     return true;
 }
 
@@ -6928,7 +7535,7 @@ void DispelMagicEffectOnRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE::
 //kGreater = 4,
 //kGrand = 5
 void SetSoulGemSize(RE::StaticFunctionTag*, RE::TESSoulGem* akGem, int level) {
-    logger::debug("{} called", __func__);
+    logger::trace("{} called", __func__);
 
     if (!gfuncs::IsFormValid(akGem)) {
         logger::warn("{}: error akGem doesn't exist", __func__);
@@ -6989,6 +7596,20 @@ bool IsActorPowerAttacking(RE::StaticFunctionTag*, RE::Actor* akActor) {
     }
 
     return condition_isPowerAttacking->IsTrue(akActor, nullptr);
+}
+
+bool WouldActorBeStealing(RE::StaticFunctionTag*, RE::Actor* akActor, RE::TESObjectREFR* akTarget) {
+    if (!gfuncs::IsFormValid(akActor)) {
+        logger::warn("{}: error, akActor doesn't exist", __func__);
+        return false;
+    }
+
+    if (!gfuncs::IsFormValid(akTarget)) {
+        logger::warn("{}: error, akTarget doesn't exist", __func__);
+        return false;
+    }
+
+    return akActor->WouldBeStealing(akTarget);
 }
 
 RE::TESCondition* condition_IsAttacking;
@@ -10282,8 +10903,11 @@ enum EventsEnum {
     EventEnum_OnSwitchRaceComplete,
     EventEnum_OnActorFootStep,
     EventEnum_OnQuestObjectiveStateChanged,
+    EventEnum_OnPositionPlayerStart,
+    EventEnum_OnPositionPlayerFinish,
+    EventEnum_OnPlayerChangeCell,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnQuestObjectiveStateChanged
+    EventEnum_Last = EventEnum_OnPlayerChangeCell
 };
 
 struct EventData {
@@ -10549,13 +11173,18 @@ struct AnimationEventSink : public RE::BSTEventSink<RE::BSAnimationGraphEvent> {
     float lastReleaseGameTime;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::BSAnimationGraphEvent* event, RE::BSTEventSource<RE::BSAnimationGraphEvent>* source) {
-        if (!actor) {
+        if (!gfuncs::IsFormValid(actor)) {
             source->RemoveEventSink(this);
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (!event) {
             logger::error("AnimationEventSink event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("AnimationEventSink IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -10648,6 +11277,8 @@ void SaveRecentProjectile(RE::Projectile* projectile, RE::TESObjectREFR* shooter
 
     //SendProjectileImpactEvent(data);
 }
+
+bool projectileImpacthookInstalled = false;
 
 struct ProjectileImpactHook
 {
@@ -10755,10 +11386,16 @@ struct ProjectileImpactHook
     {
         if (Check(a_ver)) {
             // 44204+0x3EC 0x780870
-            auto hook = GetRelocationID(a_ver);
-            REL::safe_fill(hook.address(), 0x90, 6);
-            stl::write_thunk_call<ProjectileImpactHook>(hook.address());
-            return true;
+            if (!projectileImpacthookInstalled) {
+                projectileImpacthookInstalled = true;
+                auto hook = GetRelocationID(a_ver);
+                REL::safe_fill(hook.address(), 0x90, 6);
+                stl::write_thunk_call<ProjectileImpactHook>(hook.address());
+                return true;
+            }
+            else {
+                return false;
+            }
         }
         return false;
     }
@@ -10833,7 +11470,12 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
         //logger::trace("hit event");
 
         if (!event) {
-            logger::error("hit event doesn't exist");
+            logger::trace("hit event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("hit event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -10843,21 +11485,34 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
         RE::TESObjectREFR* attacker = nullptr;
         if (event->cause) {
             attacker = event->cause.get();
+            if (!gfuncs::IsFormValid(attacker)) {
+                attacker = nullptr;
+            }
         }
 
         RE::TESObjectREFR* target = nullptr;
         if (event->target) {
             target = event->target.get();
+            if (!gfuncs::IsFormValid(target)) {
+                logger::trace("hit event: no target");
+                return RE::BSEventNotifyControl::kContinue;
+            }
         }
 
         RE::TESForm* source = nullptr;
         if (event->source) {
             source = RE::TESForm::LookupByID(event->source);
+            if (!gfuncs::IsFormValid(source)) {
+                source = nullptr;
+            }
         }
 
         RE::BGSProjectile* projectileForm = nullptr;
         if (event->projectile) {
             projectileForm = RE::TESForm::LookupByID<RE::BGSProjectile>(event->projectile);
+            if (!gfuncs::IsFormValid(projectileForm)) {
+                projectileForm = nullptr;
+            }
         }
 
         RE::TESAmmo* ammo = nullptr;
@@ -10994,6 +11649,10 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
         if (eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
             std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_HitEvent]->globalHandles;
 
+            if (gfuncs::IsFormValid(ammo)) {
+                ammo = nullptr;
+            }
+
             CombineEventHandles(handles, attacker, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[0]);
             CombineEventHandles(handles, target, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[1]);
             CombineEventHandles(handles, source, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[2]);
@@ -11062,14 +11721,25 @@ struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("combat change event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::TESObjectREFR* actorObjRef = nullptr;
         if (event->actor) {
             actorObjRef = event->actor.get();
+            if (!gfuncs::IsFormValid(actorObjRef)) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
         }
 
-        RE::TESObjectREFR* Target = nullptr;
+        RE::TESObjectREFR* target = nullptr;
         if (event->targetActor) {
-            Target = event->targetActor.get();
+            target = event->targetActor.get();
+            if (!gfuncs::IsFormValid(target)) {
+                target = nullptr;
+            }
         }
 
         int combatState = static_cast<int>(event->newState.get());
@@ -11079,11 +11749,11 @@ struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->globalHandles;
         CombineEventHandles(handles, actorObjRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
-        CombineEventHandles(handles, Target, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
+        CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
 
         gfuncs::RemoveDuplicates(handles);
 
-        auto* args = RE::MakeFunctionArguments((RE::Actor*)actorObjRef, (RE::Actor*)Target, (int)combatState);
+        auto* args = RE::MakeFunctionArguments((RE::Actor*)actorObjRef, (RE::Actor*)target, (int)combatState);
         SendEvents(handles, eventDataPtrs[EventEnum_OnCombatStateChanged]->sEvent, args);
 
         if (bRegisteredForPlayerCombatChange) {
@@ -11104,19 +11774,33 @@ struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("furniture event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::TESObjectREFR* actorObjRef = nullptr;
         if (event->actor) {
             actorObjRef = event->actor.get();
+            if (!gfuncs::IsFormValid(actorObjRef)) {
+                actorObjRef = nullptr;
+            }
         }
 
         RE::Actor* actorRef = nullptr;
         if (gfuncs::IsFormValid(actorObjRef)) {
             actorRef = actorObjRef->As<RE::Actor>();
+            if (!gfuncs::IsFormValid(actorRef)) {
+                actorRef = nullptr;
+            }
         }
 
         RE::TESObjectREFR* furnitureRef = nullptr;
         if (event->targetFurniture) {
             furnitureRef = event->targetFurniture.get();
+            if (!gfuncs::IsFormValid(furnitureRef)) {
+                furnitureRef = nullptr;
+            }
         }
 
         int type = event->type.underlying();
@@ -11158,14 +11842,25 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("activate event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::TESObjectREFR* activatorRef = nullptr;
         if (event->actionRef) {
             activatorRef = event->actionRef.get();
+            if (!gfuncs::IsFormValid(activatorRef)) {
+                activatorRef = nullptr;
+            }
         }
 
         RE::TESObjectREFR* activatedRef = nullptr;
         if (event->objectActivated) {
             activatedRef = event->objectActivated.get();
+            if (!gfuncs::IsFormValid(activatedRef)) {
+                activatedRef = nullptr;
+            }
         }
 
         if (activatorRef == gfuncs::playerRef) {
@@ -11174,15 +11869,17 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
             }
         }
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActivate]->globalHandles;
+        if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded) {
+            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActivate]->globalHandles;
 
-        CombineEventHandles(handles, activatorRef, eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[0]);
-        CombineEventHandles(handles, activatedRef, eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[1]);
+            CombineEventHandles(handles, activatorRef, eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[0]);
+            CombineEventHandles(handles, activatedRef, eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[1]);
 
-        gfuncs::RemoveDuplicates(handles);
+            gfuncs::RemoveDuplicates(handles);
 
-        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatorRef, (RE::TESObjectREFR*)activatedRef);
-        SendEvents(handles, eventDataPtrs[EventEnum_OnActivate]->sEvent, args);
+            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatorRef, (RE::TESObjectREFR*)activatedRef);
+            SendEvents(handles, eventDataPtrs[EventEnum_OnActivate]->sEvent, args);
+        }
 
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -11194,7 +11891,12 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* event, RE::BSTEventSource<RE::TESDeathEvent>* source) {
 
         if (!event) {
-            logger::error("death / dying event doesn't exist");
+            logger::warn("death / dying event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("death / dying event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -11203,27 +11905,42 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
         RE::TESObjectREFR* victimRef = nullptr;
         if (event->actorDying) {
             victimRef = event->actorDying.get();
+            if (!gfuncs::IsFormValid(victimRef)) {
+                victimRef = nullptr;
+            }
         }
 
         RE::TESObjectREFR* killerRef = nullptr;
         if (event->actorKiller) {
             killerRef = event->actorKiller.get();
+            if (!gfuncs::IsFormValid(killerRef)) {
+                killerRef = nullptr;
+            }
         }
 
         RE::Actor* victim = nullptr;
         if (gfuncs::IsFormValid(victimRef)) {
             victim = static_cast<RE::Actor*>(victimRef);
-            logger::debug("death event: valid victimRef pointer");
+            if (!gfuncs::IsFormValid(victim)) {
+                logger::warn("death event: victim doesn't exist or isn't valid");
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            logger::trace("death event: valid victimRef pointer");
         }
         else {
-            logger::error("death event: 0 victimRef doesn't exist or isn't valid");
+            logger::warn("death event: 0 victimRef doesn't exist or isn't valid");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         RE::Actor* killer = nullptr;
         if (gfuncs::IsFormValid(killerRef)) {
             killer = static_cast<RE::Actor*>(killerRef);
-            logger::debug("death event: valid killerRef pointer");
+            if (!gfuncs::IsFormValid(killer)) {
+                killer = nullptr;
+            }
+            else {
+                logger::trace("death event: valid killerRef pointer");
+            }
         }
 
         bool dead = event->dead;
@@ -11335,6 +12052,11 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("equip event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::TESObjectREFR* akActorRef = nullptr;
         if (event->actor) {
             akActorRef = event->actor.get();
@@ -11343,11 +12065,17 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
         RE::Actor* akActor = nullptr;
         if (gfuncs::IsFormValid(akActorRef)) {
             akActor = akActorRef->As<RE::Actor>();
+            if (!gfuncs::IsFormValid(akActor)) {
+                akActor = nullptr;
+            }
         }
 
         RE::TESForm* baseObject = nullptr;
         if (event->baseObject) {
             baseObject = RE::TESForm::LookupByID(event->baseObject);
+            if (!gfuncs::IsFormValid(baseObject)) {
+                baseObject = nullptr;
+            }
         }
 
         bool equipped = event->equipped;
@@ -11414,6 +12142,9 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
 
         if (eventIndex != -1) {
             RE::TESForm* ref = RE::TESForm::LookupByID(event->originalRefr);
+            if (!gfuncs::IsFormValid(ref)) {
+                ref = nullptr;
+            }
 
             logger::trace("Equip Event: Actor[{}], BaseObject[{}], Ref[{}] Equipped[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), gfuncs::GetFormName(ref), equipped);
 
@@ -11443,6 +12174,11 @@ struct WaitStartEventSink : public RE::BSTEventSink<RE::TESWaitStartEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("wait start event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         logger::trace("Wait Start Event");
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStart]->globalHandles;
@@ -11463,6 +12199,11 @@ struct WaitStopEventSink : public RE::BSTEventSink<RE::TESWaitStopEvent> {
 
         if (!event) {
             logger::error("wait stop event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("wait stop event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -11489,21 +12230,35 @@ struct MagicEffectApplyEventSink : public RE::BSTEventSink<RE::TESMagicEffectApp
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("MagicEffectApply event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         logger::trace("MagicEffectApply Event");
 
         RE::TESObjectREFR* caster = nullptr;
         if (event->caster) {
             caster = event->caster.get();
+            if (!gfuncs::IsFormValid(caster)) {
+                caster = nullptr;
+            }
         }
 
         RE::TESObjectREFR* target = nullptr;
         if (event->target) {
             target = event->target.get();
+            if (!gfuncs::IsFormValid(target)) {
+                target = nullptr;
+            }
         }
 
         RE::EffectSetting* magicEffect = nullptr;
         if (event->magicEffect) {
             magicEffect = RE::TESForm::LookupByID<RE::EffectSetting>(event->magicEffect);
+            if (!gfuncs::IsFormValid(magicEffect)) {
+                magicEffect = nullptr;
+            }
         }
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnMagicEffectApply]->globalHandles;
@@ -11528,6 +12283,11 @@ struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
 
         if (!event) {
             logger::error("Lock Changed event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("Lock Changed event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -11566,16 +12326,27 @@ struct OpenCloseEventSink : public RE::BSTEventSink<RE::TESOpenCloseEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("OpenClose event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         logger::trace("Open Close Event");
 
         RE::TESObjectREFR* activatorRef = nullptr;
         if (event->activeRef) {
             activatorRef = event->activeRef.get();
+            if (!gfuncs::IsFormValid(activatorRef)) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
         }
 
         RE::TESObjectREFR* akActionRef = nullptr;
         if (event->ref) {
             akActionRef = event->ref.get();
+            if (!gfuncs::IsFormValid(akActionRef)) {
+                akActionRef = nullptr;
+            }
         }
 
         int eventIndex;
@@ -11611,16 +12382,27 @@ struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("spell cast event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         logger::trace("spell cast Event");
 
         RE::TESObjectREFR* caster = nullptr;
         if (event->object) {
             caster = event->object.get();
+            if (!gfuncs::IsFormValid(caster)) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
         }
 
         RE::TESForm* spell = nullptr;
         if (event->spell) {
             spell = RE::TESForm::LookupByID(event->spell);
+            if (!gfuncs::IsFormValid(spell)) {
+                spell = nullptr;
+            }
         }
 
         //logger::trace("spell cast: [{}] obj [{}]", gfuncs::GetFormName(spell), gfuncs::GetFormName(caster));
@@ -11649,11 +12431,19 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("Container Change event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         //logger::debug("Container Change Event");
 
         RE::TESForm* baseObj = nullptr;
         if (event->baseObj) {
             baseObj = RE::TESForm::LookupByID(event->baseObj);
+            if (!gfuncs::IsFormValid(baseObj)) {
+                baseObj = nullptr;
+            }
         }
 
         RE::TESObjectREFR* itemReference = nullptr;
@@ -11665,6 +12455,9 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
             if (gfuncs::IsFormValid(refForm)) {
                 //logger::debug("refForm found");
                 itemReference = refForm->AsReference();
+                if (!gfuncs::IsFormValid(itemReference)) {
+                    return RE::BSEventNotifyControl::kContinue;
+                }
             }
         }
 
@@ -11673,6 +12466,9 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
             RE::TESForm* newContainerForm = RE::TESForm::LookupByID(event->newContainer);
             if (gfuncs::IsFormValid(newContainerForm)) {
                 newContainer = newContainerForm->AsReference();
+                if (!gfuncs::IsFormValid(newContainer)) {
+                    newContainer = nullptr;
+                }
             }
         }
 
@@ -11681,6 +12477,9 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
             RE::TESForm* oldContainerForm = RE::TESForm::LookupByID(event->oldContainer);
             if (gfuncs::IsFormValid(oldContainerForm)) {
                 oldContainer = oldContainerForm->AsReference();
+                if (!gfuncs::IsFormValid(oldContainer)) {
+                    oldContainer = nullptr;
+                }
             }
         }
 
@@ -11728,15 +12527,25 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("Action Event event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         logger::trace("Action Event");
 
         RE::Actor* akActor = event->actor;
+        if (!gfuncs::IsFormValid(akActor)) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
 
         //0 = left hand, 1 = right hand, 2 = voice
         int slot = event->slot.underlying();
 
         RE::TESForm* akSource = event->sourceForm;
-
+        if (!gfuncs::IsFormValid(akSource)) {
+            akSource = nullptr;
+        }
         /*  kWeaponSwing = 0,
             kSpellCast = 1,
             kSpellFire = 2,
@@ -11856,6 +12665,11 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("Item Crafted Event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         int benchType = 0;
         std::string skill = "";
         int count = 1;
@@ -11880,6 +12694,9 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
                 workbenchRef = gfuncs::menuRef;
                 //logger::trace("Item Crafted Event: occupiedFurniture not valid, setting to gfuncs::menuRef");
             }
+            else {
+                workbenchRef = nullptr;
+            }
         }
 
         if (gfuncs::IsFormValid(workbenchRef)) {
@@ -11894,6 +12711,9 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
         RE::TESForm* craftedItem = nullptr;
         if (gfuncs::IsFormValid(event->item)) {
             craftedItem = event->item;
+            if (!gfuncs::IsFormValid(craftedItem)) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
         }
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnItemCrafted]->globalHandles;
 
@@ -11929,12 +12749,23 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("Item Pickpocketed Event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::TESForm* akForm = UIEvents::uiSelectedFormData.form;
+        if (!gfuncs::IsFormValid(akForm)) {
+            akForm = nullptr;
+        }
 
         RE::Actor* target = nullptr;
 
         if (gfuncs::IsFormValid(gfuncs::menuRef)) {
             target = gfuncs::menuRef->As<RE::Actor>();
+            if (!gfuncs::IsFormValid(target)) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
         }
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnItemsPickpocketed]->globalHandles;
@@ -11961,6 +12792,11 @@ struct LocationClearedEventSink : public RE::BSTEventSink<RE::LocationCleared::E
     RE::BSEventNotifyControl ProcessEvent(const RE::LocationCleared::Event* event, RE::BSTEventSource<RE::LocationCleared::Event>*/*source*/) {
         if (!event) {
             logger::error("Location Cleared Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("Location Cleared Event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -12009,17 +12845,21 @@ struct EnterBleedoutEventSink : public RE::BSTEventSink<RE::TESEnterBleedoutEven
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("Enter Bleedout Event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::Actor* akActor = nullptr;
 
         if (event->actor) {
             auto* actorRef = event->actor.get();
             if (gfuncs::IsFormValid(actorRef)) {
                 akActor = actorRef->As<RE::Actor>();
+                if (!gfuncs::IsFormValid(akActor)) {
+                    return RE::BSEventNotifyControl::kContinue;
+                }
             }
-        }
-
-        if (!gfuncs::IsFormValid(akActor)) {
-            return RE::BSEventNotifyControl::kContinue;
         }
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEnterBleedout]->globalHandles;
@@ -12049,6 +12889,11 @@ struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCo
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("Switch Race Complete Event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::Actor* akActor = nullptr;
         RE::TESRace* akOldRace = nullptr;
         RE::TESRace* akNewRace = nullptr;
@@ -12072,6 +12917,10 @@ struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCo
                     }
                 }
             }
+        }
+
+        if (!akActor || !akNewRace) {
+            return RE::BSEventNotifyControl::kContinue;
         }
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnSwitchRaceComplete]->globalHandles;
@@ -12103,6 +12952,11 @@ struct FootstepEventSink : public RE::BSTEventSink<RE::BGSFootstepEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("footstep Event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         RE::Actor* akActor = nullptr;
 
         RE::BGSActorEvent* actorEvent = const_cast<RE::BGSFootstepEvent*>(event);
@@ -12113,6 +12967,9 @@ struct FootstepEventSink : public RE::BSTEventSink<RE::BGSFootstepEvent> {
                     auto* actor = ptr.get();
                     if (gfuncs::IsFormValid(actor)) {
                         akActor = actor;
+                    }
+                    else {
+                        return RE::BSEventNotifyControl::kContinue;
                     }
                 }
             }
@@ -12144,6 +13001,11 @@ struct QuestObjectiveEventSink : public RE::BSTEventSink<RE::ObjectiveState::Eve
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("QuestObjective Event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         if (!event->objective) {
             logger::error("QuestObjective Event->objective is nullptr");
             return RE::BSEventNotifyControl::kContinue;
@@ -12168,6 +13030,9 @@ struct QuestObjectiveEventSink : public RE::BSTEventSink<RE::ObjectiveState::Eve
                 }
             }
         }
+        else {
+            return RE::BSEventNotifyControl::kContinue;
+        }
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->globalHandles;
         CombineEventHandles(handles, akQuest, eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->eventParamMaps[0]);
@@ -12188,12 +13053,200 @@ struct QuestObjectiveEventSink : public RE::BSTEventSink<RE::ObjectiveState::Eve
 
 QuestObjectiveEventSink* questObjectiveEventSink;
 
+//offset difference for PLAYER_RUNTIME_DATA members between AE and SE is 8.
+RE::PLAYER_TARGET_LOC* GetPlayerQueuedTargetLoc() {
+    if (REL::Module::IsAE()) { 
+        uint32_t offset = 0x648;
+        //logger::critical("{}: AE Offset [{:x}]", __func__, offset);
+        return reinterpret_cast<RE::PLAYER_TARGET_LOC*>((uintptr_t)player + offset);
+    }
+    else if (REL::Module::IsSE()){
+        uint32_t offset = 0x640;
+        //logger::critical("{}: SE Offset [{:x}]", __func__, offset);
+        return reinterpret_cast<RE::PLAYER_TARGET_LOC*>((uintptr_t)player + offset);
+    }
+    else {
+        return nullptr;
+    }
+}
+
+struct PositionPlayerEventSink : public RE::BSTEventSink<RE::PositionPlayerEvent> {
+    bool sinkAdded = false;
+    RE::TESObjectREFR* fastTravelMarker = nullptr;
+    RE::TESObjectREFR* moveToRef = nullptr;
+    RE::TESWorldSpace* akWorldSpace = nullptr;
+    RE::TESObjectCELL* interiorCell = nullptr;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::PositionPlayerEvent* event, RE::BSTEventSource<RE::PositionPlayerEvent>*/*source*/) {
+        if (!event) {
+            logger::error("PositionPlayer Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("PositionPlayer Event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        int type = event->type.underlying();
+        
+        if (type == 0) { //pre load
+            auto* loc = GetPlayerQueuedTargetLoc(); 
+            fastTravelMarker = nullptr;
+            akWorldSpace = nullptr;
+            interiorCell = nullptr;
+
+            if (loc) {
+                if (!IsBadReadPtr(loc, sizeof(loc))) {
+                    fastTravelMarker = gfuncs::GetRefFromHandle(loc->fastTravelMarker);
+                    moveToRef = gfuncs::GetRefFromHandle(loc->furnitureRef);
+                    akWorldSpace = loc->world;
+                    interiorCell = loc->interior;
+
+                    if (!gfuncs::IsFormValid(fastTravelMarker)) {
+                        fastTravelMarker = nullptr;
+                    }
+                    else {
+                        akWorldSpace = fastTravelMarker->GetWorldspace();
+                        RE::TESObjectCELL* pCell = fastTravelMarker->GetParentCell();
+                        if (gfuncs::IsFormValid(pCell)) {
+                            if (pCell->IsInteriorCell()) {
+                                interiorCell = pCell;
+                            }
+                        }
+                    }
+
+                    if (!gfuncs::IsFormValid(moveToRef)) {
+                        moveToRef = nullptr;
+                    }
+
+                    if (!gfuncs::IsFormValid(akWorldSpace)) {
+                        akWorldSpace = nullptr;
+                    }
+
+                    if (!gfuncs::IsFormValid(interiorCell)) {
+                        interiorCell = nullptr;
+                    }
+
+                    logger::trace("OnPositionPlayerStart: type[{}] \nfastTravelMarker({}) \nmoveToRef({}) \ninterior({}) \nworld({})", 
+                        type,
+                        gfuncs::GetFormDataString(fastTravelMarker),
+                        gfuncs::GetFormDataString(moveToRef),
+                        gfuncs::GetFormDataString(interiorCell),
+                        gfuncs::GetFormDataString(akWorldSpace));
+                }
+                else {
+                    logger::warn("OnPositionPlayerStart: type[{}] loc IsBadReadPtr", type);
+                }
+            }
+            else {
+                logger::warn("OnPositionPlayerStart: type[{}] loc not found", type);
+            }
+            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPositionPlayerStart]->globalHandles;
+            CombineEventHandles(handles, fastTravelMarker, eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[0]);
+            CombineEventHandles(handles, moveToRef, eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[1]);
+            CombineEventHandles(handles, akWorldSpace, eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[2]);
+            CombineEventHandles(handles, interiorCell, eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[3]);
+
+            gfuncs::RemoveDuplicates(handles);
+
+            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)fastTravelMarker, (RE::TESObjectREFR*)moveToRef, 
+                (RE::TESWorldSpace*)akWorldSpace, (RE::TESObjectCELL*)interiorCell);
+
+            SendEvents(handles, eventDataPtrs[EventEnum_OnPositionPlayerStart]->sEvent, args);
+        }
+        else if (type == 4) { //post load
+            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPositionPlayerFinish]->globalHandles;
+            CombineEventHandles(handles, fastTravelMarker, eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[0]);
+            CombineEventHandles(handles, moveToRef, eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[1]);
+            CombineEventHandles(handles, akWorldSpace, eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[2]);
+            CombineEventHandles(handles, interiorCell, eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[3]);
+
+            gfuncs::RemoveDuplicates(handles);
+
+            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)fastTravelMarker, (RE::TESObjectREFR*)moveToRef, 
+                (RE::TESWorldSpace*)akWorldSpace, (RE::TESObjectCELL*)interiorCell);
+
+            SendEvents(handles, eventDataPtrs[EventEnum_OnPositionPlayerFinish]->sEvent, args);
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+PositionPlayerEventSink* positionPlayerEventSink;
+
+//used only for the player
+struct ActorCellEventSink : public RE::BSTEventSink<RE::BGSActorCellEvent> {
+    bool sinkAdded = false;
+    RE::FormID previousCellId;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::BGSActorCellEvent* event, RE::BSTEventSource<RE::BGSActorCellEvent>*/*source*/) {
+        if (!event) {
+            logger::warn("ActorCellEventSink doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::warn("ActorCellEventSink IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::TESForm* newCellForm = RE::TESForm::LookupByID(event->cellID);
+        RE::TESForm* akPreviousCellForm = RE::TESForm::LookupByID(previousCellId);
+
+        RE::TESObjectCELL* newCell = nullptr; 
+        RE::TESObjectCELL* akPreviousCell = nullptr; 
+
+        if (gfuncs::IsFormValid(newCellForm)) {
+            newCell = static_cast<RE::TESObjectCELL*>(newCellForm);
+            if (!gfuncs::IsFormValid(newCell)) {
+                newCell = gfuncs::playerRef->GetParentCell();
+            }
+        }
+
+        if (gfuncs::IsFormValid(akPreviousCellForm)) {
+            akPreviousCell = static_cast<RE::TESObjectCELL*>(akPreviousCellForm);
+            if (!gfuncs::IsFormValid(akPreviousCell)) {
+                akPreviousCell = nullptr;
+            }
+        }
+
+        if (gfuncs::IsFormValid(newCell)) {
+            previousCellId = newCell->GetFormID();
+
+            if (newCell != akPreviousCell) {
+                logger::trace("PlayerChangedCellEvent: newCell({}) \n previousCell({})", 
+                    gfuncs::GetFormDataString(newCell), gfuncs::GetFormDataString(akPreviousCell));
+
+                std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPlayerChangeCell]->globalHandles;
+                CombineEventHandles(handles, newCell, eventDataPtrs[EventEnum_OnPlayerChangeCell]->eventParamMaps[0]);
+                CombineEventHandles(handles, akPreviousCell, eventDataPtrs[EventEnum_OnPlayerChangeCell]->eventParamMaps[1]);
+
+                gfuncs::RemoveDuplicates(handles);
+
+                auto* args = RE::MakeFunctionArguments((RE::TESObjectCELL*)newCell, (RE::TESObjectCELL*)akPreviousCell);
+
+                SendEvents(handles, eventDataPtrs[EventEnum_OnPlayerChangeCell]->sEvent, args);
+            }
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+ActorCellEventSink* actorCellEventSink;
+
 struct ObjectInitEventSink : public RE::BSTEventSink<RE::TESInitScriptEvent> {
     bool sinkAdded = false;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::TESInitScriptEvent* event, RE::BSTEventSource<RE::TESInitScriptEvent>*/*source*/) {
         if (!event) {
             //logger::error("ObjectInitEvent doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -12224,6 +13277,10 @@ struct ObjectLoadedEventSink : public RE::BSTEventSink<RE::TESObjectLoadedEvent>
 
         if (!event) {
             //logger::error("load object Event is nullptr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -12275,6 +13332,10 @@ public:
             return RE::BSEventNotifyControl::kContinue;
         }
 
+        if (IsBadReadPtr(event, sizeof(event))) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
         if (event->eventType == RE::INPUT_EVENT_TYPE::kButton) {
             auto* buttonEvent = event->AsButtonEvent();
             if (buttonEvent) {
@@ -12296,11 +13357,18 @@ public:
 InputEventSink* inputEventSink;
 
 struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
+    bool sinkAdded = false;
+
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*/*source*/) {
         //this sink is for managing timers and GetCurrentMenuOpen function.
 
         if (!event) {
-            logger::error("MenuOpenClose Event doesn't exist!");
+            logger::warn("MenuOpenClose Event doesn't exist!");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::warn("AnimationEventSink IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -12309,7 +13377,6 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         if (event->menuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
 
             RE::BSFixedString bsMenuName = event->menuName;
-
 
             if (event->opening) {
                 lastMenuOpened = event->menuName;
@@ -12452,6 +13519,10 @@ bool RemoveHitEventSink() {
         return true;
     }
     return false;
+}
+
+bool ShouldPositionPlayerEventSinkBeAdded() {
+    return(!eventDataPtrs[EventEnum_OnPositionPlayerStart]->isEmpty() || !eventDataPtrs[EventEnum_OnPositionPlayerFinish]->isEmpty());
 }
 
 void AddSink(int index) {
@@ -12689,6 +13760,38 @@ void AddSink(int index) {
             eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->sinkAdded = true;
             RE::ObjectiveState::GetEventSource()->AddEventSink(questObjectiveEventSink);
             logger::debug("{}, EventEnum_OnQuestObjectiveStateChanged sink added", __func__);
+        }
+        break;
+
+    case EventEnum_OnPositionPlayerStart:
+
+    case EventEnum_OnPositionPlayerFinish:
+        if (!positionPlayerEventSink->sinkAdded && ShouldPositionPlayerEventSinkBeAdded()) {
+            auto* posPlayerEventSource = player->AsPositionPlayerEventSource();
+            if (posPlayerEventSource) {
+                positionPlayerEventSink->sinkAdded = true;
+                posPlayerEventSource->AddEventSink(positionPlayerEventSink);
+                logger::debug("{}, positionPlayerEventSink added", __func__);
+            }
+            else {
+                logger::error("{}, posPlayerEventSource not found, positionPlayerEventSink sink not added", __func__);
+            }
+        }
+        break;
+
+    case EventEnum_OnPlayerChangeCell:
+        if (!actorCellEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnPlayerChangeCell]->isEmpty()) {
+            auto* playerCellChangeSource = player->AsBGSActorCellEventSource();
+            if (playerCellChangeSource) {
+                actorCellEventSink->sinkAdded = true;
+                eventDataPtrs[EventEnum_OnPlayerChangeCell]->sinkAdded = true;
+                //actorCellEventSink->previousCell = gfuncs::playerRef->GetParentCell();
+                playerCellChangeSource->AddEventSink(actorCellEventSink);
+                logger::debug("{}, EventEnum_OnPlayerChangeCell sink added", __func__);
+            }
+            else {
+                logger::error("{}, playerCellChangeSource not found, EventEnum_OnPlayerChangeCell sink not added", __func__);
+            }
         }
         break;
     }
@@ -12929,6 +14032,37 @@ void RemoveSink(int index) {
             eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->sinkAdded = false;
             RE::ObjectiveState::GetEventSource()->RemoveEventSink(questObjectiveEventSink);
             logger::debug("{}, EventEnum_OnQuestObjectiveStateChanged sink removed", __func__);
+        }
+        break;
+
+    case EventEnum_OnPositionPlayerStart:
+
+    case EventEnum_OnPositionPlayerFinish:
+        if (positionPlayerEventSink->sinkAdded && !ShouldPositionPlayerEventSinkBeAdded()) {
+            auto posPlayerEventSource = player->AsPositionPlayerEventSource();
+            if (posPlayerEventSource) {
+                positionPlayerEventSink->sinkAdded = false;
+                posPlayerEventSource->RemoveEventSink(positionPlayerEventSink);
+                logger::debug("{}, positionPlayerEventSink removed", __func__);
+            }
+            else {
+                logger::error("{}, posPlayerEventSource not found, positionPlayerEventSink sink not removed", __func__);
+            }
+        }
+        break;
+
+    case EventEnum_OnPlayerChangeCell:
+        if (actorCellEventSink->sinkAdded && eventDataPtrs[EventEnum_OnPlayerChangeCell]->isEmpty()) {
+            auto* playerCellChangeSource = player->AsBGSActorCellEventSource();
+            if (playerCellChangeSource) {
+                actorCellEventSink->sinkAdded = false;
+                eventDataPtrs[EventEnum_OnPlayerChangeCell]->sinkAdded = false;
+                playerCellChangeSource->RemoveEventSink(actorCellEventSink);
+                logger::debug("{}, EventEnum_OnPlayerChangeCell sink removed", __func__);
+            }
+            else {
+                logger::error("{}, playerCellChangeSource not found, EventEnum_OnPlayerChangeCell sink not removed", __func__);
+            }
         }
         break;
     }
@@ -13481,6 +14615,9 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_OnSwitchRaceComplete] = new EventData("OnRaceSwitchCompleteGlobal", EventEnum_OnSwitchRaceComplete, 3, 'SWr0');
         eventDataPtrs[EventEnum_OnActorFootStep] = new EventData("OnActorFootStepGlobal", EventEnum_OnActorFootStep, 1, 'AFs0');
         eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged] = new EventData("OnQuestObjectiveStateChangedGlobal", EventEnum_OnQuestObjectiveStateChanged, 1, 'QOs0');
+        eventDataPtrs[EventEnum_OnPositionPlayerStart] = new EventData("OnPositionPlayerStartGlobal", EventEnum_OnPositionPlayerStart, 4, 'PPa0');
+        eventDataPtrs[EventEnum_OnPositionPlayerFinish] = new EventData("OnPositionPlayerFinishGlobal", EventEnum_OnPositionPlayerFinish, 4, 'PPa1');
+        eventDataPtrs[EventEnum_OnPlayerChangeCell] = new EventData("OnPlayerChangeCellGlobal", EventEnum_OnPlayerChangeCell, 2, 'PCC0');
     }
 
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -13508,14 +14645,22 @@ void CreateEventSinks() {
     if (!objectInitEventSink) { objectInitEventSink = new ObjectInitEventSink(); }
     if (!objectLoadedEventSink) { objectLoadedEventSink = new ObjectLoadedEventSink(); }
     if (!inputEventSink) { inputEventSink = new InputEventSink(); }
+    if (!positionPlayerEventSink) { positionPlayerEventSink = new PositionPlayerEventSink(); }
+    if (!actorCellEventSink) { actorCellEventSink = new ActorCellEventSink(); }
 
-    //always active to track lastPlayerActivatedRef
-    eventSourceholder->AddEventSink(activateEventSink);
+    if (!activateEventSink->sinkAdded) {
+        //always active to track lastPlayerActivatedRef
+        activateEventSink->sinkAdded = true;
+        eventSourceholder->AddEventSink(activateEventSink);
+    }
 
     //eventSourceholder->AddEventSink(objectLoadedEventSink);
-
-    //always active to track opened menus / game pausing
-    ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
+    
+    if (!menuOpenCloseEventSink->sinkAdded) {
+        menuOpenCloseEventSink->sinkAdded = true;
+        //always active to track opened menus / game pausing
+        ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
+    }
 
     if (iMaxArrowsSavedPerReference > 0) {
         if (skseLoadInterface) {
@@ -13577,14 +14722,12 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
     vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
-
     vm->RegisterFunction("GetAllArmorsForSlotMask", "DbSkseFunctions", GetAllArmorsForSlotMask);
     vm->RegisterFunction("GetCellWorldSpace", "DbSkseFunctions", GetCellWorldSpace);
     vm->RegisterFunction("GetCellLocation", "DbSkseFunctions", GetCellLocation);
     vm->RegisterFunction("GetAllInteriorCells", "DbSkseFunctions", GetAllInteriorCells);
     vm->RegisterFunction("GetAllExteriorCells", "DbSkseFunctions", GetAllExteriorCells);
     vm->RegisterFunction("GetAttachedCells", "DbSkseFunctions", GetAttachedCells);
-
     vm->RegisterFunction("GetAllFormsWithName", "DbSkseFunctions", GetAllFormsWithName);
     vm->RegisterFunction("GetAllFormsWithScriptAttached", "DbSkseFunctions", GetAllFormsWithScriptAttached);
     vm->RegisterFunction("GetAllAliasesWithScriptAttached", "DbSkseFunctions", GetAllAliasesWithScriptAttached);
@@ -13592,6 +14735,9 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetAllRefaliases", "DbSkseFunctions", GetAllRefaliases);
     vm->RegisterFunction("GetAllQuestObjectRefs", "DbSkseFunctions", GetAllQuestObjectRefs);
     vm->RegisterFunction("GetQuestObjectRefsInContainer", "DbSkseFunctions", GetQuestObjectRefsInContainer);
+
+    vm->RegisterFunction("GetFavorites", "DbSkseFunctions", GetFavorites);
+
     vm->RegisterFunction("GetProjectileBaseDecal", "DbSkseFunctions", GetProjectileBaseDecal);
     vm->RegisterFunction("SetProjectileBaseDecal", "DbSkseFunctions", SetProjectileBaseDecal);
     vm->RegisterFunction("GetProjectileBaseExplosion", "DbSkseFunctions", GetProjectileBaseExplosion);
@@ -13640,6 +14786,13 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("SetMapMarkerIconType", "DbSkseFunctions", SetMapMarkerIconType);
     vm->RegisterFunction("GetMapMarkerIconType", "DbSkseFunctions", GetMapMarkerIconType);
     vm->RegisterFunction("IsMapMarker", "DbSkseFunctions", IsMapMarker);
+
+    vm->RegisterFunction("GetAllMapMarkerRefs", "DbSkseFunctions", GetAllMapMarkerRefs);
+    vm->RegisterFunction("GetCurrentMapMarkerRefs", "DbSkseFunctions", GetCurrentMapMarkerRefs);
+    vm->RegisterFunction("GetCellOrWorldSpaceOriginForRef", "DbSkseFunctions", GetCellOrWorldSpaceOriginForRef);
+    vm->RegisterFunction("SetCellOrWorldSpaceOriginForRef", "DbSkseFunctions", SetCellOrWorldSpaceOriginForRef);
+    vm->RegisterFunction("LoadMostRecentSaveGame", "DbSkseFunctions", LoadMostRecentSaveGame);
+
     vm->RegisterFunction("ExecuteConsoleCommand", "DbSkseFunctions", ExecuteConsoleCommand);
     vm->RegisterFunction("HasCollision", "DbSkseFunctions", HasCollision);
     vm->RegisterFunction("GetCurrentMusicType", "DbSkseFunctions", GetCurrentMusicType);
@@ -13677,6 +14830,9 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("SetSoulGemSize", "DbSkseFunctions", SetSoulGemSize);
     vm->RegisterFunction("CanSoulGemHoldNPCSoul", "DbSkseFunctions", CanSoulGemHoldNPCSoul);
     vm->RegisterFunction("SetSoulGemCanHoldNPCSoul", "DbSkseFunctions", SetSoulGemCanHoldNPCSoul);
+
+    vm->RegisterFunction("WouldActorBeStealing", "DbSkseFunctions", WouldActorBeStealing);
+
     vm->RegisterFunction("IsActorAttacking", "DbSkseFunctions", IsActorAttacking);
     vm->RegisterFunction("IsActorPowerAttacking", "DbSkseFunctions", IsActorPowerAttacking);
     vm->RegisterFunction("IsActorSpeaking", "DbSkseFunctions", IsActorSpeaking);
@@ -13860,7 +15016,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             //    break;
 
     case SKSE::MessagingInterface::kInputLoaded:
-        logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
+        //logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
 
         break;
 
@@ -13883,8 +15039,6 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         SaveSkillBooks();
         logger::trace("kDataLoaded: sent after the data handler has loaded all its forms");
         break;
-
-
 
         //default: //
             //    logger::info("Unknown system message of type: {}", message->type);
@@ -13991,11 +15145,10 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     bIsSavingSerialization = false;
     logger::trace("SaveCallback complete");
 }
- 
+
 //init================================================================================================================================================================
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
-
     skseLoadInterface = skse;
 
     SetupLog();

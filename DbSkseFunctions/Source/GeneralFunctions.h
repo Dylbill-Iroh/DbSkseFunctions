@@ -84,6 +84,17 @@ namespace gfuncs {
         return true;
     }
 
+    template <class T>
+    inline bool IsPtrValid(T* p) {
+        if (!p) {
+            return false;
+        }
+        if (IsBadReadPtr(p, sizeof(p))) {
+            return false;
+        }
+        return true;
+    }
+
     inline std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString) {
         if (!IsFormValid(akForm)) {
             return nullFormString;
@@ -137,9 +148,32 @@ namespace gfuncs {
 
         std::string editorID = GetFormEditorId(nullptr, akForm, "");
 
-        name = std::format("(name[{}] editorID[{}] formID[{}])", name, editorID, akForm->GetFormID());
+        std::string dataString = std::format("(name[{}] editorID[{}] formID[{:x}]) type[{}]", name, editorID, akForm->GetFormID(), akForm->GetFormType());
 
-        return name;
+        return dataString;
+    }
+
+    inline RE::TESFile* GetFileForForm(RE::TESForm* akForm) {
+        if (!gfuncs::IsFormValid(akForm)) {
+            return nullptr;
+        }
+
+        auto* dataHandler = RE::TESDataHandler::GetSingleton();
+        if (!dataHandler) {
+            return nullptr;
+        }
+
+        auto id = akForm->GetFormID();
+
+        for (auto* file : dataHandler->files) {
+            if (file) {
+                if (file->IsFormInMod(id)) {
+                    return file;
+                }
+            }
+        }
+
+        return nullptr;
     }
 
     inline void logFormMap(auto& map) {
@@ -210,6 +244,16 @@ namespace gfuncs {
             return NULL;
         }
         return handle;
+    }
+
+    inline RE::TESObjectREFR* GetRefFromHandle(RE::RefHandle& handle) {
+        if (handle) {
+            auto niPtr = RE::TESObjectREFR::LookupByHandle(handle);
+            if (niPtr) {
+                return niPtr.get();
+            }
+        }
+        return nullptr;
     }
 
     inline RE::Actor* GetPlayerDialogueTarget() {
@@ -444,6 +488,22 @@ namespace gfuncs {
         }
 
         return -1;
+    }
+
+    inline bool IsObjectInBSTArray(RE::BSTArray<RE::ObjectRefHandle>* v, RE::ObjectRefHandle& element) {
+        if (v->size() == 0) {
+            return false;
+        }
+
+        for (auto& obj : *v) {
+            if (obj) {
+                if (obj == element) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     inline RE::NiAVObject* GetNiAVObjectForRef(RE::TESObjectREFR* ref) {
