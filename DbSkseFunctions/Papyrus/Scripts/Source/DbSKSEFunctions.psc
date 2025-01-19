@@ -850,6 +850,12 @@ string function GetMapMarkerName(ObjectReference MapMarker) Global Native
 
 bool function SetMapMarkerName(ObjectReference MapMarker, String Name) Global Native
 
+;Get is the vanilla ObjectReference function mapMarker.IsMapMarkerVisible()
+bool function SetMapMarkerVisible(ObjectReference MapMarker, bool visible) Global Native
+
+;Get is the vanilla ObjectReference function mapMarker.CanFastTravelToMarker()
+bool function SetCanFastTravelToMarker(ObjectReference MapMarker, bool canTravelTo) Global Native
+
 Form function GetCellOrWorldSpaceOriginForRef(ObjectReference ref) Global Native
 
 ;This function is usefull if you have to move a map marker from one worldspace to another using MoveTo and have it display on the world map.

@@ -4065,6 +4065,15 @@ Function UpdateActor(Actor akActor, Form akForm) Global
     Endif
 EndFunction 
 
+;used to update menus while they are open. 
+;Example, changing a map marker property (name, icon or visibility) while the map menu is open
+function refreshMenus() Global
+	if !ui.IsMenuOpen("CustomMenu")
+		ui.OpenCustomMenu("")
+		ui.CloseCustomMenu()
+	endif
+EndFunction
+
 ;requires SKSE and Papyrus Extender 
 ;swap all worn equipment between actor A and B.
 Function SwapEquipment(Actor A, Actor B) Global
