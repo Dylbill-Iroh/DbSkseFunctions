@@ -1,5 +1,5 @@
 Scriptname DbSkseFunctions Hidden 
-;compiled with CommonLib NG, so should work with Skyrim SE and AE
+;The .dll file was compiled with CommonLib NG, so should work with Skyrim SE and AE
 
 Float Function GetVersion() Global Native
 
