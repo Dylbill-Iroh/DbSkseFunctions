@@ -2024,7 +2024,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(8.1);
+    return float(8.2);
 }
 
 //papyrusUtilEX functions=======================================================================================================================
@@ -2535,31 +2535,31 @@ bool SliceArray(RE::StaticFunctionTag*, int akHandle, RE::BSFixedString bsScript
         vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
         newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
 
-        int iA = 0;
-        int iB = startIndex;
+        int i = 0;
+        int ii = startIndex;
         //copy the elements between startIndex and endIndex from array to newArray
-        for (iB; iB <= endIndex; iA++, iB++) {
-            newArray->data()[iA] = arrayData.arraySmartPtr->data()[iB];
+        for (ii; ii <= endIndex; i++, ii++) {
+            newArray->data()[i] = arrayData.arraySmartPtr->data()[ii];
         }
     }
     //remove portion between startIndex and endIndex
     else {
         newArraySize = (size - (endIndex - startIndex + 1));
 
-        int iA = 0;
-        int iB = 0;
+        int i = 0;
+        int ii = 0;
         vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
         newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
 
         //copy the elements between startIndex and endIndex from array to newArray
-        for (iA; iA < startIndex; iA++) {
-            newArray->data()[iA] = arrayData.arraySmartPtr->data()[iA];
+        for (i; i < startIndex; i++) {
+            newArray->data()[i] = arrayData.arraySmartPtr->data()[i];
         }
 
-        iB = (endIndex + 1);
+        ii = (endIndex + 1);
 
-        for (iA; iA < newArraySize; iA++, iB++) {
-            newArray->data()[iA] = arrayData.arraySmartPtr->data()[iB];
+        for (i; i < newArraySize; i++, ii++) {
+            newArray->data()[i] = arrayData.arraySmartPtr->data()[ii];
         }
     }
 
@@ -2642,117 +2642,156 @@ bool SliceArrayOnto(RE::StaticFunctionTag*, int akHandle_A, RE::BSFixedString bs
 
     RE::BSTSmartPointer<RE::BSScript::Array> newArray_A;
     RE::BSTSmartPointer<RE::BSScript::Array> newArray_B;
-    int newArraySizeA = 1;
-    int newArraySizeB = 1;
+    int newSizeA = 1;
+    int newSizeB = 1;
 
-    //keep portion between startIndex and endIndex of array_A in array_A
-    if (keep) {
-        newArraySizeA = (endIndex - startIndex + 1);
-        newArraySizeB = (sizeA - newArraySizeA);
+    if (keep && replace) {
+        newSizeA = (endIndex - startIndex + 1);
+        newSizeB = (sizeA - newSizeA);
 
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newArraySizeA, newArray_A);
+        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
         newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-        int iA = 0;
-        int iB = startIndex;
+        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+        newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+        int i = 0;
+        int ii = startIndex;
         //copy the elements between startIndex and endIndex from array_A to newArray_A
-        for (iB; iB <= endIndex; iA++, iB++) {
-            //logger::critical("{}: newArray_A loop1 iA[{}] replace[{}] keep[{}]", __func__, iA, replace, keep);
-            newArray_A->data()[iA] = arrayData_A.arraySmartPtr->data()[iB];
+        for (ii; ii <= endIndex; i++, ii++) {
+            //logger::trace("{}: newArray_A loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
+            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+        } 
+
+        i = 0;
+
+        //copy the remainder of indexes from array_A to array_B
+        for (i; i < startIndex; i++) {
+            //logger::trace("{}: newArray_B loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
+            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[i];
         }
 
-        if (replace) {
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newArraySizeB, newArray_B);
-            newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+        ii = (endIndex + 1);
 
-            iA = 0;
-
-            //copy the remainder of indexes from array_A to array_B
-            for (iA; iA < startIndex; iA++) {
-                newArray_B->data()[iA] = arrayData_A.arraySmartPtr->data()[iA];
-            }
-
-            iB = (endIndex + 1);
-
-            for (iA; iA < newArraySizeB; iA++, iB++) {
-                newArray_B->data()[iA] = arrayData_A.arraySmartPtr->data()[iB];
-            }
-        }
-        //merge
-        else {
-            newArraySizeB += sizeB;
-
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newArraySizeB, newArray_B);
-            newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-            iA = 0;
-
-            //first copy the original elements from array_B to the new array_B
-            for (iA; iA < sizeB; iA++) {
-                newArray_B->data()[iA] = arrayData_B.arraySmartPtr->data()[iA];
-            }
-
-            iB = 0;
-
-            //copy the remainder of indexes from array_A to array_B
-            for (iB; iB < startIndex; iB++) {
-                newArray_B->data()[iA] = arrayData_A.arraySmartPtr->data()[iB];
-            }
-
-            iB = (endIndex + 1);
-            for (iA; iA < newArraySizeB; iA++, iB++) {
-                newArray_B->data()[iA] = arrayData_A.arraySmartPtr->data()[iB];
-            }
+        for (i; i < newSizeB; i++, ii++) {
+            //logger::trace("{}: newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
+            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
         }
     }
-    //remove portion between startIndex and endIndex
-    else {
-        newArraySizeB = (endIndex - startIndex + 1);
-        newArraySizeA = (sizeA - newArraySizeB);
+    else if (keep && !replace) {
+        newSizeA = (endIndex - startIndex + 1);
+        newSizeB = (sizeA - newSizeA);
+        newSizeB += sizeB; 
 
-        int iA = 0;
-        int iB = 0;
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newArraySizeA, newArray_A);
+        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
         newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
+        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+        newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+        int i = 0;
+        int ii = startIndex;
         //copy the elements between startIndex and endIndex from array_A to newArray_A
-        for (iA; iA < startIndex; iA++) {
-            newArray_A->data()[iA] = arrayData_A.arraySmartPtr->data()[iA];
+        for (ii; ii <= endIndex; i++, ii++) {
+            //logger::trace("{}: newArray_A loop1 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
+            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
         }
 
-        iB = (endIndex + 1);
+        i = 0;
 
-        for (iA; iA < newArraySizeA; iA++, iB++) {
-            newArray_A->data()[iA] = arrayData_A.arraySmartPtr->data()[iB];
+        //copy the original elements from array_B to newArray_B as we're merging not replacing
+        for (i; i < sizeB; i++) {
+            //logger::trace("{}: newArray_B loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
+            newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
         }
 
-        if (replace) {
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newArraySizeB, newArray_B);
-            newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+        ii = 0;
 
-            iA = 0;
-            iB = startIndex;
-            for (iB; iB <= endIndex; iA++, iB++) {
-                newArray_B->data()[iA] = arrayData_A.arraySmartPtr->data()[iB];
-            }
+        //copy the remainder of indexes from array_A to array_B
+        for (ii; ii < startIndex; i++, ii++) {
+            //logger::trace("{}: newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
+            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
         }
-        //merge
-        else {
-            newArraySizeB += sizeB;
 
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newArraySizeB, newArray_B);
-            newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+        ii = (endIndex + 1);
 
-            iA = 0;
+        for (i; i < newSizeB; i++, ii++) {
+            //logger::trace("{}: newArray_B loop3 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
+            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+        }
+    }
+    else if (!keep && replace) {
+        newSizeB = (endIndex - startIndex + 1);
+        newSizeA = (sizeA - newSizeB);
 
-            //first copy the original elements from array_B to the new array_B
-            for (iA; iA < sizeB; iA++) {
-                newArray_B->data()[iA] = arrayData_B.arraySmartPtr->data()[iA];
-            }
+        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+        newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            iB = startIndex;
-            for (iB; iB <= endIndex; iA++, iB++) {
-                newArray_B->data()[iA] = arrayData_A.arraySmartPtr->data()[iB];
-            }
+        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+        newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+        int i = 0;
+        int ii = startIndex;
+        //copy the elements between startIndex and endIndex from array_A to newArray_B
+        for (ii; ii <= endIndex; i++, ii++) {
+            //logger::trace("{}: newArray_B loop1 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
+            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+        }
+
+        i = 0;
+
+        //copy the remainder of indexes from array_A to newArray_A
+        for (i; i < startIndex; i++) {
+            //logger::trace("{}: newArray_A loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
+            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+        }
+
+        ii = (endIndex + 1);
+
+        for (i; i < newSizeA; i++, ii++) {
+            //logger::trace("{}: newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
+            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+        }
+    }
+    else if (!keep && !replace) {
+        newSizeB = (endIndex - startIndex + 1);
+        newSizeA = (sizeA - newSizeB);
+        newSizeB += sizeB;
+
+        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+        newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+        newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+        int i = 0;
+
+        //copy the original elements from array_B to newArray_B as we're merging not replacing
+        for (i; i < sizeB; i++) {
+            //logger::trace("{}: newArray_B loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
+            newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
+        }
+
+        int ii = startIndex;
+        //copy the elements between startIndex and endIndex from array_A to newArray_B
+        for (ii; ii <= endIndex; i++, ii++) {
+            //logger::trace("{}: newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
+            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+        }
+
+        i = 0;
+
+        //copy the remainder of indexes from array_A to newArray_A
+        for (i; i < startIndex; i++) {
+            //logger::trace("{}: newArray_A loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
+            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+        }
+
+        ii = (endIndex + 1);
+
+        for (i; i < newSizeA; i++, ii++) {
+            //logger::trace("{}: newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
+            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
         }
     }
 
@@ -2766,7 +2805,7 @@ bool SliceArrayOnto(RE::StaticFunctionTag*, int akHandle_A, RE::BSFixedString bs
         bsScriptName_A, bsArrayPropertyName_A, className, akHandle_A, bsScriptName_B, bsArrayPropertyName_B, className, akHandle_B);
 
 
-    return (newArray_A->size() == newArraySizeA && newArray_B->size() == newArraySizeB);
+    return (newArray_A->size() == newSizeA && newArray_B->size() == newSizeB);
 }
 
 //==============================================================================================================================================
