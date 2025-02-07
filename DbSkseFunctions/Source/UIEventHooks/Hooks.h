@@ -145,7 +145,8 @@ namespace UIEvents {
 
     void SendUISelectionEvents(std::string menuName, UiFormData data, int eventType) {
         std::vector<RE::VMHandle> handles;
-        for (auto& uiEventData : registeredUIEventDatas) {
+        for (int i = 0; i < registeredUIEventDatas.size(); i++) {
+            auto& uiEventData = registeredUIEventDatas[i];
             if (UIEventDataMatchesParams(uiEventData, menuName, data.form, eventType)) {
                 handles.push_back(uiEventData.registeredHandle);
             }
@@ -241,7 +242,7 @@ namespace UIEvents {
                     if (value.IsNumber()) {
                         RE::FormID formID = static_cast<std::uint32_t>(value.GetNumber());
                         RE::TESForm* akForm = RE::TESForm::LookupByID(formID);
-                        if (gfuncs::IsFormValid(akForm, false)) {
+                        if (gfuncs::IsFormValid(akForm)) {
                             return UiFormData(akForm, 1, true, false);
                         }
                     }
@@ -264,7 +265,7 @@ namespace UIEvents {
                     if (value.IsNumber()) {
                         RE::FormID formID = static_cast<std::uint32_t>(value.GetNumber());
                         RE::TESForm* akForm = RE::TESForm::LookupByID(formID);
-                        if (gfuncs::IsFormValid(akForm, false)) {
+                        if (gfuncs::IsFormValid(akForm)) {
                             int count = 1;
                             RE::GFxValue gfxCount;
                             if (menu->uiMovie->GetVariable(&gfxCount, "_root.Menu.InventoryLists.panelContainer.itemList.selectedEntry.count")) {
@@ -337,7 +338,7 @@ namespace UIEvents {
                     if (value.IsNumber()) {
                         RE::FormID formID = static_cast<std::uint32_t>(value.GetNumber());
                         RE::TESForm* akForm = RE::TESForm::LookupByID(formID);
-                        if (gfuncs::IsFormValid(akForm, false)) {
+                        if (gfuncs::IsFormValid(akForm)) {
                             int count = 0;
 
                             //this didn't work for the favorites menu
@@ -905,8 +906,7 @@ namespace UIEvents {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
+        for (int i = 0; i < v.size(); i++) {
             if (v[i] == element) {
                 return i;
             }
@@ -1290,7 +1290,7 @@ namespace UIEvents {
         if (!ui) { ui = RE::UI::GetSingleton(); }
         if (!userEvents) { userEvents = RE::UserEvents::GetSingleton(); }
 
-        if (userEvents) {
+        if (userEvents && validSelectUserEventStrings.size() == 0) {
             validSelectUserEventStrings.push_back(userEvents->rightEquip);
             validSelectUserEventStrings.push_back(userEvents->leftEquip); 
             validSelectUserEventStrings.push_back(userEvents->unk318);

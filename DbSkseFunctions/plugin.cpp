@@ -8,11 +8,14 @@
 #include <ctime>
 #include <algorithm>
 #include <string>
+#include <mutex>
+#include <thread>
+#include "GeneralFunctions.h"
 #include "mini/ini.h"
 #include "UIEventHooks/Hooks.h"
 #include "editorID.hpp"
-#include "GeneralFunctions.h"
 #include "STLThunk.h"
+#include "PapyrusUtilEx.h"
 
 namespace logger = SKSE::log;
 bool bPlayerIsInCombat = false;
@@ -23,7 +26,12 @@ bool bIsLoadingSerialization = false;
 bool bIsSavingSerialization = false;
 bool DbSkseCppCallbackEventsAttached = false;
 std::string lastMenuOpened;
-std::vector<RE::BSFixedString> menusCurrentlyOpen;
+RE::TESObjectREFR* lastPlayerActivatedRef = nullptr;
+RE::TESObjectREFR* menuRef = nullptr;
+
+//std::vector<RE::BSFixedString> menusCurrentlyOpen;
+int numOfMenusCurrentOpen = 0;
+std::map<std::string, bool> menuStatusMap;
 
 std::vector<RE::BSFixedString> refActivatedMenus = {
     RE::DialogueMenu::MENU_NAME,
@@ -46,6 +54,7 @@ std::vector<RE::BSFixedString> itemMenus = {
     RE::FavoritesMenu::MENU_NAME
 };
 
+
 std::chrono::system_clock::time_point lastTimeMenuWasOpened;
 std::chrono::system_clock::time_point lastTimeGameWasPaused;
 std::map<RE::TESObjectBOOK*, int> skillBooksMap;
@@ -57,11 +66,11 @@ float secondsPassedGameNotPaused = 0.0;
 float lastFrameDelta = 0.1;
 std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
 RE::PlayerCharacter* player;
-//RE::Actor* gfuncs::playerRef;
+RE::Actor* playerRef;
 RE::TESForm* nullForm;
 RE::TESForm* xMarker;
 RE::BSScript::IVirtualMachine* gvm;
-//RE::SkyrimVM* gfuncs::svm;
+RE::SkyrimVM* svm;
 RE::NiPoint3 zeroPosition{0.0, 0.0, 0.0};
 RE::UI* ui;
 RE::Calendar* calendar;
@@ -74,7 +83,6 @@ void RemoveSink(int index);
 bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef);
 bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef);
 std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString);
-int gfuncs::GetIndexInVector(std::vector<RE::TESObjectREFR*> v, RE::TESObjectREFR* element);
 float GameHoursToRealTimeSeconds(RE::StaticFunctionTag*, float gameHours);
 
 struct TrackedActorAmmoData {
@@ -142,10 +150,9 @@ void SaveSkillBooks() {
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+        int ic = 0;
 
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
-
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -166,7 +173,6 @@ void SaveActorRaces() {
         actorRacesSaved = true;
 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
-
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form)) {
                 RE::Actor* actor = form->As<RE::Actor>();
@@ -538,9 +544,11 @@ bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptNa
         return false;
     }
 
+    int i = 0;
     auto it = vm->attachedScripts.find(handle);
     if (it != vm->attachedScripts.end()) {
-        for (auto& attachedScript : it->second) {
+        for (int i = 0; i < it->second.size(); i++) {
+            auto& attachedScript = it->second[i];
             if (attachedScript) {
                 auto* script = attachedScript.get();
                 if (script) {
@@ -551,6 +559,10 @@ bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptNa
                         }
                     }
                 }
+            }
+            i++;
+            if (i >= vm->attachedScripts.size()) {
+                return false;
             }
         }
     }
@@ -567,10 +579,11 @@ RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedS
         return nullptr;
     }
 
+    int i = 0;
     auto it = vm->attachedScripts.find(handle);
     if (it != vm->attachedScripts.end()) {
-        for (auto& attachedScript : it->second) {
-
+        for (int i = 0; i < it->second.size(); i++) {
+            auto& attachedScript = it->second[i];
             if (attachedScript) {
                 auto* script = attachedScript.get();
                 if (script) {
@@ -581,6 +594,10 @@ RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedS
                         }
                     }
                 }
+            }
+            i++;
+            if (i >= vm->attachedScripts.size()) {
+                return nullptr;
             }
         }
     }
@@ -694,14 +711,12 @@ void LogAndMessage(std::string message, int logLevel = trace, int debugLevel = n
 }
 
 void SendEvents(std::vector<RE::VMHandle> handles, RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args) {
-    int max = handles.size();
-
-    if (max == 0) {
+    if (handles.size() == 0) {
         return;
     }
 
-    for (int i = 0; i < max; i++) {
-        gfuncs::svm->SendAndRelayEvent(handles[i], &sEvent, args, nullptr);
+    for (int i = 0; i < handles.size(); i++) {
+        svm->SendAndRelayEvent(handles[i], &sEvent, args, nullptr);
     }
 
     delete args; //args is created using makeFunctionArguments. Delete as it's no longer needed.
@@ -1921,7 +1936,7 @@ bool LoadFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
         RE::TESForm* akForm;
         if (formIdResolved) {
             akForm = RE::TESForm::LookupByID<RE::TESForm>(formID);
-            if (!gfuncs::IsFormValid(akForm, false)) {
+            if (!gfuncs::IsFormValid(akForm)) {
                 logger::error("{}: {}: error, failed to load akForm!", __func__, i);
                 return false;
             }
@@ -1974,13 +1989,11 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
         return false;
     }
     else {
-
-        //for (std::pair<RE::TESForm*, std::vector<RE::VMHandle>> it : akMap) //old loop
-
         std::map<RE::TESForm*, std::vector<RE::VMHandle>>::iterator it;
 
-        for (it = akMap.begin(); it != akMap.end(); it++)
-        {
+        int ic = 0;
+        for (it = akMap.begin(); it != akMap.end() && ic < akMap.size(); it++, ic++) {
+
             RE::FormID formID = -1;
             if (it->first) {
                 formID = it->first->GetFormID();
@@ -2023,792 +2036,9 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 }
 
 //papyrus functions=============================================================================================================================
-float GetThisVersion(/*RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, */ RE::StaticFunctionTag* functionTag) {
-    return float(8.2);
+float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
+    return float(8.3);
 }
-
-//papyrusUtilEX functions=======================================================================================================================
-int GetFormHandle(RE::StaticFunctionTag*, RE::TESForm* akForm) {
-    return int(gfuncs::GetHandle(akForm));
-}
-
-int GetAliasHandle(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias) {
-    return int(gfuncs::GetHandle(akAlias));
-}
-
-int GetActiveEffectHandle(RE::StaticFunctionTag*, RE::ActiveEffect* akActiveEffect) {
-    return int(gfuncs::GetHandle(akActiveEffect));
-}
-
-struct ArrayPropertyData {
-    bool gotAllData = false;
-    RE::BSScript::Variable* arrayProperty;
-    RE::BSTSmartPointer<RE::BSScript::Array> arraySmartPtr;
-    RE::BSScript::Array* arrayPtr;
-    RE::BSScript::ObjectTypeInfo* info;
-};
-
-ArrayPropertyData GetArrayProperty(RE::BSScript::Internal::VirtualMachine* vm, RE::VMHandle handle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName) {
-    ArrayPropertyData returnValue;
-
-    auto it = vm->attachedScripts.find(handle);
-    if (it == vm->attachedScripts.end()) {
-        logger::error("DbSkse: {}: vm->attachedScripts couldn't find handle[{}] scriptName[{}] arrayProperty[{}]",
-            __func__, handle, bsScriptName, bsArrayPropertyName);
-        return returnValue;
-    }
-
-    for (auto& attachedScript : it->second) {
-        if (attachedScript) {
-            auto* script = attachedScript.get();
-            if (script) {
-                auto info = script->GetTypeInfo();
-                if (info) {
-                    if (info->name == bsScriptName) {
-                        logger::trace("{}: script[{}] found attached to handle[{}]", __func__, bsScriptName, handle);
-                        returnValue.arrayProperty = script->GetProperty(bsArrayPropertyName);
-
-                        if (!returnValue.arrayProperty) {
-                            returnValue.arrayProperty = script->GetVariable(bsArrayPropertyName);
-                        }
-
-                        if (!returnValue.arrayProperty) {
-                            logger::error("{}: arrayProperty[{}] not found in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, handle);
-                            return returnValue;
-                        }
-
-                        if (!returnValue.arrayProperty->IsArray()) {
-                            logger::error("{}: arrayProperty[{}] in script[{}] on handle[{}] is not an array.", __func__, bsArrayPropertyName, bsScriptName, handle);
-                            return returnValue;
-                        }
-
-                        returnValue.arraySmartPtr = returnValue.arrayProperty->GetArray();
-                        if (!returnValue.arraySmartPtr) {
-                            logger::error("{}: arraySmartPtr for [{}] not got from arrayData.arraySmartPtr.get() in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, handle);
-                            return returnValue;
-                        }
-
-                        returnValue.arrayPtr = returnValue.arraySmartPtr.get();
-                        if (!returnValue.arrayPtr) {
-                            logger::error("{}: arrayPtr for [{}] not got from arrayData.arraySmartPtr.get() in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, handle);
-                            return returnValue;
-                        }
-
-                        returnValue.info = returnValue.arrayPtr->type_info().GetTypeInfo();
-                        if (!returnValue.info) {
-                            logger::error("{}: arrayInfo for [{}] not found in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, handle);
-                            return returnValue;
-                        }
-                        returnValue.gotAllData = true;
-                    }
-                }
-            }
-        }
-    }
-    return returnValue;
-}
-
-bool ResizeArrayProperty(RE::StaticFunctionTag*, int akHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName, int size, int fillIndex) {
-    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    if (!vm) {
-        logger::error("{}: couldn't get *vm for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    auto arrayData = GetArrayProperty(vm, akHandle, bsScriptName, bsArrayPropertyName);
-
-    if (!arrayData.gotAllData) {
-        logger::error("{}: failed to get all property data for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    auto className = arrayData.info->GetName();
-    if (!className) {
-        logger::error("{}: className for [{}] not found in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-    vm->CreateArray2(arrayData.arrayPtr->type(), className, size, newArray);
-    //vm->CreateArray(RE::BSScript::TypeInfo{ RE::BSScript::TypeInfo::RawType::kObject }, size, newArray);
-
-    int i = 0;
-    int oldSize = arrayData.arrayPtr->size();
-    if (oldSize <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, className, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    if (size < 1) {
-        size = 1;
-    }
-
-    if (fillIndex < 0 || fillIndex > (oldSize - 1)) {
-        fillIndex = (oldSize - 1);
-    }
-
-    //this worked to prevent ctd when saving in game
-    newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
-
-    for (i; i < size && i < oldSize; i++) {
-        newArray->data()[i] = arrayData.arraySmartPtr->data()[i];
-    }
-
-    if (size > oldSize) {
-        for (i; i < size; i++) {
-            newArray->data()[i] = arrayData.arraySmartPtr->data()[fillIndex];
-        }
-    }
-
-    arrayData.arrayProperty->SetNone();
-    arrayData.arrayProperty->SetArray(newArray);
-
-    logger::trace("{}: scriptName[{}] array[{}] type[{}] on [{}] resized from[{}] to[{}]. Expected size[{}]", __func__,
-        bsScriptName, bsArrayPropertyName, className, akHandle, oldSize, newArray->size(), size);
-
-    return (newArray->size() == size);
-}
-
-bool MergeArrays(RE::StaticFunctionTag*, int akHandle_A, RE::BSFixedString bsScriptName_A, RE::BSFixedString bsArrayPropertyName_A,
-    int akHandle_B, RE::BSFixedString bsScriptName_B, RE::BSFixedString bsArrayPropertyName_B) {
-
-    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    if (!vm) {
-        logger::error("{}: couldn't get *vm for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-        return false;
-    }
-
-    auto arrayData_A = GetArrayProperty(vm, akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
-
-    if (!arrayData_A.gotAllData) {
-        logger::error("{}: failed to get all property data for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-        return false;
-    }
-
-    auto arrayData_B = GetArrayProperty(vm, akHandle_B, bsScriptName_B, bsArrayPropertyName_B);
-    if (!arrayData_B.gotAllData) {
-        logger::error("{}: failed to get all property data for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    auto className = arrayData_B.info->GetName();
-    if (!className) {
-        logger::error("{}: className for [{}] not found in script[{}] on handle[{}]", __func__, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    if (className != arrayData_A.info->GetName()) {
-        logger::error("{}: className [{}] for [{}] in script[{}] on handle[{}] doesn't match \n className [{}] for [{}] in script[{}] on handle[{}]",
-            __func__, className, bsArrayPropertyName_A, bsScriptName_A, akHandle_A, arrayData_A.info->GetName(), bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    int sizeA = arrayData_A.arrayPtr->size();
-    if (sizeA <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, className, bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-        return false;
-    }
-
-    int sizeB = arrayData_B.arrayPtr->size();
-    if (sizeB <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, className, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    int newSize = (sizeA + sizeB);
-    int i = 0;
-
-    RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-    vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSize, newArray);
-
-    //this worked to prevent ctd when saving in game
-    newArray.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-    for (i; i < sizeB; i++) {
-        newArray->data()[i] = arrayData_B.arraySmartPtr->data()[i];
-    }
-
-    int newIndex = i;
-    i = 0;
-
-    for (i; i < sizeA; i++, newIndex++) {
-        newArray->data()[newIndex] = arrayData_A.arraySmartPtr->data()[i];
-    }
-
-    arrayData_B.arrayProperty->SetNone();
-    arrayData_B.arrayProperty->SetArray(newArray);
-
-    logger::trace("{}: scriptName[{}] array[{}] type[{}] on [{}] merged with \n scriptName[{}] array[{}] type[{}] on [{}]. New size[{}] Expected size[{}]", __func__,
-        bsScriptName_A, bsArrayPropertyName_A, className, akHandle_A, bsScriptName_B, bsArrayPropertyName_B, className, akHandle_B, newArray->size(), newSize);
-
-    return (newArray->size() == newSize);
-}
-
-bool CopyArray(RE::StaticFunctionTag*, int akHandle_A, RE::BSFixedString bsScriptName_A, RE::BSFixedString bsArrayPropertyName_A,
-    int akHandle_B, RE::BSFixedString bsScriptName_B, RE::BSFixedString bsArrayPropertyName_B) {
-
-    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    if (!vm) {
-        logger::error("{}: couldn't get *vm for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-        return false;
-    }
-
-    auto arrayData_A = GetArrayProperty(vm, akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
-    if (!arrayData_A.gotAllData) {
-        logger::error("{}: failed to get all property data for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-        return false;
-    }
-
-    auto arrayData_B = GetArrayProperty(vm, akHandle_B, bsScriptName_B, bsArrayPropertyName_B);
-    if (!arrayData_B.gotAllData) {
-        logger::error("{}: failed to get all property data for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    auto className = arrayData_B.info->GetName();
-    if (!className) {
-        logger::error("{}: className for [{}] not found in script[{}] on handle[{}]", __func__, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    if (className != arrayData_A.info->GetName()) {
-        logger::error("{}: className [{}] for [{}] in script[{}] on handle[{}] doesn't match \n  className [{}] for [{}] in script[{}] on handle[{}]",
-            __func__, className, bsArrayPropertyName_A, bsScriptName_A, akHandle_A, arrayData_A.info->GetName(), bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-
-        return false;
-    }
-
-    int sizeA = arrayData_A.arrayPtr->size();
-    if (sizeA <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-        return false;
-    }
-
-    int sizeB = arrayData_B.arrayPtr->size();
-    if (sizeB <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    int i = 0;
-
-    RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-    vm->CreateArray2(arrayData_B.arrayPtr->type(), className, sizeA, newArray);
-
-    //this worked to prevent ctd when saving in game
-    newArray.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-    for (i; i < sizeA; i++) {
-        newArray->data()[i] = arrayData_A.arraySmartPtr->data()[i];
-    }
-
-    arrayData_B.arrayProperty->SetNone();
-    arrayData_B.arrayProperty->SetArray(newArray);
-
-    logger::trace("{}: scriptName[{}] array[{}] type[{}] on handle[{}] copied to \n scriptName[{}] array[{}] type[{}] on handle[{}]. New size[{}] Expected size[{}]", __func__,
-        bsScriptName_A, bsArrayPropertyName_A, className, akHandle_A, bsScriptName_B, bsArrayPropertyName_B, className, akHandle_B, newArray->size(), sizeA);
-
-    return (newArray->size() == sizeA);
-}
-
-int CountInBSScriptArray(RE::BSTSmartPointer<RE::BSScript::Array> array, int index) {
-    int count = 0;
-    int size = array->size();
-
-    if (size > 0 && index >= 0 && index < size) {
-        for (int i = 0; i < size; i++) {
-            if (array->data()[i] == array->data()[index]) {
-                count++;
-            }
-        }
-    }
-    return count;
-}
-
-int CountInArray(RE::StaticFunctionTag*, int akHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName, int index) {
-    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    if (!vm) {
-        logger::error("{}: couldn't get *vm for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    auto arrayData = GetArrayProperty(vm, akHandle, bsScriptName, bsArrayPropertyName);
-
-    if (!arrayData.gotAllData) {
-        logger::error("{}: failed to get all property data for[{}] in script[{}] on Handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return 0;
-    }
-
-    int size = arrayData.arrayPtr->size();
-
-    if (size <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return 0;
-    }
-
-    if (index < 0) {
-        index = (size - 1);
-    }
-    else if (index >= size) {
-        logger::error("{}: index[{}] for [{}] in script[{}] on handle[{}] isn't valid", __func__, index, bsArrayPropertyName, bsScriptName, akHandle);
-        return 0;
-    }
-
-    return CountInBSScriptArray(arrayData.arraySmartPtr, index);
-}
-
-int RemoveFromArray(RE::StaticFunctionTag*, int akHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName, int index, bool removeAll) {
-    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    if (!vm) {
-        logger::error("{}: couldn't get *vm for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return 0;
-    }
-
-    auto arrayData = GetArrayProperty(vm, akHandle, bsScriptName, bsArrayPropertyName);
-
-    if (!arrayData.gotAllData) {
-        logger::error("{}: failed to get all property data for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return 0;
-    }
-
-    auto className = arrayData.info->GetName();
-
-    if (!className) {
-        logger::error("{}: className for [{}] not found in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return 0;
-    }
-
-    RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-
-    int newSize = 0;
-    int oldSize = arrayData.arrayPtr->size();
-    if (oldSize <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return 0;
-    }
-
-    if (index < 0) {
-        index = (oldSize - 1);
-    }
-
-    if (index >= oldSize) {
-        logger::error("{}: index[{}] for [{}] in script[{}] on handle[{}] isn't valid", __func__, index, bsArrayPropertyName, bsScriptName, akHandle);
-        return 0;
-    }
-
-    int count = 1;
-
-    if (removeAll) {
-        count = CountInBSScriptArray(arrayData.arraySmartPtr, index);
-        if (count > 1) {
-            int newSize = (oldSize - count);
-            if (newSize <= 0) {
-                logger::info("{}: [{}] in script[{}] on [{}] is filled entirely with the element at index[{}], setting size to 1",
-                    __func__, bsArrayPropertyName, bsScriptName, akHandle, index);
-
-                newSize = 1;
-                count = -1;
-                vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
-                newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
-                newArray->data()[0] = arrayData.arraySmartPtr->data()[0]; //must set the 0 entry to a valid entry before setting to none or it will break the array
-                newArray->data()[0].SetNone();
-            }
-            else {
-                vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
-
-                int oldIndex = 0;
-                int newIndex = 0;
-
-                newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
-                for (oldIndex; oldIndex < oldSize && newIndex < newSize; oldIndex++) {
-                    if (arrayData.arraySmartPtr->data()[oldIndex] != arrayData.arraySmartPtr->data()[index]) {
-                        newArray->data()[newIndex] = arrayData.arraySmartPtr->data()[oldIndex];
-                        newIndex++;
-                    }
-                }
-            }
-        }
-    }
-
-    if (!removeAll || count == 1) {
-        newSize = (oldSize - 1);
-        vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
-        //vm->CreateArray(RE::BSScript::TypeInfo{ RE::BSScript::TypeInfo::RawType::kObject }, size, newArray);
-
-        if (newSize <= 0) {
-            logger::error("{}: [{}] in script[{}] on handle[{}] is already the minimum size 1", 
-                __func__, bsArrayPropertyName, bsScriptName, akHandle);
-
-            return 0;
-        }
-
-        int oldIndex = 0;
-        int newIndex = 0;
-
-        newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
-
-        for (oldIndex; oldIndex < index; oldIndex++) {
-            newArray->data()[oldIndex] = arrayData.arraySmartPtr->data()[oldIndex];
-        }
-        //skip index 
-        newIndex = oldIndex;
-        oldIndex++;
-        if (oldIndex < newSize) {
-            for (oldIndex; oldIndex < newSize; oldIndex++, newIndex++) {
-                newArray->data()[newIndex] = arrayData.arraySmartPtr->data()[oldIndex];
-            }
-        }
-    }
-
-    //this worked to prevent ctd when saving in game
-
-    arrayData.arrayProperty->SetNone();
-    arrayData.arrayProperty->SetArray(newArray);
-
-    logger::trace("{}: scriptName[{}] array[{}] type[{}] on [{}] resized from[{}] to[{}]. Expected size[{}], removed elements[{}]", __func__,
-        bsScriptName, bsArrayPropertyName, className, akHandle, oldSize, newArray->size(), newSize, count);
-
-    return (count);
-}
-
-bool SliceArray(RE::StaticFunctionTag*, int akHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName,
-    int startIndex, int endIndex, bool keep) {
-
-    logger::trace("{}: called", __func__);
-
-    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    if (!vm) {
-        logger::error("{}: couldn't get *vm for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    auto arrayData = GetArrayProperty(vm, akHandle, bsScriptName, bsArrayPropertyName);
-    if (!arrayData.gotAllData) {
-        logger::error("{}: failed to get all property data for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    auto className = arrayData.info->GetName();
-    if (!className) {
-        logger::error("{}: className for [{}] not found in script[{}] on handle[{}]", __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    int size = arrayData.arrayPtr->size();
-    if (size <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    if (endIndex < 0) {
-        endIndex = (size - 1);
-    }
-
-    if (startIndex > endIndex || startIndex < 0 || startIndex >= size || endIndex >= size) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] startIndex[{}] or endIndex[{}] isn't valid",
-            __func__, bsArrayPropertyName, bsScriptName, akHandle, startIndex, endIndex);
-
-        return false;
-    }
-
-    if (startIndex == 0 && endIndex >= (size - 1)) {
-        logger::error("{}: [{}] in script[{}] on handle[{}], can't slice the entire array.",
-            __func__, bsArrayPropertyName, bsScriptName, akHandle);
-        return false;
-    }
-
-    RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-    int newArraySize = 1;
-
-    //keep portion between startIndex and endIndex of array in array
-    if (keep) {
-        newArraySize = (endIndex - startIndex + 1);
-
-        vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
-        newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
-
-        int i = 0;
-        int ii = startIndex;
-        //copy the elements between startIndex and endIndex from array to newArray
-        for (ii; ii <= endIndex; i++, ii++) {
-            newArray->data()[i] = arrayData.arraySmartPtr->data()[ii];
-        }
-    }
-    //remove portion between startIndex and endIndex
-    else {
-        newArraySize = (size - (endIndex - startIndex + 1));
-
-        int i = 0;
-        int ii = 0;
-        vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
-        newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
-
-        //copy the elements between startIndex and endIndex from array to newArray
-        for (i; i < startIndex; i++) {
-            newArray->data()[i] = arrayData.arraySmartPtr->data()[i];
-        }
-
-        ii = (endIndex + 1);
-
-        for (i; i < newArraySize; i++, ii++) {
-            newArray->data()[i] = arrayData.arraySmartPtr->data()[ii];
-        }
-    }
-
-    arrayData.arrayProperty->SetNone();
-    arrayData.arrayProperty->SetArray(newArray);
-
-    logger::trace("{}: scriptName[{}] array[{}] type[{}] on handle[{}] sliced", __func__,
-        bsScriptName, bsArrayPropertyName, className, akHandle);
-
-    return (newArray->size() == newArraySize);
-}
-
-bool SliceArrayOnto(RE::StaticFunctionTag*, int akHandle_A, RE::BSFixedString bsScriptName_A, RE::BSFixedString bsArrayPropertyName_A,
-    int akHandle_B, RE::BSFixedString bsScriptName_B, RE::BSFixedString bsArrayPropertyName_B,
-    int startIndex, int endIndex, bool replace, bool keep) {
-
-    logger::trace("{}: called", __func__);
-
-    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    if (!vm) {
-        logger::error("{}: couldn't get *vm for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-        return false;
-    }
-
-    auto arrayData_A = GetArrayProperty(vm, akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
-    if (!arrayData_A.gotAllData) {
-        logger::error("{}: failed to get all property data for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-        return false;
-    }
-
-    auto arrayData_B = GetArrayProperty(vm, akHandle_B, bsScriptName_B, bsArrayPropertyName_B);
-    if (!arrayData_B.gotAllData) {
-        logger::trace("{}: failed to get all property data for [{}] in script[{}] on handle[{}]", __func__, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    auto className = arrayData_B.info->GetName();
-    if (!className) {
-        logger::error("{}: className for [{}] not found in script[{}] on handle[{}]", __func__, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    if (className != arrayData_A.info->GetName()) {
-        logger::error("{}: className [{}] for [{}] in script[{}] on handle[{}] doesn't match \nclassName [{}] for [{}] in script[{}] on handle[{}]",
-            __func__, className, bsArrayPropertyName_A, bsScriptName_A, akHandle_A, arrayData_A.info->GetName(), bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-
-        return false;
-    }
-
-    int sizeA = arrayData_A.arrayPtr->size();
-    if (sizeA <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-        return false;
-    }
-
-    int sizeB = arrayData_B.arrayPtr->size();
-    if (sizeB <= 0) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] not initialized",
-            __func__, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    if (endIndex < 0) {
-        endIndex = (sizeA - 1);
-    }
-
-    if (startIndex > endIndex || startIndex < 0 || startIndex >= sizeA || endIndex >= sizeA) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] to \n [{}] in script[{}] on handle[{}], startIndex[{}] or endIndex[{}] isn't valid",
-            __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A, bsArrayPropertyName_B, bsScriptName_B, akHandle_B, startIndex, endIndex);
-
-        return false;
-    }
-
-    if (startIndex == 0 && endIndex >= (sizeA - 1)) {
-        logger::error("{}: [{}] in script[{}] on handle[{}] to \n [{}] in script[{}] on handle[{}], can't slice the entire array.",
-            __func__, bsArrayPropertyName_A, bsScriptName_A, akHandle_A, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-        return false;
-    }
-
-    RE::BSTSmartPointer<RE::BSScript::Array> newArray_A;
-    RE::BSTSmartPointer<RE::BSScript::Array> newArray_B;
-    int newSizeA = 1;
-    int newSizeB = 1;
-
-    if (keep && replace) {
-        newSizeA = (endIndex - startIndex + 1);
-        newSizeB = (sizeA - newSizeA);
-
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
-        newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
-        newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-        int i = 0;
-        int ii = startIndex;
-        //copy the elements between startIndex and endIndex from array_A to newArray_A
-        for (ii; ii <= endIndex; i++, ii++) {
-            //logger::trace("{}: newArray_A loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
-            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-        } 
-
-        i = 0;
-
-        //copy the remainder of indexes from array_A to array_B
-        for (i; i < startIndex; i++) {
-            //logger::trace("{}: newArray_B loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
-            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[i];
-        }
-
-        ii = (endIndex + 1);
-
-        for (i; i < newSizeB; i++, ii++) {
-            //logger::trace("{}: newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
-            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-        }
-    }
-    else if (keep && !replace) {
-        newSizeA = (endIndex - startIndex + 1);
-        newSizeB = (sizeA - newSizeA);
-        newSizeB += sizeB; 
-
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
-        newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
-        newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-        int i = 0;
-        int ii = startIndex;
-        //copy the elements between startIndex and endIndex from array_A to newArray_A
-        for (ii; ii <= endIndex; i++, ii++) {
-            //logger::trace("{}: newArray_A loop1 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
-            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-        }
-
-        i = 0;
-
-        //copy the original elements from array_B to newArray_B as we're merging not replacing
-        for (i; i < sizeB; i++) {
-            //logger::trace("{}: newArray_B loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
-            newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
-        }
-
-        ii = 0;
-
-        //copy the remainder of indexes from array_A to array_B
-        for (ii; ii < startIndex; i++, ii++) {
-            //logger::trace("{}: newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
-            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-        }
-
-        ii = (endIndex + 1);
-
-        for (i; i < newSizeB; i++, ii++) {
-            //logger::trace("{}: newArray_B loop3 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
-            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-        }
-    }
-    else if (!keep && replace) {
-        newSizeB = (endIndex - startIndex + 1);
-        newSizeA = (sizeA - newSizeB);
-
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
-        newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
-        newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-        int i = 0;
-        int ii = startIndex;
-        //copy the elements between startIndex and endIndex from array_A to newArray_B
-        for (ii; ii <= endIndex; i++, ii++) {
-            //logger::trace("{}: newArray_B loop1 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
-            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-        }
-
-        i = 0;
-
-        //copy the remainder of indexes from array_A to newArray_A
-        for (i; i < startIndex; i++) {
-            //logger::trace("{}: newArray_A loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
-            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
-        }
-
-        ii = (endIndex + 1);
-
-        for (i; i < newSizeA; i++, ii++) {
-            //logger::trace("{}: newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
-            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-        }
-    }
-    else if (!keep && !replace) {
-        newSizeB = (endIndex - startIndex + 1);
-        newSizeA = (sizeA - newSizeB);
-        newSizeB += sizeB;
-
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
-        newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
-        newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-        int i = 0;
-
-        //copy the original elements from array_B to newArray_B as we're merging not replacing
-        for (i; i < sizeB; i++) {
-            //logger::trace("{}: newArray_B loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
-            newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
-        }
-
-        int ii = startIndex;
-        //copy the elements between startIndex and endIndex from array_A to newArray_B
-        for (ii; ii <= endIndex; i++, ii++) {
-            //logger::trace("{}: newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
-            newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-        }
-
-        i = 0;
-
-        //copy the remainder of indexes from array_A to newArray_A
-        for (i; i < startIndex; i++) {
-            //logger::trace("{}: newArray_A loop1 i[{}] replace[{}] keep[{}]", __func__, i, replace, keep);
-            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
-        }
-
-        ii = (endIndex + 1);
-
-        for (i; i < newSizeA; i++, ii++) {
-            //logger::trace("{}: newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", __func__, i, ii, replace, keep);
-            newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-        }
-    }
-
-    arrayData_A.arrayProperty->SetNone();
-    arrayData_A.arrayProperty->SetArray(newArray_A);
-
-    arrayData_B.arrayProperty->SetNone();
-    arrayData_B.arrayProperty->SetArray(newArray_B);
-
-    logger::trace("{}: scriptName[{}] array[{}] type[{}] on handle[{}] sliced to \n scriptName[{}] array[{}] type[{}] on handle[{}]", __func__,
-        bsScriptName_A, bsArrayPropertyName_A, className, akHandle_A, bsScriptName_B, bsArrayPropertyName_B, className, akHandle_B);
-
-
-    return (newArray_A->size() == newSizeA && newArray_B->size() == newSizeB);
-}
-
-//==============================================================================================================================================
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
     // Try opening the clipboard
@@ -2896,9 +2126,9 @@ bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType) {
     }
 
     RE::BSTArray<RE::TESForm*>* formArray = &(dataHandler->GetFormArray(static_cast<RE::FormType>(formType)));
-    RE::BSTArray<RE::TESForm*>::iterator itrEndType = formArray->end();
 
-    for (RE::BSTArray<RE::TESForm*>::iterator it = formArray->begin(); it != itrEndType; it++) {
+    int ic = 0;
+    for (RE::BSTArray<RE::TESForm*>::iterator it = formArray->begin(); it != formArray->end() && ic < formArray->size(); it++, ic++) {
         RE::TESForm* akForm = *it;
 
         if (gfuncs::IsFormValid(akForm)) {
@@ -2950,8 +2180,7 @@ std::vector<RE::BSFixedString> GetFormEditorIdsFromList(RE::StaticFunctionTag*, 
 }
 
 std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::TESForm*> akForms, int sortOption) {
-    int numOfForms = akForms.size();
-    if (numOfForms == 0) {
+    if (akForms.size() == 0) {
         return akForms;
     }
 
@@ -2961,7 +2190,7 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
         std::vector<std::string> formNames;
         std::map<std::string, std::vector<RE::TESForm*>> formNamesMap;
 
-        for (int i = 0; i < numOfForms; i++) {
+        for (int i = 0; i < akForms.size(); i++) {
             auto* akForm = akForms[i];
             std::string formName = static_cast<std::string>(gfuncs::GetFormName(akForm, "", "", false));
             formNames.push_back(formName);
@@ -2982,8 +2211,7 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
         }
         formNames.erase(std::unique(formNames.begin(), formNames.end()), formNames.end());
 
-        int m = formNames.size();
-        for (int i = 0; i < m; i++) {
+        for (int i = 0; i < formNames.size(); i++) {
             auto it = formNamesMap.find(formNames[i]);
             if (it != formNamesMap.end()) {
                 auto& v = it->second;
@@ -2997,7 +2225,7 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
         std::vector<std::string> formNames;
         std::map<std::string, std::vector<RE::TESForm*>> formNamesMap;
 
-        for (int i = 0; i < numOfForms; i++) {
+        for (int i = 0; i < akForms.size(); i++) {
             auto* akForm = akForms[i];
             std::string formName = "";
             if (gfuncs::IsFormValid(akForm)) {
@@ -3022,8 +2250,7 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
         }
         formNames.erase(std::unique(formNames.begin(), formNames.end()), formNames.end());
 
-        int m = formNames.size();
-        for (int i = 0; i < m; i++) {
+        for (int i = 0; i < formNames.size(); i++) {
             auto it = formNamesMap.find(formNames[i]);
             if (it != formNamesMap.end()) {
                 auto& v = it->second;
@@ -3037,7 +2264,7 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
         std::vector<int> formIds;
         std::map<int, std::vector<RE::TESForm*>> formIdsMap;
 
-        for (int i = 0; i < numOfForms; i++) {
+        for (int i = 0; i < akForms.size(); i++) {
             auto* akForm = akForms[i];
             int formID = akForm->GetFormID();
             formIds.push_back(formID);
@@ -3059,8 +2286,7 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
 
         formIds.erase(std::unique(formIds.begin(), formIds.end()), formIds.end());
 
-        int m = formIds.size();
-        for (int i = 0; i < m; i++) {
+        for (int i = 0; i < formIds.size(); i++) {
             auto it = formIdsMap.find(formIds[i]);
             if (it != formIdsMap.end()) {
                 auto& v = it->second;
@@ -3109,7 +2335,7 @@ void AddFormsToList(RE::StaticFunctionTag*, std::vector<RE::TESForm*> akForms, R
     }
 
     for (auto* akForm : akForms) {
-        if (gfuncs::IsFormValid(akForm, false)) {
+        if (gfuncs::IsFormValid(akForm)) {
             akFormlist->AddForm(akForm);
         }
     }
@@ -3118,8 +2344,7 @@ void AddFormsToList(RE::StaticFunctionTag*, std::vector<RE::TESForm*> akForms, R
 std::string GetEffectsDescriptions(RE::BSTArray<RE::Effect*> effects) {
     std::string description = "";
 
-    int m = effects.size();
-    for (int i = 0; i < m; i++) {
+    for (int i = 0; i < effects.size(); i++) {
         RE::Effect* effect = effects[i];
         if (effect) {
             std::string s = (static_cast<std::string>(effect->baseEffect->magicItemDescription));
@@ -3355,8 +2580,7 @@ std::vector<RE::BSFixedString> GetLoadedModDescriptions(RE::StaticFunctionTag*, 
 
     if (sortOption == 3 || sortOption == 4) {
         std::vector<std::string> sfileNamesAndDescriptions = GetLoadedModNamesAndDescriptionsAsStrings(sortOption, maxCharacters, overMaxCharacterSuffix, newLineReplacer);
-        int m = sfileNamesAndDescriptions.size();
-        for (int i = 0; i < m; i++) {
+        for (int i = 0; i < sfileNamesAndDescriptions.size(); i++) {
             std::size_t delimIndex = sfileNamesAndDescriptions[i].find("||");
             if (delimIndex != std::string::npos) {
                 delimIndex += 2;
@@ -3376,8 +2600,7 @@ std::vector<RE::BSFixedString> GetLoadedLightModDescriptions(RE::StaticFunctionT
 
     if (sortOption == 3 || sortOption == 4) {
         std::vector<std::string> sfileNamesAndDescriptions = GetLoadedLightModNamesAndDescriptionsAsStrings(sortOption, maxCharacters, overMaxCharacterSuffix, newLineReplacer);
-        int m = sfileNamesAndDescriptions.size();
-        for (int i = 0; i < m; i++) {
+        for (int i = 0; i < sfileNamesAndDescriptions.size(); i++) {
             std::size_t delimIndex = sfileNamesAndDescriptions[i].find("||");
             if (delimIndex != std::string::npos) {
                 delimIndex += 2;
@@ -3397,8 +2620,7 @@ std::vector<RE::BSFixedString> GetAllLoadedModDescriptions(RE::StaticFunctionTag
 
     if (sortOption == 3 || sortOption == 4) {
         std::vector<std::string> sfileNamesAndDescriptions = GetAllLoadedModNamesAndDescriptionsAsStrings(sortOption, maxCharacters, overMaxCharacterSuffix, newLineReplacer);
-        int m = sfileNamesAndDescriptions.size();
-        for (int i = 0; i < m; i++) {
+        for (int i = 0; i < sfileNamesAndDescriptions.size(); i++) {
             auto delimIndex = sfileNamesAndDescriptions[i].find("||");
             if (delimIndex != std::string::npos) {
                 delimIndex += 2;
@@ -3421,9 +2643,9 @@ std::vector<RE::TESQuest*> GetAllActiveQuests(RE::StaticFunctionTag*) {
 
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        int ic = 0;
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
             if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -3488,7 +2710,7 @@ std::vector<RE::TESForm*> GetAllConstructibleObjects(RE::StaticFunctionTag*, RE:
     std::vector<RE::TESForm*> forms;
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
 
-    if (gfuncs::IsFormValid(createdObject, false)) {
+    if (gfuncs::IsFormValid(createdObject)) {
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false)) {
                 RE::BGSConstructibleObject* object = form->As<RE::BGSConstructibleObject>();
@@ -3502,9 +2724,9 @@ std::vector<RE::TESForm*> GetAllConstructibleObjects(RE::StaticFunctionTag*, RE:
     }
     else {
         for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsFormValid(form, false)) {
+            if (gfuncs::IsFormValid(form)) {
                 RE::BGSConstructibleObject* object = form->As<RE::BGSConstructibleObject>();
-                if (gfuncs::IsFormValid(object, false)) {
+                if (gfuncs::IsFormValid(object)) {
                     forms.push_back(form);
                 }
             }
@@ -3519,7 +2741,7 @@ std::vector<RE::TESObjectARMO*> GetAllArmorsForSlotMask(RE::StaticFunctionTag*, 
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
 
     for (auto& [id, form] : *allForms) {
-        if (gfuncs::IsFormValid(form, false)) {
+        if (gfuncs::IsFormValid(form)) {
             RE::TESObjectARMO* armor = form->As<RE::TESObjectARMO>();
             if (gfuncs::IsFormValid(armor)) {
                 int mask = static_cast<int>(armor->GetSlotMask());
@@ -3574,7 +2796,7 @@ std::vector<RE::TESObjectCELL*> GetAllInteriorCells(RE::StaticFunctionTag*, RE::
 
     if (matchMode == 1) {
         for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsFormValid(form, false)) {
+            if (gfuncs::IsFormValid(form)) {
                 RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
                 if (gfuncs::IsFormValid(cell)) {
                     if (cell->IsInteriorCell()) {
@@ -3599,7 +2821,7 @@ std::vector<RE::TESObjectCELL*> GetAllInteriorCells(RE::StaticFunctionTag*, RE::
     }
     else if (matchMode == 0) {
         for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsFormValid(form, false)) {
+            if (gfuncs::IsFormValid(form)) {
                 RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
                 if (gfuncs::IsFormValid(cell)) {
                     if (cell->IsInteriorCell()) {
@@ -3626,7 +2848,7 @@ std::vector<RE::TESObjectCELL*> GetAllInteriorCells(RE::StaticFunctionTag*, RE::
     }
     else {
         for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsFormValid(form, false)) {
+            if (gfuncs::IsFormValid(form)) {
                 RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
                 if (gfuncs::IsFormValid(cell)) {
                     if (cell->IsInteriorCell()) {
@@ -3656,7 +2878,7 @@ std::vector<RE::TESObjectCELL*> GetAllExteriorCells(RE::StaticFunctionTag*, RE::
 
     if (matchMode == 1) {
         for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsFormValid(form, false)) {
+            if (gfuncs::IsFormValid(form)) {
                 RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
                 if (gfuncs::IsFormValid(cell)) {
                     if (cell->IsExteriorCell()) {
@@ -3681,7 +2903,7 @@ std::vector<RE::TESObjectCELL*> GetAllExteriorCells(RE::StaticFunctionTag*, RE::
     }
     else if (matchMode == 0) {
         for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsFormValid(form, false)) {
+            if (gfuncs::IsFormValid(form)) {
                 RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
                 if (gfuncs::IsFormValid(cell)) {
                     if (cell->IsExteriorCell()) {
@@ -3708,7 +2930,7 @@ std::vector<RE::TESObjectCELL*> GetAllExteriorCells(RE::StaticFunctionTag*, RE::
     }
     else {
         for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsFormValid(form, false)) {
+            if (gfuncs::IsFormValid(form)) {
                 RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
                 if (gfuncs::IsFormValid(cell)) {
                     if (cell->IsExteriorCell()) {
@@ -3728,7 +2950,7 @@ std::vector<RE::TESObjectCELL*> GetAttachedCells(RE::StaticFunctionTag*) {
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
 
     for (auto& [id, form] : *allForms) {
-        if (gfuncs::IsFormValid(form, false)) {
+        if (gfuncs::IsFormValid(form)) {
             RE::TESObjectCELL* cell = form->As<RE::TESObjectCELL>();
             if (gfuncs::IsFormValid(cell)) {
                 if (cell->IsAttached()) {
@@ -3745,14 +2967,16 @@ std::vector<RE::TESForm*> GetFavorites(RE::StaticFunctionTag*, std::vector<int> 
 
     std::vector<RE::TESForm*> forms;
 
-    auto inventory = gfuncs::playerRef->GetInventory();
+    auto inventory = playerRef->GetInventory();
 
     if (inventory.size() == 0) {
         return forms;
     }
 
+    int ic = 0;
+
     if (formTypes.size() > 0 && formTypeMatchMode == 1) {
-        for (auto it = inventory.begin(); it != inventory.end(); it++) {
+        for (auto it = inventory.begin(); it != inventory.end() && ic < inventory.size(); it++, ic++) {
             auto invData = it->second.second.get();
             if (invData) {
                 if (invData->IsFavorited()) {
@@ -3773,7 +2997,7 @@ std::vector<RE::TESForm*> GetFavorites(RE::StaticFunctionTag*, std::vector<int> 
         }
     }
     else if (formTypes.size() > 0 && formTypeMatchMode == 0) {
-        for (auto it = inventory.begin(); it != inventory.end(); it++) {
+        for (auto it = inventory.begin(); it != inventory.end() && ic < inventory.size(); it++, ic++) {
             auto invData = it->second.second.get();
             if (invData) {
                 if (invData->IsFavorited()) {
@@ -3798,7 +3022,7 @@ std::vector<RE::TESForm*> GetFavorites(RE::StaticFunctionTag*, std::vector<int> 
         }
     }
     else {
-        for (auto it = inventory.begin(); it != inventory.end(); it++) {
+        for (auto it = inventory.begin(); it != inventory.end() && ic < inventory.size(); it++, ic++) {
             auto invData = it->second.second.get();
             if (invData) {
                 if (invData->IsFavorited()) {
@@ -3966,9 +3190,9 @@ std::vector<RE::BGSBaseAlias*> GetAllAliasesWithScriptAttached(RE::StaticFunctio
 
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+        int ic = 0;
 
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
             if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -3998,10 +3222,10 @@ std::vector<RE::BGSRefAlias*> GetAllRefAliasesWithScriptAttached(RE::StaticFunct
 
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
+        int ic = 0;
         if (onlyQuestObjects && onlyFilled) {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
                 RE::TESForm* baseForm = *itr;
                 if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -4029,7 +3253,7 @@ std::vector<RE::BGSRefAlias*> GetAllRefAliasesWithScriptAttached(RE::StaticFunct
             }
         }
         else if (onlyQuestObjects) {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
                 RE::TESForm* baseForm = *itr;
                 if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -4054,7 +3278,7 @@ std::vector<RE::BGSRefAlias*> GetAllRefAliasesWithScriptAttached(RE::StaticFunct
             }
         }
         else if (onlyFilled) {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
                 RE::TESForm* baseForm = *itr;
                 if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -4080,7 +3304,7 @@ std::vector<RE::BGSRefAlias*> GetAllRefAliasesWithScriptAttached(RE::StaticFunct
             }
         }
         else {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
                 RE::TESForm* baseForm = *itr;
                 if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -4114,10 +3338,10 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
 
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
+        int ic = 0;
 
         if (onlyQuestObjects && onlyFilled) {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
                 RE::TESForm* baseForm = *itr;
                 if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -4142,7 +3366,7 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
             }
         }
         else if (onlyQuestObjects) {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
                 RE::TESForm* baseForm = *itr;
                 if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -4164,7 +3388,7 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
             }
         }
         else if (onlyFilled) {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
                 RE::TESForm* baseForm = *itr;
                 if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -4187,7 +3411,7 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
             }
         }
         else {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
                 RE::TESForm* baseForm = *itr;
                 if (gfuncs::IsFormValid(baseForm)) {
                     RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
@@ -4218,8 +3442,9 @@ std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {
 
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        int ic = 0;
+
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -4271,7 +3496,9 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
         logger::debug("{} number of quests is {}", __func__, akArray->size());
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        int ic = 0;
+
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -6703,8 +5930,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileRefsOfType(RE::StaticFunctio
 // ==================================================================================================================================================================================
 
 RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
-    if (gfuncs::IsFormValid(gfuncs::lastPlayerActivatedRef)) {
-        return gfuncs::lastPlayerActivatedRef;
+    if (gfuncs::IsFormValid(lastPlayerActivatedRef)) {
+        return lastPlayerActivatedRef;
     }
     else {
         return nullptr;
@@ -6712,8 +5939,8 @@ RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
 }
 
 RE::TESObjectREFR* GetLastPlayerMenuActivatedRef(RE::StaticFunctionTag*) {
-    if (gfuncs::IsFormValid(gfuncs::menuRef)) {
-        return gfuncs::menuRef;
+    if (gfuncs::IsFormValid(menuRef)) {
+        return menuRef;
     }
     else {
         return nullptr;
@@ -6820,19 +6047,6 @@ bool IsGamePaused(RE::StaticFunctionTag*) {
 
 bool IsInMenu(RE::StaticFunctionTag*) {
     return inMenuMode;
-}
-
-bool IsMenuOpen(RE::StaticFunctionTag*, std::string menuName) {
-    std::transform(menuName.begin(), menuName.end(), menuName.begin(), tolower);
-
-    for (auto& menu : menusCurrentlyOpen) {
-        std::string sMenu = menu.c_str();
-        std::transform(sMenu.begin(), sMenu.end(), sMenu.begin(), tolower);
-        if (sMenu == menuName) {
-            return true;
-        }
-    }
-    return false;
 }
 
 std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
@@ -7168,6 +6382,7 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
         return allMapMarkers;
     }
 
+    int ic = 0;
     if (visibleFilter == 1 && canTravelToFilter == 1) {
         for (auto& mapMarker : *playerMapMarkers) {
             if (mapMarker) {
@@ -7187,6 +6402,10 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
                         }
                     }
                 }
+            }
+            ic++;
+            if (ic >= playerMapMarkers->size()) {
+                break;
             }
         }
     }
@@ -7210,6 +6429,10 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
                     }
                 }
             }
+            ic++;
+            if (ic >= playerMapMarkers->size()) {
+                break;
+            }
         }
     }
     else if (visibleFilter == 0 && canTravelToFilter == 1) {
@@ -7231,6 +6454,10 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
                         }
                     }
                 }
+            }
+            ic++;
+            if (ic >= playerMapMarkers->size()) {
+                break;
             }
         }
     }
@@ -7254,6 +6481,10 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
                     }
                 }
             }
+            ic++;
+            if (ic >= playerMapMarkers->size()) {
+                break;
+            }
         }
     }
     else if (canTravelToFilter == 1) {
@@ -7273,6 +6504,10 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
                         }
                     }
                 }
+            }
+            ic++;
+            if (ic >= playerMapMarkers->size()) {
+                break;
             }
         }
     }
@@ -7294,6 +6529,10 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
                     }
                 }
             }
+            ic++;
+            if (ic >= playerMapMarkers->size()) {
+                break;
+            }
         }
     }
     else if (visibleFilter == 1) {
@@ -7313,6 +6552,10 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
                         }
                     }
                 }
+            }
+            ic++;
+            if (ic >= playerMapMarkers->size()) {
+                break;
             }
         }
     }
@@ -7334,6 +6577,10 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
                     }
                 }
             }
+            ic++;
+            if (ic >= playerMapMarkers->size()) {
+                break;
+            }
         }
     }
     else {
@@ -7351,6 +6598,10 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
                         }
                     }
                 }
+            }
+            ic++;
+            if (ic >= playerMapMarkers->size()) {
+                break;
             }
         }
     }
@@ -7643,13 +6894,11 @@ RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* musicTypeArray = &(dataHandler->GetFormArray(RE::FormType::MusicType));
 
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = musicTypeArray->end();
-
         RE::BSIMusicTrack* currentPriorityTrack = nullptr;
         std::int8_t currentPriority = 127;
+        int ic = 0;
 
-
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = musicTypeArray->begin(); itr != itrEndType; itr++) {
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = musicTypeArray->begin(); itr != musicTypeArray->end() && ic < musicTypeArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -7743,11 +6992,11 @@ std::vector<RE::EnchantmentItem*> GetKnownEnchantments(RE::StaticFunctionTag*) {
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
     RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
-    RE::BSTArray<RE::TESForm*>::iterator itrEndType = enchantmentArray->end();
 
     logger::debug("{} enchantmentArray size[{}]", __func__, enchantmentArray->size());
+    int ic = 0;
 
-    for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != itrEndType; it++) {
+    for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != enchantmentArray->end() && ic < enchantmentArray->size(); it++, ic++) {
         RE::TESForm* baseForm = *it;
 
         if (gfuncs::IsFormValid(baseForm)) {
@@ -7777,11 +7026,11 @@ void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akL
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
     RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
-    RE::BSTArray<RE::TESForm*>::iterator itrEndType = enchantmentArray->end();
 
     logger::debug("{} enchantmentArray size[{}]", __func__, enchantmentArray->size());
+    int ic = 0;
 
-    for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != itrEndType; it++) {
+    for (RE::BSTArray<RE::TESForm*>::iterator it = enchantmentArray->begin(); it != enchantmentArray->end() && ic < enchantmentArray->size(); it++, ic++) {
         RE::TESForm* baseForm = *it;
 
         if (gfuncs::IsFormValid(baseForm)) {
@@ -7830,7 +7079,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
 
     word = akShout->variations[1].word;
     if (gfuncs::IsFormValid(word)) {
-        //gfuncs::playerRef->UnlockWord(word);
+        //playerRef->UnlockWord(word);
         logger::debug("{} unlock word 2 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
         ExecuteConsoleCommand(nullptr, command, nullptr);
@@ -7839,7 +7088,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
 
     word = akShout->variations[2].word;
     if (gfuncs::IsFormValid(word)) {
-        //gfuncs::playerRef->UnlockWord(word);
+        //playerRef->UnlockWord(word);
         logger::debug("{} unlock word 3 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
         ExecuteConsoleCommand(nullptr, command, nullptr);
@@ -7854,10 +7103,9 @@ void AddAndUnlockAllShouts(RE::StaticFunctionTag*, int minNumberOfWordsWithTrans
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Shout));
 
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
-
+        int ic = 0;
         //loop through all shouts
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
             if (gfuncs::IsFormValid(baseForm)) {
                 RE::TESShout* akShout = baseForm->As<RE::TESShout>();
@@ -7918,10 +7166,8 @@ RE::TESObjectBOOK* GetSpellTomeForSpell(RE::StaticFunctionTag*, RE::SpellItem* a
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
 
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
-
-
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        int ic = 0;
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -7951,10 +7197,8 @@ std::vector<RE::TESObjectBOOK*> GetSpellTomesForSpell(RE::StaticFunctionTag*, RE
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
 
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
-
-
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        int ic = 0;
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -7987,9 +7231,8 @@ void AddSpellTomesForSpellToList(RE::StaticFunctionTag*, RE::SpellItem* akSpell,
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
 
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
-
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        int ic = 0;
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -8068,10 +7311,8 @@ std::vector<RE::TESObjectBOOK*> GetSkillBooksForSkill(RE::StaticFunctionTag*, st
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
 
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
-
-
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        int ic = 0;
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -8107,10 +7348,8 @@ void AddSkillBookForSkillToList(RE::StaticFunctionTag*, std::string actorValue, 
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
 
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
-
-
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        int ic = 0;
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -8160,9 +7399,8 @@ void SetAllBooksRead(RE::StaticFunctionTag*, bool read) {
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
 
-        RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
-
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != itrEndType; itr++) {
+        int ic = 0;
+        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
             RE::TESForm* baseForm = *itr;
 
             if (gfuncs::IsFormValid(baseForm)) {
@@ -8238,8 +7476,7 @@ std::vector<RE::EffectSetting*> GetMagicEffectsForForm(RE::StaticFunctionTag*, R
         return akEffects;
     }
 
-    int m = magicItem->effects.size();
-    for (int i = 0; i < m; i++) {
+    for (int i = 0; i < magicItem->effects.size(); i++) {
         RE::EffectSetting* effect = magicItem->effects[i]->baseEffect;
         if (gfuncs::IsFormValid(effect)) {
             akEffects.push_back(effect);
@@ -8763,7 +8000,7 @@ RE::BGSKeyword* CreateKeyword(RE::StaticFunctionTag*) {
     logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSKeyword>()->Create();
-    if (!gfuncs::IsFormValid(newForm, false)) {
+    if (!gfuncs::IsFormValid(newForm)) {
         logger::warn("{} failed", __func__);
     }
     else {
@@ -8777,7 +8014,7 @@ RE::BGSListForm* CreateFormList(RE::StaticFunctionTag*, RE::BGSListForm* formLis
     logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSListForm>()->Create();
-    if (!gfuncs::IsFormValid(newForm, false)) {
+    if (!gfuncs::IsFormValid(newForm)) {
         logger::error("{} failed", __func__);
     }
     else {
@@ -8799,7 +8036,7 @@ RE::BGSColorForm* CreateColorForm(RE::StaticFunctionTag*, int color) {
     logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSColorForm>()->Create();
-    if (!gfuncs::IsFormValid(newForm, false)) {
+    if (!gfuncs::IsFormValid(newForm)) {
         logger::error("{} failed", __func__);
     }
     else {
@@ -8815,7 +8052,7 @@ RE::BGSConstructibleObject* CreateConstructibleObject(RE::StaticFunctionTag*) {
 
     //RE::BGSConstructibleObject
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSConstructibleObject>()->Create();
-    if (!gfuncs::IsFormValid(newForm, false)) {
+    if (!gfuncs::IsFormValid(newForm)) {
         logger::error("{} failed", __func__);
     }
     else {
@@ -8829,7 +8066,7 @@ RE::BGSTextureSet* CreateTextureSet(RE::StaticFunctionTag*) {
     logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSTextureSet>()->Create();
-    if (!gfuncs::IsFormValid(newForm, false)) {
+    if (!gfuncs::IsFormValid(newForm)) {
         logger::error("{} failed", __func__);
     }
     else {
@@ -8843,7 +8080,7 @@ RE::TESSound* CreateSoundMarker(RE::StaticFunctionTag*) {
     logger::trace("{} called", __func__);
 
     auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::TESSound>()->Create();
-    if (!gfuncs::IsFormValid(newForm, false)) {
+    if (!gfuncs::IsFormValid(newForm)) {
         logger::error("{} failed", __func__);
     }
     else {
@@ -9123,7 +8360,7 @@ void SetDbSkseCppCallbackEventsAttached(RE::StaticFunctionTag*) {
 }
 
 void DbSkseCppCallbackLoad() {
-    //if (!IsScriptAttachedToRef(gfuncs::playerRef, "DbSkseCppCallbackEvents")) {
+    //if (!IsScriptAttachedToRef(playerRef, "DbSkseCppCallbackEvents")) {
     //    logger::debug("{} attaching DbSkseCppCallbackEvents script to the player.", __func__);
     //    ExecuteConsoleCommand(nullptr, "player.aps DbSkseCppCallbackEvents", nullptr);
     //}
@@ -9162,14 +8399,10 @@ struct MenuModeTimer {
             if (!cancelled) {
                 float elapsedTime = (savedTimeElapsed + gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
                 auto* args = RE::MakeFunctionArguments((int)timerID);
-                gfuncs::svm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
+                svm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
                 delete args;
                 logger::debug("menu mode timer event sent. ID[{}], interval[{}], elapsed time[{}]", timerID, interval, elapsedTime);
             }
-
-            //while (erasingMenuModeTimers) { //only 1 thread should call EraseFinishedMenuModeTimers at a time.
-            //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-            //}
 
             finished = true;
             EraseFinishedMenuModeTimers();
@@ -9195,32 +8428,12 @@ struct MenuModeTimer {
 };
 
 std::vector<MenuModeTimer*> currentMenuModeTimers;
+std::mutex currentMenuModeTimersMutex;
 
-void EraseFinishedMenuModeTimers_B() {
-    if (currentMenuModeTimers.size() == 0) {
-        return;
-    }
-
-    erasingMenuModeTimers = true;
-
-    for (auto it = currentMenuModeTimers.begin(); it != currentMenuModeTimers.end(); ) {
-        auto* timer = *it;
-        if (timer) {
-            if (timer->finished) {
-                delete timer;
-                timer = nullptr;
-                it = currentMenuModeTimers.erase(it);
-                logger::debug("erased menuModeTimer, Timers left = {}", currentMenuModeTimers.size());
-            }
-            else {
-                ++it;
-            }
-        }
-        else { //safety, this shouldn't occure.
-            it = currentMenuModeTimers.erase(it);
-        }
-    }
-    erasingMenuModeTimers = false;
+void AddToCurrentMenuModeTimers(MenuModeTimer* timer) {
+    currentMenuModeTimersMutex.lock();
+    currentMenuModeTimers.push_back(timer);
+    currentMenuModeTimersMutex.unlock();
 }
 
 void EraseFinishedMenuModeTimers() {
@@ -9228,21 +8441,26 @@ void EraseFinishedMenuModeTimers() {
         return;
     }
 
+    currentMenuModeTimersMutex.lock();
     erasingMenuModeTimers = true;
 
-    for (auto* timer : currentMenuModeTimers) {
+    for (int i = 0; i < currentMenuModeTimers.size(); i++) {
+        auto* timer = currentMenuModeTimers[i];
         if (timer) {
             if (timer->finished) {
-                gfuncs::RemoveFromVectorByValue(currentMenuModeTimers, timer);
                 delete timer;
                 timer = nullptr;
-                logger::debug("erased menuModeTimer, Timers left = {}", currentMenuModeTimers.size());
+                //logger::trace("erased menuModeTimer, Timers left = {}", currentMenuModeTimers.size());
             }
         }
-        else {
-            gfuncs::RemoveFromVectorByValue(currentMenuModeTimers, timer);
+
+        if (!timer) {
+            auto it = currentMenuModeTimers.begin() + i;
+            currentMenuModeTimers.erase(it);
+            i--; //move i back 1 cause 1 timer was just erased
         }
     }
+    currentMenuModeTimersMutex.unlock();
     erasingMenuModeTimers = false;
 }
 
@@ -9251,15 +8469,22 @@ MenuModeTimer* GetTimer(std::vector<MenuModeTimer*>& v, RE::VMHandle akHandle, i
         return nullptr;
     }
 
-    for (auto* timer : v) {
+    currentMenuModeTimersMutex.lock();
+
+    for (int i = 0; i < v.size(); i++) {
+        auto* timer = v[i];
         if (timer) {
             if (!timer->cancelled && !timer->finished) {
                 if (timer->handle == akHandle && timer->timerID == aiTimerID) {
+                    currentMenuModeTimersMutex.unlock();
                     return timer;
                 }
             }
         }
     }
+
+
+    currentMenuModeTimersMutex.unlock();
     return nullptr;
 }
 
@@ -9276,6 +8501,8 @@ bool SaveTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
         return false;
     }
 
+    currentMenuModeTimersMutex.lock();
+
     for (auto* timer : v) {
         if (timer) {
             float timeLeft = timer->GetTimeLeft();
@@ -9283,31 +8510,43 @@ bool SaveTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
 
             if (!a_intfc->WriteRecordData(timeLeft)) {
                 logger::error("{}: record[{}] Failed to write time left", __func__, record);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timeElapsed)) {
                 logger::error("{}: record[{}] Failed to write time elapsed", __func__, record);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->handle)) {
                 logger::error("{}: record[{}] Failed to write handle[{}]", __func__, record, timer->handle);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->timerID)) {
                 logger::error("{}: record[{}] Failed to write timerID[{}]", __func__, record, timer->timerID);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->cancelled)) {
                 logger::error("{}: record[{}] Failed to write cancelled[{}]", __func__, record, timer->cancelled);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->finished)) {
                 logger::error("{}: record[{}] Failed to write finished[{}]", __func__, record, timer->finished);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
@@ -9324,35 +8563,49 @@ bool SaveTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
 
             if (!a_intfc->WriteRecordData(noTimerTimeLeft)) {
                 logger::error("{}: record[{}] Failed to write no Timer Time Left", __func__, record);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(noTimerTimeElapsed)) {
                 logger::error("{}: record[{}] Failed to write no Timer Time Elapsed", __func__, record);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(handle)) {
                 logger::error("{}: record[{}] Failed to write no timer handle", __func__, record);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(ID)) {
                 logger::error("{}: record[{}] Failed to write no timer Id", __func__, record);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(cancelled)) {
                 logger::error("{}: record[{}] Failed to write no timer cancelled[{}]", __func__, record, cancelled);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(finished)) {
                 logger::error("{}: record[{}] Failed to write no timer finished[{}]", __func__, record, finished);
+
+                currentMenuModeTimersMutex.unlock();
                 return false;
             }
         }
     }
+
+    currentMenuModeTimersMutex.unlock();
     return true;
 }
 
@@ -9362,6 +8615,8 @@ bool loadTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
         logger::error("{}: record[{}] Failed to load size of MenuModeTimers!", __func__, record);
         return false;
     }
+
+    currentMenuModeTimersMutex.lock();
 
     if (v.size() > 0) { //cancel current timers
         for (auto* timer : v) {
@@ -9381,31 +8636,43 @@ bool loadTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
 
         if (!a_intfc->ReadRecordData(timeLeft)) {
             logger::error("{}: {}: MenuModeTimer Failed to load timeLeft!", __func__, i);
+
+            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(timeElapsed)) {
             logger::error("{}: {}: MenuModeTimer Failed to load timeElapsed!", __func__, i);
+
+            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(handle)) {
             logger::error("{}: {}: MenuModeTimer Failed to load handle!", __func__, i);
+
+            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(ID)) {
             logger::error("{}: {}: MenuModeTimer Failed to load ID!", __func__, i);
+
+            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(cancelled)) {
             logger::error("{}: {}: MenuModeTimer Failed to load cancelled!", __func__, i);
+
+            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(finished)) {
             logger::error("{}: {}: MenuModeTimer Failed to load finished!", __func__, i);
+
+            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
@@ -9424,6 +8691,8 @@ bool loadTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
         logger::debug("MenuModeTimer loaded: timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
             timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
     }
+
+    currentMenuModeTimersMutex.unlock();
     return true;
 }
 
@@ -9490,7 +8759,7 @@ struct NoMenuModeTimer {
                 if (currentInterval <= 0.0 && !cancelled) {
                     float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
                     auto* args = RE::MakeFunctionArguments((int)timerID);
-                    gfuncs::svm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
+                    svm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
                     delete args;
                     logger::debug("NoMenuModeTimer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
                         timerID, initInterval, totalTimePaused, elapsedTime);
@@ -9535,12 +8804,21 @@ struct NoMenuModeTimer {
 };
 
 std::vector<NoMenuModeTimer*> currentNoMenuModeTimers;
+std::mutex currentNoMenuModeTimersMutex;
+
+void AddToCurrentNoMenuModeTimers(NoMenuModeTimer* timer) {
+    currentNoMenuModeTimersMutex.lock();
+    currentNoMenuModeTimers.push_back(timer);
+    currentNoMenuModeTimersMutex.unlock();
+}
 
 //called after menu close event if game not paused
 void UpdateNoMenuModeTimers(float timeElapsedWhilePaused) {
     if (currentNoMenuModeTimers.size() == 0) {
         return;
     }
+
+    currentNoMenuModeTimersMutex.lock();
 
     for (auto* noMenuModeTimer : currentNoMenuModeTimers) {
         if (noMenuModeTimer) {
@@ -9555,33 +8833,7 @@ void UpdateNoMenuModeTimers(float timeElapsedWhilePaused) {
             }
         }
     }
-}
-
-void EraseFinishedNoMenuModeTimers_B() {
-    if (currentNoMenuModeTimers.size() == 0) {
-        return;
-    }
-
-    erasingNoMenuModeTimers = true;
-
-    for (auto it = currentNoMenuModeTimers.begin(); it != currentNoMenuModeTimers.end(); ) {
-        auto* noMenuModeTimer = *it;
-        if (noMenuModeTimer) {
-            if (noMenuModeTimer->canDelete) {
-                delete noMenuModeTimer;
-                noMenuModeTimer = nullptr;
-                it = currentNoMenuModeTimers.erase(it);
-                logger::debug("erased NoMenuModeTimer, NoMenuModeTimers left = {}", currentNoMenuModeTimers.size());
-            }
-            else {
-                ++it;
-            }
-        }
-        else { //safety, this shouldn't occure.
-            it = currentNoMenuModeTimers.erase(it);
-        }
-    }
-    erasingNoMenuModeTimers = false;
+    currentNoMenuModeTimersMutex.unlock();
 }
 
 void EraseFinishedNoMenuModeTimers() {
@@ -9589,22 +8841,29 @@ void EraseFinishedNoMenuModeTimers() {
         return;
     }
 
+    currentNoMenuModeTimersMutex.lock();
     erasingNoMenuModeTimers = true;
 
-    for (auto* timer : currentNoMenuModeTimers) {
+
+    for (int i = 0; i < currentNoMenuModeTimers.size(); i++) {
+        auto* timer = currentNoMenuModeTimers[i];
         if (timer) {
-            if (timer->canDelete) {
-                gfuncs::RemoveFromVectorByValue(currentNoMenuModeTimers, timer);
+            if (timer->finished) {
                 delete timer;
                 timer = nullptr;
-                logger::debug("erased NoMenuModeTimer, Timers left = {}", currentNoMenuModeTimers.size());
+                //logger::trace("erased noMenuModeTimer, Timers left = {}", currentNoMenuModeTimers.size());
             }
         }
-        else {
-            gfuncs::RemoveFromVectorByValue(currentNoMenuModeTimers, timer);
+
+        if (!timer) {
+            auto it = currentNoMenuModeTimers.begin() + i;
+            currentNoMenuModeTimers.erase(it);
+            i--; //move i back 1 cause 1 timer was just erased
         }
     }
     erasingNoMenuModeTimers = false;
+    currentNoMenuModeTimersMutex.unlock();
+
 }
 
 NoMenuModeTimer* GetTimer(std::vector<NoMenuModeTimer*>& v, RE::VMHandle akHandle, int aiTimerID) {
@@ -9612,15 +8871,21 @@ NoMenuModeTimer* GetTimer(std::vector<NoMenuModeTimer*>& v, RE::VMHandle akHandl
         return nullptr;
     }
 
-    for (auto* noMenuModeTimer : v) {
-        if (noMenuModeTimer) {
-            if (!noMenuModeTimer->cancelled && !noMenuModeTimer->finished) {
-                if (noMenuModeTimer->handle == akHandle && noMenuModeTimer->timerID == aiTimerID) {
-                    return noMenuModeTimer;
+    currentNoMenuModeTimersMutex.lock();
+
+    for (int i = 0; i < v.size(); i++) {
+        auto* timer = v[i];
+        if (timer) {
+            if (!timer->cancelled && !timer->finished) {
+                if (timer->handle == akHandle && timer->timerID == aiTimerID) {
+                    currentNoMenuModeTimersMutex.unlock();
+                    return timer;
                 }
             }
         }
     }
+
+    currentNoMenuModeTimersMutex.unlock();
     return nullptr;
 }
 
@@ -9637,6 +8902,9 @@ bool SaveTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
         return false;
     }
 
+    currentNoMenuModeTimersMutex.lock();
+
+
     for (auto* timer : v) {
         if (timer) {
             float timeLeft = timer->GetTimeLeft();
@@ -9644,31 +8912,43 @@ bool SaveTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
 
             if (!a_intfc->WriteRecordData(timeLeft)) {
                 logger::error("{}: record[{}] Failed to write time left", __func__, record);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timeElapsed)) {
                 logger::error("{}: record[{}] Failed to write time elapsed", __func__, record);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->handle)) {
                 logger::error("{}: record[{}] Failed to write handle[{}]", __func__, record, timer->handle);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->timerID)) {
                 logger::error("{}: record[{}] Failed to write timerID[{}]", __func__, record, timer->timerID);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->cancelled)) {
                 logger::error("{}: record[{}] Failed to write cancelled[{}]", __func__, record, timer->cancelled);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->finished)) {
                 logger::error("{}: record[{}] Failed to write finished[{}]", __func__, record, timer->finished);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
@@ -9685,35 +8965,49 @@ bool SaveTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
 
             if (!a_intfc->WriteRecordData(noTimerTimeLeft)) {
                 logger::error("{}: record[{}] Failed to write no Timer Time Left", __func__, record);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(noTimerTimeElapsed)) {
                 logger::error("{}: record[{}] Failed to write no Timer Time Elapsed", __func__, record);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(handle)) {
                 logger::error("{}: record[{}] Failed to write no timer handle", __func__, record);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(ID)) {
                 logger::error("{}: record[{}] Failed to write no timer Id", __func__, record);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(cancelled)) {
                 logger::error("{}: record[{}] Failed to write no timer cancelled[{}]", __func__, record, cancelled);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(finished)) {
                 logger::error("{}: record[{}] Failed to write no timer finished[{}]", __func__, record, finished);
+
+                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
         }
     }
+
+    currentNoMenuModeTimersMutex.unlock();
     return true;
 }
 
@@ -9723,6 +9017,8 @@ bool loadTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
         logger::error("{}: record[{}] Failed to load size of MenuModeTimers!", __func__, record);
         return false;
     }
+
+    currentNoMenuModeTimersMutex.lock();
 
     if (v.size() > 0) { //cancel current timers
         for (auto* timer : v) {
@@ -9742,31 +9038,43 @@ bool loadTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
 
         if (!a_intfc->ReadRecordData(timeLeft)) {
             logger::error("{}: {}: MenuModeTimer Failed to load timeLeft!", __func__, i);
+
+            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(timeElapsed)) {
             logger::error("{}: {}: MenuModeTimer Failed to load timeElapsed!", __func__, i);
+
+            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(handle)) {
             logger::error("{}: {}: MenuModeTimer Failed to load handle!", __func__, i);
+
+            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(ID)) {
             logger::error("{}: {}: MenuModeTimer Failed to load ID!", __func__, i);
+
+            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(cancelled)) {
             logger::error("{}: {}: MenuModeTimer Failed to load cancelled!", __func__, i);
+
+            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(finished)) {
             logger::error("{}: {}: MenuModeTimer Failed to load finished!", __func__, i);
+
+            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
@@ -9785,6 +9093,8 @@ bool loadTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
         logger::debug("NoMenuModeTimer loaded: timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
             timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
     }
+
+    currentNoMenuModeTimersMutex.unlock();
     return true;
 }
 
@@ -9852,7 +9162,7 @@ struct Timer {
                 if (currentInterval <= 0.0 && !cancelled) {
                     float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
                     auto* args = RE::MakeFunctionArguments((int)timerID);
-                    gfuncs::svm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
+                    svm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
                     delete args;
                     logger::debug("timer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
                         timerID, initInterval, totalTimePaused, elapsedTime);
@@ -9873,7 +9183,10 @@ struct Timer {
                 //}
 
                 canDelete = true;
+
                 EraseFinishedTimers();
+                /*std::thread tEraseFinishedTimers(EraseFinishedTimers);
+                tEraseFinishedTimers.join();*/
             }
             });
         t.detach();
@@ -9901,6 +9214,13 @@ struct Timer {
 };
 
 std::vector<Timer*> currentTimers;
+std::mutex currentTimersMutex;
+
+void AddTimerToCurrentTimers(Timer* timer) {
+    currentTimersMutex.lock();
+    currentTimers.push_back(timer);
+    currentTimersMutex.unlock();
+}
 
 //called after menu close event if game not paused
 void UpdateTimers(float timeElapsedWhilePaused) {
@@ -9908,6 +9228,7 @@ void UpdateTimers(float timeElapsedWhilePaused) {
         return;
     }
 
+    currentTimersMutex.lock();
     for (auto* timer : currentTimers) {
         if (timer) {
             if (!timer->cancelled && !timer->finished) {
@@ -9921,33 +9242,7 @@ void UpdateTimers(float timeElapsedWhilePaused) {
             }
         }
     }
-}
-
-void EraseFinishedTimers_B() {
-    if (currentTimers.size() == 0) {
-        return;
-    }
-
-    erasingTimers = true;
-
-    for (auto it = currentTimers.begin(); it != currentTimers.end(); ) {
-        auto* timer = *it;
-        if (timer) {
-            if (timer->canDelete) {
-                delete timer;
-                timer = nullptr;
-                it = currentTimers.erase(it);
-                logger::debug("erased Timer, Timers left = {}", currentTimers.size());
-            }
-            else {
-                ++it;
-            }
-        }
-        else { //safety, this shouldn't occure.
-            it = currentTimers.erase(it);
-        }
-    }
-    erasingTimers = false;
+    currentTimersMutex.unlock();
 }
 
 void EraseFinishedTimers() {
@@ -9955,21 +9250,26 @@ void EraseFinishedTimers() {
         return;
     }
 
+    currentTimersMutex.lock();
     erasingTimers = true;
 
-    for (auto* timer : currentTimers) {
+    for (int i = 0; i < currentTimers.size(); i++) {
+        auto* timer = currentTimers[i];
         if (timer) {
-            if (timer->canDelete) {
-                gfuncs::RemoveFromVectorByValue(currentTimers, timer);
+            if (timer->finished) {
                 delete timer;
                 timer = nullptr;
-                logger::debug("erased timer, Timers left = {}", currentTimers.size());
+                //logger::trace("erased noMenuModeTimer, Timers left = {}", currentTimers.size());
             }
         }
-        else {
-            gfuncs::RemoveFromVectorByValue(currentTimers, timer);
+
+        if (!timer) {
+            auto it = currentTimers.begin() + i;
+            currentTimers.erase(it);
+            i--; //move i back 1 cause 1 timer was just erased
         }
     }
+    currentTimersMutex.unlock();
     erasingTimers = false;
 }
 
@@ -9978,15 +9278,21 @@ Timer* GetTimer(std::vector<Timer*>& v, RE::VMHandle akHandle, int aiTimerID) {
         return nullptr;
     }
 
-    for (auto* timer : v) {
+    currentTimersMutex.lock();
+
+    for (int i = 0; i < v.size(); i++) {
+        auto* timer = v[i];
         if (timer) {
             if (!timer->cancelled && !timer->finished) {
                 if (timer->handle == akHandle && timer->timerID == aiTimerID) {
+                    currentTimersMutex.unlock();
                     return timer;
                 }
             }
         }
     }
+
+    currentTimersMutex.unlock();
     return nullptr;
 }
 
@@ -10003,6 +9309,8 @@ bool SaveTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
         return false;
     }
 
+    currentTimersMutex.lock();
+
     for (auto* timer : v) {
         if (timer) {
             float timeLeft = timer->GetTimeLeft();
@@ -10010,31 +9318,43 @@ bool SaveTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
 
             if (!a_intfc->WriteRecordData(timeLeft)) {
                 logger::error("{}: record[{}] Failed to write time left", __func__, record);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timeElapsed)) {
                 logger::error("{}: record[{}] Failed to write time elapsed", __func__, record);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->handle)) {
                 logger::error("{}: record[{}] Failed to write handle[{}]", __func__, record, timer->handle);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->timerID)) {
                 logger::error("{}: record[{}] Failed to write timerID[{}]", __func__, record, timer->timerID);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->cancelled)) {
                 logger::error("{}: record[{}] Failed to write cancelled[{}]", __func__, record, timer->cancelled);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->finished)) {
                 logger::error("{}: record[{}] Failed to write finished[{}]", __func__, record, timer->finished);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
@@ -10051,35 +9371,49 @@ bool SaveTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
 
             if (!a_intfc->WriteRecordData(noTimerTimeLeft)) {
                 logger::error("{}: record[{}] Failed to write no Timer Time Left", __func__, record);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(noTimerTimeElapsed)) {
                 logger::error("{}: record[{}] Failed to write no Timer Time Elapsed", __func__, record);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(handle)) {
                 logger::error("{}: record[{}] Failed to write no timer handle", __func__, record);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(ID)) {
                 logger::error("{}: record[{}] Failed to write no timer Id", __func__, record);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(cancelled)) {
                 logger::error("{}: record[{}] Failed to write no timer cancelled[{}]", __func__, record, cancelled);
+
+                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(finished)) {
                 logger::error("{}: record[{}] Failed to write no timer finished[{}]", __func__, record, finished);
+
+                currentTimersMutex.unlock();
                 return false;
             }
         }
     }
+
+    currentTimersMutex.unlock();
     return true;
 }
 
@@ -10089,6 +9423,9 @@ bool loadTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
         logger::error("{}: record[{}] Failed to load size of MenuModeTimers!", __func__, record);
         return false;
     }
+
+    currentTimersMutex.lock();
+
 
     if (v.size() > 0) { //cancel current timers
         for (auto* timer : v) {
@@ -10108,31 +9445,43 @@ bool loadTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
 
         if (!a_intfc->ReadRecordData(timeLeft)) {
             logger::error("{}: {}: MenuModeTimer Failed to load timeLeft!", __func__, i);
+
+            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(timeElapsed)) {
             logger::error("{}: {}: MenuModeTimer Failed to load timeElapsed!", __func__, i);
+
+            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(handle)) {
             logger::error("{}: {}: MenuModeTimer Failed to load handle!", __func__, i);
+
+            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(ID)) {
             logger::error("{}: {}: MenuModeTimer Failed to load ID!", __func__, i);
+
+            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(cancelled)) {
             logger::error("{}: {}: MenuModeTimer Failed to load cancelled!", __func__, i);
+
+            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(finished)) {
             logger::error("{}: {}: MenuModeTimer Failed to load finished!", __func__, i);
+
+            currentTimersMutex.unlock();
             return false;
         }
 
@@ -10151,6 +9500,8 @@ bool loadTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
         logger::debug("Timer loaded: timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
             timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
     }
+
+    currentTimersMutex.unlock();
     return true;
 }
 
@@ -10159,8 +9510,6 @@ bool loadTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
 void EraseFinishedGameTimers();
 bool erasingGameTimers = false;
 RE::BSFixedString sGameTimeTimerEvent = "OnTimerGameTime";
-
-
 
 struct GameTimeTimer {
     float startTime;
@@ -10212,7 +9561,7 @@ struct GameTimeTimer {
                 float elapsedGameHours = (calendar->GetHoursPassed() - startTime);
 
                 auto* args = RE::MakeFunctionArguments((int)timerID);
-                gfuncs::svm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
+                svm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
                 delete args;
                 logger::debug("game timer event sent. ID[{}] gameHoursInterval[{}] startTime[{}] endTime[{}] elapsedGameHours[{}]",
                     timerID, initGameHoursInterval, startTime, endTime, elapsedGameHours);
@@ -10246,32 +9595,12 @@ struct GameTimeTimer {
 };
 
 std::vector<GameTimeTimer*> currentGameTimeTimers;
+std::mutex currentGameTimeTimersMutex;
 
-void EraseFinishedGameTimers_B() {
-    if (currentGameTimeTimers.size() == 0) {
-        return;
-    }
-
-    erasingGameTimers = true;
-
-    for (auto it = currentGameTimeTimers.begin(); it != currentGameTimeTimers.end(); ) {
-        auto* timer = *it;
-        if (timer) {
-            if (timer->canDelete) {
-                delete timer;
-                timer = nullptr;
-                it = currentGameTimeTimers.erase(it);
-                logger::debug("erased gameTimer, Timers left = {}", currentGameTimeTimers.size());
-            }
-            else {
-                ++it;
-            }
-        }
-        else { //safety, this shouldn't occure.
-            it = currentGameTimeTimers.erase(it);
-        }
-    }
-    erasingGameTimers = false;
+void AddToCurrentGameTimeTimers(GameTimeTimer* timer) {
+    currentGameTimeTimersMutex.lock();
+    currentGameTimeTimers.push_back(timer);
+    currentGameTimeTimersMutex.unlock();
 }
 
 void EraseFinishedGameTimers() {
@@ -10279,21 +9608,26 @@ void EraseFinishedGameTimers() {
         return;
     }
 
+    currentGameTimeTimersMutex.lock();
     erasingGameTimers = true;
 
-    for (auto* timer : currentGameTimeTimers) {
+    for (int i = 0; i < currentGameTimeTimers.size(); i++) {
+        auto* timer = currentGameTimeTimers[i];
         if (timer) {
-            if (timer->canDelete) {
-                gfuncs::RemoveFromVectorByValue(currentGameTimeTimers, timer);
+            if (timer->finished) {
                 delete timer;
                 timer = nullptr;
-                logger::debug("erased gameTimer, Timers left = {}", currentGameTimeTimers.size());
+                //logger::trace("erased noMenuModeTimer, Timers left = {}", currentGameTimeTimers.size());
             }
         }
-        else {
-            gfuncs::RemoveFromVectorByValue(currentGameTimeTimers, timer);
+
+        if (!timer) {
+            auto it = currentGameTimeTimers.begin() + i;
+            currentGameTimeTimers.erase(it);
+            i--; //move i back 1 cause 1 timer was just erased
         }
     }
+    currentGameTimeTimersMutex.unlock();
     erasingGameTimers = false;
 }
 
@@ -10302,15 +9636,21 @@ GameTimeTimer* GetTimer(std::vector<GameTimeTimer*>& v, RE::VMHandle akHandle, i
         return nullptr;
     }
 
-    for (auto* timer : v) {
+    currentGameTimeTimersMutex.lock();
+
+    for (int i = 0; i < v.size(); i++) {
+        auto* timer = v[i];
         if (timer) {
             if (!timer->cancelled && !timer->finished) {
                 if (timer->handle == akHandle && timer->timerID == aiTimerID) {
+                    currentGameTimeTimersMutex.unlock();
                     return timer;
                 }
             }
         }
     }
+
+    currentGameTimeTimersMutex.unlock();
     return nullptr;
 }
 
@@ -10327,41 +9667,57 @@ bool SaveTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
         return false;
     }
 
+    currentGameTimeTimersMutex.lock();
+
     for (auto* timer : v) {
         if (timer) {
 
             if (!a_intfc->WriteRecordData(timer->startTime)) {
                 logger::error("{}: record[{}] Failed to write startTime", __func__, record);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->endTime)) {
                 logger::error("{}: record[{}] Failed to write endTime", __func__, record);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->initGameHoursInterval)) {
                 logger::error("{}: record[{}] Failed to write initGameHoursInterval", __func__, record);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->handle)) {
                 logger::error("{}: record[{}] Failed to write handle[{}]", __func__, record, timer->handle);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->timerID)) {
                 logger::error("{}: record[{}] Failed to write timerID[{}]", __func__, record, timer->timerID);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->cancelled)) {
                 logger::error("{}: record[{}] Failed to write cancelled[{}]", __func__, record, timer->cancelled);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->finished)) {
                 logger::error("{}: record[{}] Failed to write finished[{}]", __func__, record, timer->finished);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
@@ -10379,40 +9735,56 @@ bool SaveTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
 
             if (!a_intfc->WriteRecordData(startTime)) {
                 logger::error("{}: record[{}] Failed to write no Timer startTime", __func__, record);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(endTime)) {
                 logger::error("{}: record[{}] Failed to write no Timer endTime", __func__, record);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(initGameHoursInterval)) {
                 logger::error("{}: record[{}] Failed to write no Timer initGameHoursInterval", __func__, record);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(handle)) {
                 logger::error("{}: record[{}] Failed to write no timer handle", __func__, record);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(ID)) {
                 logger::error("{}: record[{}] Failed to write no timer Id", __func__, record);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(cancelled)) {
                 logger::error("{}: record[{}] Failed to write no timer cancelled[{}]", __func__, record, cancelled);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(finished)) {
                 logger::error("{}: record[{}] Failed to write no timer finished[{}]", __func__, record, finished);
+
+                currentGameTimeTimersMutex.unlock();
                 return false;
             }
         }
     }
+
+    currentGameTimeTimersMutex.unlock();
     return true;
 }
 
@@ -10422,6 +9794,8 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
         logger::error("{}: record[{}] Failed to load size of MenuModeTimers!", __func__, record);
         return false;
     }
+
+    currentGameTimeTimersMutex.lock();
 
     if (v.size() > 0) { //cancel current timers
         for (auto* timer : v) {
@@ -10442,36 +9816,50 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
 
         if (!a_intfc->ReadRecordData(startTime)) {
             logger::error("{}: {}: MenuModeTimer Failed to load startTime!", __func__, i);
+
+            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(endTime)) {
             logger::error("{}: {}: MenuModeTimer Failed to load endTime!", __func__, i);
+
+            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(initGameHoursInterval)) {
             logger::error("{}: {}: MenuModeTimer Failed to load initGameHoursInterval!", __func__, i);
+
+            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(handle)) {
             logger::error("{}: {}: MenuModeTimer Failed to load handle!", __func__, i);
+
+            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(ID)) {
             logger::error("{}: {}: MenuModeTimer Failed to load ID!", __func__, i);
+
+            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(cancelled)) {
             logger::error("{}: {}: MenuModeTimer Failed to load cancelled!", __func__, i);
+
+            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(finished)) {
             logger::error("{}: {}: MenuModeTimer Failed to load finished!", __func__, i);
+
+            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
@@ -10490,6 +9878,8 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
         logger::debug("gameTimer loaded: startTime[{}], endTime[{}], initGameHoursInterval[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
             timer->startTime, timer->endTime, timer->initGameHoursInterval, timer->handle, timer->timerID, timer->cancelled, timer->finished);
     }
+
+    currentGameTimeTimersMutex.unlock();
     return true;
 }
 
@@ -10520,7 +9910,7 @@ void StartMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver
     }
 
     MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
-    currentMenuModeTimers.push_back(newTimer);
+    AddToCurrentMenuModeTimers(newTimer);
 }
 
 void CancelMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
@@ -10620,7 +10010,9 @@ void StartNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiv
     }
 
     NoMenuModeTimer* newTimer = new NoMenuModeTimer(handle, afInterval, aiTimerID);
-    currentNoMenuModeTimers.push_back(newTimer);
+    AddToCurrentNoMenuModeTimers(newTimer);
+    /*std::thread tAddToCurrentNoMenuModeTimers(AddToCurrentNoMenuModeTimers, newTimer);
+    tAddToCurrentNoMenuModeTimers.join();*/
 }
 
 void CancelNoMenuModeTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
@@ -10721,7 +10113,7 @@ void StartTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float 
     }
 
     Timer* newTimer = new Timer(handle, afInterval, aiTimerID);
-    currentTimers.push_back(newTimer);
+    AddTimerToCurrentTimers(newTimer);
 }
 
 void CancelTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
@@ -10822,7 +10214,7 @@ void StartGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, fl
     }
 
     GameTimeTimer* newTimer = new GameTimeTimer(handle, afInterval, aiTimerID);
-    currentGameTimeTimers.push_back(newTimer);
+    AddToCurrentGameTimeTimers(newTimer);
 }
 
 void CancelGameTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
@@ -10926,7 +10318,7 @@ void StartMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventRe
     }
 
     MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
-    currentMenuModeTimers.push_back(newTimer);
+    AddToCurrentMenuModeTimers(newTimer);
 }
 
 void CancelMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
@@ -11027,7 +10419,9 @@ void StartNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* event
     }
 
     NoMenuModeTimer* newTimer = new NoMenuModeTimer(handle, afInterval, aiTimerID);
-    currentNoMenuModeTimers.push_back(newTimer);
+    AddToCurrentNoMenuModeTimers(newTimer);
+    std::thread tAddToCurrentNoMenuModeTimers(AddToCurrentNoMenuModeTimers, newTimer);
+    tAddToCurrentNoMenuModeTimers.join();
 }
 
 void CancelNoMenuModeTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
@@ -11128,7 +10522,7 @@ void StartTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, 
     }
 
     Timer* newTimer = new Timer(handle, afInterval, aiTimerID);
-    currentTimers.push_back(newTimer);
+    AddTimerToCurrentTimers(newTimer);
 }
 
 void CancelTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
@@ -11229,7 +10623,7 @@ void StartGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiv
     }
 
     GameTimeTimer* newTimer = new GameTimeTimer(handle, afInterval, aiTimerID);
-    currentGameTimeTimers.push_back(newTimer);
+    AddToCurrentGameTimeTimers(newTimer);
 }
 
 void CancelGameTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
@@ -11333,7 +10727,7 @@ void StartMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEff
     }
 
     MenuModeTimer* newTimer = new MenuModeTimer(handle, afInterval, aiTimerID);
-    currentMenuModeTimers.push_back(newTimer);
+    AddToCurrentMenuModeTimers(newTimer);
 }
 
 void CancelMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
@@ -11435,7 +10829,9 @@ void StartNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveE
     }
 
     NoMenuModeTimer* newTimer = new NoMenuModeTimer(handle, afInterval, aiTimerID);
-    currentNoMenuModeTimers.push_back(newTimer);
+    AddToCurrentNoMenuModeTimers(newTimer);
+    /*std::thread tAddToCurrentNoMenuModeTimers(AddToCurrentNoMenuModeTimers, newTimer);
+    tAddToCurrentNoMenuModeTimers.join();*/
 }
 
 void CancelNoMenuModeTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
@@ -11536,7 +10932,7 @@ void StartTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eve
     }
 
     Timer* newTimer = new Timer(handle, afInterval, aiTimerID);
-    currentTimers.push_back(newTimer);
+    AddTimerToCurrentTimers(newTimer);
 }
 
 void CancelTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
@@ -11637,7 +11033,7 @@ void StartGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect*
     }
 
     GameTimeTimer* newTimer = new GameTimeTimer(handle, afInterval, aiTimerID);
-    currentGameTimeTimers.push_back(newTimer);
+    AddToCurrentGameTimeTimers(newTimer);
 }
 
 void CancelGameTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
@@ -11782,13 +11178,15 @@ struct EventData {
     }
 
     bool PlayerIsRegistered() {
-        int max = eventParamMaps.size();
-        for (int i = 0; i < max; i++) {
-            auto it = eventParamMaps[i].find(gfuncs::playerRef);
+
+        for (int i = 0; i < eventParamMaps.size(); i++) {
+            auto it = eventParamMaps[i].find(playerRef);
             if (it != eventParamMaps[i].end()) {
+
                 return true;
             }
         }
+
         return false;
     }
 
@@ -11815,6 +11213,8 @@ struct EventData {
     }
 
     void InsertIntoFormHandles(RE::VMHandle handle, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& eventFormHandles) {
+
+
         if (gfuncs::IsFormValid(akForm)) {
             auto it = eventFormHandles.find(akForm);
             if (it != eventFormHandles.end()) { //form found in param map
@@ -11832,9 +11232,11 @@ struct EventData {
                 logger::debug("{}: akForm[{}] ID[{:x}] doesn't already have handles, handles size[{}] eventFormHandles size[{}]", __func__, gfuncs::GetFormName(akForm), akForm->GetFormID(), handles.size(), eventFormHandles.size());
             }
         }
+
     }
 
     void EraseFromFormHandles(RE::VMHandle handle, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& eventFormHandles) {
+
         if (gfuncs::IsFormValid(akForm)) {
             auto it = eventFormHandles.find(akForm);
             if (it != eventFormHandles.end()) { //form found in param map
@@ -11849,10 +11251,12 @@ struct EventData {
                 }
             }
         }
+
     }
 
     //erase all instances of handle
     void EraseFromFormHandles(RE::VMHandle handle, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& eventFormHandles) { //erase all instances of handle
+
         for (auto it : eventFormHandles) {
             int handleIndex = gfuncs::GetIndexInVector(it.second, handle);
             if (handleIndex != -1) {
@@ -11864,6 +11268,7 @@ struct EventData {
                 }
             }
         }
+
     }
 
     void AddHandle(RE::VMHandle handle, RE::TESForm* paramFilter, int paramFilterIndex) {
@@ -11886,7 +11291,7 @@ struct EventData {
 
             if (eventSinkIndex == EventEnum_OnCombatStateChanged && paramFilterIndex == 0) {
                 logger::debug("{}: adding handle for Combat State change", __func__);
-                if (paramFilter->As<RE::Actor>() == gfuncs::playerRef) {
+                if (paramFilter->As<RE::Actor>() == playerRef) {
                     //playerForm = paramFilter;
                     bRegisteredForPlayerCombatChange = true;
                     logger::debug("{}: bRegisteredForPlayerCombatChange = true", __func__);
@@ -11905,6 +11310,7 @@ struct EventData {
     }
 
     void RemoveHandle(RE::VMHandle handle, RE::TESForm* paramFilter, int paramFilterIndex, bool removeSink = true) {
+
         int gIndex = gfuncs::GetIndexInVector(globalHandles, handle);
 
         if (!paramFilter) {
@@ -11928,14 +11334,18 @@ struct EventData {
         if (removeSink) {
             CheckAndRemoveSink();
         }
+
     }
 
     void RemoveAllHandles(RE::VMHandle handle) {
+
         int gIndex = gfuncs::GetIndexInVector(globalHandles, handle);
         if (gIndex != -1) {
             auto it = globalHandles.begin() + gIndex;
             globalHandles.erase(it);
         }
+
+
 
         int max = eventParamMaps.size();
         for (int i = 0; i < max; i++) {
@@ -12554,12 +11964,12 @@ void CheckForPlayerCombatStatusChange() {
         // RE::TESForm* Target = .attackedMember.get().get();
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->globalHandles; //
-        CombineEventHandles(handles, gfuncs::playerRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
+        CombineEventHandles(handles, playerRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
         CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
 
         gfuncs::RemoveDuplicates(handles);
 
-        auto* args = RE::MakeFunctionArguments((RE::Actor*)gfuncs::playerRef, (RE::Actor*)target, (int)combatState);
+        auto* args = RE::MakeFunctionArguments((RE::Actor*)playerRef, (RE::Actor*)target, (int)combatState);
         SendEvents(handles, eventDataPtrs[EventEnum_OnCombatStateChanged]->sEvent, args);
     }
 }
@@ -12716,9 +12126,9 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
             }
         }
 
-        if (activatorRef == gfuncs::playerRef) {
+        if (activatorRef == playerRef) {
             if (gfuncs::IsFormValid(activatedRef)) {
-                gfuncs::lastPlayerActivatedRef = activatedRef;
+                lastPlayerActivatedRef = activatedRef;
             }
         }
 
@@ -13497,17 +12907,6 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
     }
 };
 
-void CheckMenusCurrentlyOpen() {
-    if (menusCurrentlyOpen.size() == 0) {
-        return;
-    }
-    for (auto& menu : menusCurrentlyOpen) {
-        if (!ui->IsMenuOpen(menu)) {
-            gfuncs::RemoveFromVectorByValue(menusCurrentlyOpen, menu);
-        }
-    }
-}
-
 struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
     bool sinkAdded = false;
 
@@ -13529,7 +12928,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
 
         RE::TESObjectREFR* workbenchRef = nullptr;
 
-        auto* aiProcess = gfuncs::playerRef->GetActorRuntimeData().currentProcess;
+        auto* aiProcess = playerRef->GetActorRuntimeData().currentProcess;
         if (aiProcess) {
             if (aiProcess->middleHigh) {
                 if (aiProcess->middleHigh->occupiedFurniture) {
@@ -13543,9 +12942,9 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
         }
 
         if (!gfuncs::IsFormValid(workbenchRef)) {
-            if (gfuncs::IsFormValid(gfuncs::menuRef)) {
-                workbenchRef = gfuncs::menuRef;
-                //logger::trace("Item Crafted Event: occupiedFurniture not valid, setting to gfuncs::menuRef");
+            if (gfuncs::IsFormValid(menuRef)) {
+                workbenchRef = menuRef;
+                //logger::trace("Item Crafted Event: occupiedFurniture not valid, setting to menuRef");
             }
             else {
                 workbenchRef = nullptr;
@@ -13614,8 +13013,8 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
 
         RE::Actor* target = nullptr;
 
-        if (gfuncs::IsFormValid(gfuncs::menuRef)) {
-            target = gfuncs::menuRef->As<RE::Actor>();
+        if (gfuncs::IsFormValid(menuRef)) {
+            target = menuRef->As<RE::Actor>();
             if (!gfuncs::IsFormValid(target)) {
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -13653,7 +13052,7 @@ struct LocationClearedEventSink : public RE::BSTEventSink<RE::LocationCleared::E
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        RE::BGSLocation* location = gfuncs::playerRef->GetCurrentLocation();
+        RE::BGSLocation* location = playerRef->GetCurrentLocation();
         if (gfuncs::IsFormValid(location)) {
             bool locationCleared = location->IsCleared();
             while (!locationCleared) {
@@ -14054,7 +13453,7 @@ struct ActorCellEventSink : public RE::BSTEventSink<RE::BGSActorCellEvent> {
         if (gfuncs::IsFormValid(newCellForm)) {
             newCell = static_cast<RE::TESObjectCELL*>(newCellForm);
             if (!gfuncs::IsFormValid(newCell)) {
-                newCell = gfuncs::playerRef->GetParentCell();
+                newCell = playerRef->GetParentCell();
             }
         }
 
@@ -14230,9 +13629,25 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         if (event->menuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
 
             RE::BSFixedString bsMenuName = event->menuName;
+            std::string sMenuName = std::string(bsMenuName);
+            auto menuStatusMapItr = menuStatusMap.find(sMenuName);
+            bool menuFoundInStatusMap = (menuStatusMapItr != menuStatusMap.end());
 
             if (event->opening) {
                 lastMenuOpened = event->menuName;
+
+                if (menuFoundInStatusMap) {
+                    if (menuStatusMapItr->second == false) {
+                        numOfMenusCurrentOpen += 1;
+                        menuStatusMap[sMenuName] = event->opening;
+                    }
+                }
+                else {
+                    numOfMenusCurrentOpen += 1;
+                    menuStatusMap[sMenuName] = event->opening;
+                }
+
+                //logger::trace("menu [{}] opened numOfMenusCurrentOpen[{}]", event->menuName, numOfMenusCurrentOpen);
 
                 if (ui->GameIsPaused() && !gamePaused) {
                     gamePaused = true;
@@ -14245,11 +13660,14 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                     lastTimeMenuWasOpened = std::chrono::system_clock::now();
                     logger::trace("inMenuMode = true");
                 }
-                menusCurrentlyOpen.push_back(event->menuName);
+
+                //AddToMenusCurrentlyOpen(event->menuName);
+               /* std::thread tAddToMenusCurrentlyOpen(AddToMenusCurrentlyOpen, event->menuName);
+                tAddToMenusCurrentlyOpen.join();*/
 
                 if (gfuncs::GetIndexInVector(refActivatedMenus, bsMenuName) > -1) {
-                    gfuncs::menuRef = gfuncs::lastPlayerActivatedRef;
-                    logger::trace("Menu[{}] opened. saved menuRef[{}]", bsMenuName, gfuncs::GetFormName(gfuncs::menuRef));
+                    menuRef = lastPlayerActivatedRef;
+                    logger::trace("Menu[{}] opened. saved menuRef[{}]", bsMenuName, gfuncs::GetFormName(menuRef));
                 }
 
                 if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
@@ -14268,21 +13686,31 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                 if (!ui->GameIsPaused() && gamePaused) {
                     gamePaused = false;
                     auto now = std::chrono::system_clock::now();
-                    UpdateTimers(gfuncs::timePointDiffToFloat(now, lastTimeGameWasPaused));
+                    float fGamePausedTime = gfuncs::timePointDiffToFloat(now, lastTimeGameWasPaused);
+                    UpdateTimers(fGamePausedTime);
+                    /*std::thread tUpdateTimers(UpdateTimers, fGamePausedTime);
+                    tUpdateTimers.join();*/
                     logger::trace("game was unpaused");
                 }
 
-                //menusCurrentlyOpen.erase(std::remove(menusCurrentlyOpen.begin(), menusCurrentlyOpen.end(), event->menuName), menusCurrentlyOpen.end());
-                gfuncs::RemoveFromVectorByValue(menusCurrentlyOpen, event->menuName);
-                CheckMenusCurrentlyOpen();
-                //logger::trace("menu close, number of menusCurrentlyOpen = {}", menusCurrentlyOpen.size());
+                if (menuFoundInStatusMap) {
+                    if (menuStatusMapItr->second == true) {
+                        menuStatusMapItr->second = event->opening;
+                        numOfMenusCurrentOpen -= 1;
+                        if (numOfMenusCurrentOpen == 0) { //closed menu
+                            inMenuMode = false;
+                            auto now = std::chrono::system_clock::now();
 
-                if (menusCurrentlyOpen.size() == 0) { //closed menu
-                    inMenuMode = false;
-                    auto now = std::chrono::system_clock::now();
-                    UpdateNoMenuModeTimers(gfuncs::timePointDiffToFloat(now, lastTimeMenuWasOpened));
-                    logger::trace("inMenuMode = false");
+                            float timePointDiff = gfuncs::timePointDiffToFloat(now, lastTimeMenuWasOpened);
+                            UpdateNoMenuModeTimers(timePointDiff);
+                            /* std::thread tUpdateNoMenuModeTimers(UpdateNoMenuModeTimers, timePointDiff);
+                                tUpdateNoMenuModeTimers.join();*/
+                            logger::trace("inMenuMode = false");
+                        }
+                    }
                 }
+
+                //logger::trace("menu [{}] closed numOfMenusCurrentOpen[{}]", event->menuName, numOfMenusCurrentOpen);
 
                 if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
                     numOfItemMenusCurrentOpen -= 1;
@@ -14401,8 +13829,7 @@ void AddSink(int index) {
         break;
 
     case EventEnum_OnActivate:
-        if (!activateEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
-            activateEventSink->sinkAdded = true;
+        if (!eventDataPtrs[EventEnum_OnActivate]->sinkAdded && !eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = true;
             //eventSourceholder->AddEventSink(activateEventSink); //always activate to track lastPlayerActivatedRef
             logger::debug("{}, EventEnum_OnActivate sink added", __func__);
@@ -14638,7 +14065,7 @@ void AddSink(int index) {
             if (playerCellChangeSource) {
                 actorCellEventSink->sinkAdded = true;
                 eventDataPtrs[EventEnum_OnPlayerChangeCell]->sinkAdded = true;
-                //actorCellEventSink->previousCell = gfuncs::playerRef->GetParentCell();
+                //actorCellEventSink->previousCell = playerRef->GetParentCell();
                 playerCellChangeSource->AddEventSink(actorCellEventSink);
                 logger::debug("{}, EventEnum_OnPlayerChangeCell sink added", __func__);
             }
@@ -14675,8 +14102,7 @@ void RemoveSink(int index) {
         break;
 
     case EventEnum_OnActivate:
-        if (activateEventSink->sinkAdded && eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
-            activateEventSink->sinkAdded = false;
+        if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded && eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = false;
             //eventSourceholder->RemoveEventSink(activateEventSink); //always activate to track lastPlayerActivatedRef
             logger::debug("{}, EventEnum_OnActivate sink removed", __func__);
@@ -14926,12 +14352,11 @@ int GetEventIndex(std::vector<EventData*> v, RE::BSFixedString asEvent) {
         return -1;
     }
 
-    int m = v.size();
-    if (m == 0) {
+    if (v.size() == 0) {
         return -1;
     }
 
-    for (int i = 0; i < m; i++) {
+    for (int i = 0; i < v.size(); i++) {
         if (v[i]->sEvent == asEvent) {
             return i;
         }
@@ -15505,6 +14930,7 @@ void CreateEventSinks() {
         //always active to track lastPlayerActivatedRef
         activateEventSink->sinkAdded = true;
         eventSourceholder->AddEventSink(activateEventSink);
+
     }
 
     //eventSourceholder->AddEventSink(objectLoadedEventSink);
@@ -15542,9 +14968,11 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     logger::trace("Binding Papyrus Functions");
 
     gvm = vm;
-    //gfuncs::svm = RE::SkyrimVM::GetSingleton();
+    //svm = RE::SkyrimVM::GetSingleton();
     ui = RE::UI::GetSingleton();
     calendar = RE::Calendar::GetSingleton();
+    svm = RE::SkyrimVM::GetSingleton();
+    if (!playerRef) { playerRef = RE::TESForm::LookupByID<RE::TESForm>(20)->As<RE::Actor>(); }
 
     //functions 
     vm->RegisterFunction("SaveProjectileForAmmo", "DbSkseCppCallbackEvents", SaveProjectileForAmmo);
@@ -15876,10 +15304,10 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             //    logger::info("kDeleteGame: sent right before deleting the .skse cosave and the .ess save");
             //    break;
 
-    case SKSE::MessagingInterface::kInputLoaded:
+    //case SKSE::MessagingInterface::kInputLoaded:
         //logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
 
-        break;
+        //break;
 
     case SKSE::MessagingInterface::kNewGame:
         //logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
