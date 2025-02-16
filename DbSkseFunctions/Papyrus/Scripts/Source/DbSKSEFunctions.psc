@@ -197,11 +197,24 @@ Quest[] Function GetAllActiveQuests() Global Native
 ;if onlyFilled is true, only gets ref alias's that are filled with a valid object reference.
 ReferenceAlias[] function GetAllRefaliases(bool onlyQuestObjects = false, bool onlyFilled = false) global native
 
+;Get all references aliases that are currently filled with the ref.
+ReferenceAlias[] function GetAllRefAliasesForRef(ObjectReference ref) Global Native
+
 ;Get all quest object references in game
 ObjectReference[] function GetAllQuestObjectRefs() Global Native
-
+ 
 ;Get all quest object references in the containerRef
 ObjectReference[] function GetQuestObjectRefsInContainer(ObjectReference containerRef) Global Native
+
+;Get all persistent object references in the containerRef, regardless if they're quest objects or not. 
+;Object refs must be persistent to be in a container.
+ObjectReference[] function GetAllObjectRefsInContainer(ObjectReference containerRef) Global Native
+
+;Sets or clears the Quest Object flag for the akAlias. Returns true if successful
+bool function SetAliasQuestObjectFlag(alias akAlias, bool set) Global Native
+
+;Does the akAlias have the quest obect flag checked?
+bool function IsAliasQuestObjectFlagSet(alias akAlias) Global Native
 
 TextureSet Function GetProjectileBaseDecal(projectile akProjectile) Global Native
 Bool Function SetProjectileBaseDecal(projectile akProjectile, TextureSet decalTextureSet) Global Native
@@ -387,6 +400,12 @@ bool Function IsInMenu() Global Native
 
 string Function GetLastMenuOpened() Global Native
 
+;forces item menus to update if they are open (inventory, container, barter ect...) 
+;To display any changes made to items while an item menu is open, such as changing an item's name.
+Function RefreshItemMenu() Global Native
+
+Bool Function IsItemMenuOpen() Global Native
+
 ;differs from consoleUtil.ExecuteCommand in that you can execute a targeted command on a passed in ref.
 ;if ref == none and command is targeted command, runs command on console selected ref like normal. 
 ;If no console selected ref, or is not a targeted command, executes command like normal.
@@ -422,29 +441,6 @@ bool Function CanSoulGemHoldNPCSoul(SoulGem akSoulGem) Global Native
 
 ;set soul gem can hold npc soul, I.E make it a black soul gem or not.
 Function SetSoulGemCanHoldNPCSoul(SoulGem akSoulGem, bool canHold) Global Native 
-
-;get MusicType that's currently playing
-MusicType Function GetCurrentMusicType() Global Native 
-
-int Function GetNumberOfTracksInMusicType(MusicType akMusicType) Global Native 
-
-;get the current track index queued in akMusicType
-int Function GetMusicTypeTrackIndex(MusicType akMusicType) Global Native 
-
-;if the akMusicType is currently playing, it will jump to the track index passed in.
-Function SetMusicTypeTrackIndex(MusicType akMusicType, int index) Global Native 
-    
-int Function GetMusicTypePriority(MusicType akMusicType) Global Native 
-
-Function SetMusicTypePriority(MusicType akMusicType, int priority) Global Native 
-
-;MusicTypeStatus is as follows
-;kInactive = 0
-;kPlaying = 1
-;kPaused = 2
-;kFinishing = 3
-;kFinished = 4
-int Function GetMusicTypeStatus(MusicType akMusicType) Global Native 
 
 Enchantment[] Function GetKnownEnchantments() Global Native 
 Function AddKnownEnchantmentsToFormList(Formlist akList) Global Native 
@@ -765,6 +761,29 @@ SoundCategory Function GetSoundCategoryForSoundDescriptor(SoundDescriptor akSoun
 Function SetSoundCategoryForSoundDescriptor(SoundDescriptor akSoundDescriptor, SoundCategory akSoundCategory) Global Native 
 Float Function GetSoundCategoryVolume(SoundCategory akSoundCategory) Global Native 
 Float Function GetSoundCategoryFrequency(SoundCategory akSoundCategory) Global Native 
+
+;get MusicType that's currently playing
+MusicType Function GetCurrentMusicType() Global Native 
+
+int Function GetNumberOfTracksInMusicType(MusicType akMusicType) Global Native 
+
+;get the current track index queued in akMusicType
+int Function GetMusicTypeTrackIndex(MusicType akMusicType) Global Native 
+
+;if the akMusicType is currently playing, it will jump to the track index passed in.
+Function SetMusicTypeTrackIndex(MusicType akMusicType, int index) Global Native 
+    
+int Function GetMusicTypePriority(MusicType akMusicType) Global Native 
+
+Function SetMusicTypePriority(MusicType akMusicType, int priority) Global Native 
+
+;MusicTypeStatus is as follows
+;kInactive = 0
+;kPlaying = 1
+;kPaused = 2
+;kFinishing = 3
+;kFinished = 4
+int Function GetMusicTypeStatus(MusicType akMusicType) Global Native 
 
 ;/map marker icon types:
 kNone = 0,

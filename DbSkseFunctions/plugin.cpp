@@ -10,12 +10,13 @@
 #include <string>
 #include <mutex>
 #include <thread>
-#include "GeneralFunctions.h"
 #include "mini/ini.h"
+#include "GeneralFunctions.h"
+#include "ConsoleUtil.h"
+#include "PapyrusUtilEx.h"
 #include "UIEventHooks/Hooks.h"
 #include "editorID.hpp"
 #include "STLThunk.h"
-#include "PapyrusUtilEx.h"
 
 namespace logger = SKSE::log;
 bool bPlayerIsInCombat = false;
@@ -544,7 +545,6 @@ bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptNa
         return false;
     }
 
-    int i = 0;
     auto it = vm->attachedScripts.find(handle);
     if (it != vm->attachedScripts.end()) {
         for (int i = 0; i < it->second.size(); i++) {
@@ -559,10 +559,6 @@ bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptNa
                         }
                     }
                 }
-            }
-            i++;
-            if (i >= vm->attachedScripts.size()) {
-                return false;
             }
         }
     }
@@ -579,7 +575,6 @@ RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedS
         return nullptr;
     }
 
-    int i = 0;
     auto it = vm->attachedScripts.find(handle);
     if (it != vm->attachedScripts.end()) {
         for (int i = 0; i < it->second.size(); i++) {
@@ -594,10 +589,6 @@ RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedS
                         }
                     }
                 }
-            }
-            i++;
-            if (i >= vm->attachedScripts.size()) {
-                return nullptr;
             }
         }
     }
@@ -2037,7 +2028,7 @@ bool SaveFormHandlesMap(std::map<RE::TESForm*, std::vector<RE::VMHandle>>& akMap
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(8.3);
+    return float(8.4);
 }
 
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
@@ -3434,6 +3425,38 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
     return questItems;
 }
 
+std::vector<RE::BGSRefAlias*> GetAllRefAliasesForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+    std::vector<RE::BGSRefAlias*> aliases;
+
+    if (!gfuncs::IsFormValid(ref)) {
+        return aliases;
+    }
+
+    auto aliasArray = ref->extraList.GetByType<RE::ExtraAliasInstanceArray>();
+    if (aliasArray) {
+        //logger::trace("{}: alias array for ref[{}] found", __func__, ref->GetDisplayFullName());
+        for (auto* akAlias : aliasArray->aliases) {
+            if (akAlias) {
+                if (akAlias->alias) {
+                    if (gfuncs::IsFormValid(akAlias->alias->owningQuest)) {
+                        for (auto* alias : akAlias->alias->owningQuest->aliases) {
+                            //akAlias-alias is a const, this is a workaround to get the non const alias without using const_cast
+                            if (alias == akAlias->alias) {
+                                RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(alias);
+                                if (refAlias) {
+                                    aliases.push_back(refAlias);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return aliases;
+}
+
 std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {
     logger::debug("{} called", __func__);
 
@@ -3476,26 +3499,26 @@ std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {
 std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunctionTag*, RE::TESObjectREFR* containerRef) {
     logger::trace("{} called", __func__);
 
-    std::vector<RE::TESObjectREFR*> questItems;
+    std::vector<RE::TESObjectREFR*> invQuestItems;
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
     if (!gfuncs::IsFormValid(containerRef)) {
         logger::warn("{} containerRef doesn't exist", __func__);
-        return questItems;
+        return invQuestItems;
     }
 
     auto inventory = containerRef->GetInventory();
 
     if (inventory.size() == 0) {
-        logger::warn("{} {} containerRef doesn't contain any items", __func__, gfuncs::GetFormName(containerRef, "", "", true));
-        return questItems;
+        logger::debug("{} {} containerRef doesn't contain any items", __func__, gfuncs::GetFormName(containerRef));
+        return invQuestItems;
     }
 
     if (dataHandler) {
         RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
-        logger::debug("{} number of quests is {}", __func__, akArray->size());
+        //logger::debug("{} number of quests is {}", __func__, akArray->size());
         int ic = 0;
 
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -3511,13 +3534,8 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
                                     RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
                                     if (refAlias) {
                                         RE::TESObjectREFR* akRef = refAlias->GetReference();
-                                        if (gfuncs::IsFormValid(akRef)) {
-                                            RE::TESBoundObject* boundObj = akRef->GetObjectReference();
-                                            if (gfuncs::IsFormValid(boundObj)) {
-                                                if (inventory.contains(boundObj)) {
-                                                    questItems.push_back(akRef);
-                                                }
-                                            }
+                                        if (gfuncs::ContainerContainsRef(containerRef, akRef)) {
+                                            invQuestItems.push_back(akRef);
                                         }
                                     }
                                 }
@@ -3528,8 +3546,34 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
             }
         }
     }
-    logger::trace("{} number of refs is {}", __func__, questItems.size());
-    return questItems;
+    return invQuestItems;
+}
+
+std::vector<RE::TESObjectREFR*> GetAllObjectRefsInContainer(RE::StaticFunctionTag*, RE::TESObjectREFR* containerRef) {
+    std::vector<RE::TESObjectREFR*> refs;
+    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+
+    if (!gfuncs::IsFormValid(containerRef)) {
+        logger::warn("{} containerRef doesn't exist", __func__);
+        return refs;
+    }
+
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+    for (auto& [id, form] : *allForms) {
+        auto* ref = form->AsReference();
+        if (gfuncs::ContainerContainsRef(containerRef, ref)) {
+            refs.push_back(ref);
+        }
+    }
+    return refs;
+}
+
+bool SetAliasQuestObjectFlag(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, bool set) {
+    return gfuncs::SetAliasQuestObjectFlag(akAlias, set);
+}
+
+bool IsAliasQuestObjectFlagSet(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias) {
+    return gfuncs::IsAliasQuestObjectFlagSet(akAlias);
 }
 
 //general projectile functions==========================================================================================================================
@@ -6053,6 +6097,10 @@ std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
     return lastMenuOpened;
 }
 
+void RefreshItemMenu(RE::StaticFunctionTag*) {
+    gfuncs::RefreshItemMenu();
+}
+
 RE::TESForm* GetLoadMenuLocation() {
     if (!ui) {
         logger::error("{}: couldn't find ui", __func__);
@@ -6802,48 +6850,9 @@ int GetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     return static_cast<int>(mapMarkerData->mapData->type.get());
 }
 
-static inline void CompileAndRunImpl(RE::Script* script, RE::ScriptCompiler* compiler, RE::COMPILER_NAME name, RE::TESObjectREFR* targetRef) {
-    using func_t = decltype(CompileAndRunImpl);
-    REL::Relocation<func_t> func{ RELOCATION_ID(21416, REL::Module::get().version().patch() < 1130 ? 21890 : 441582) };
-    return func(script, compiler, name, targetRef);
-}
-
-static inline void CompileAndRun(RE::Script* script, RE::TESObjectREFR* targetRef, RE::COMPILER_NAME name = RE::COMPILER_NAME::kSystemWindowCompiler)
-{
-    RE::ScriptCompiler compiler;
-    CompileAndRunImpl(script, &compiler, name, targetRef);
-}
-
-static inline RE::ObjectRefHandle GetSelectedRefHandle() {
-    REL::Relocation<RE::ObjectRefHandle*> selectedRef{ RELOCATION_ID(519394, REL::Module::get().version().patch() < 1130 ? 405935 : 504099) };
-    return *selectedRef;
-}
-
-static inline RE::NiPointer<RE::TESObjectREFR> GetSelectedRef() {
-    auto handle = GetSelectedRefHandle();
-    return handle.get();
-}
-
-//edited form ConsoleUtil NG
 static inline void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_command, RE::TESObjectREFR* objRef) {
     LogAndMessage(std::format("{} called. Command = {}", __func__, a_command));
-
-    const auto scriptFactory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::Script>();
-    const auto script = scriptFactory ? scriptFactory->Create() : nullptr;
-    if (script) {
-        script->SetCommand(a_command);
-
-        if (gfuncs::IsFormValid(objRef)) {
-            CompileAndRun(script, objRef);
-        }
-        else {
-            const auto selectedRef = GetSelectedRef();
-            //script->CompileAndRun(selectedRef.get());
-            CompileAndRun(script, selectedRef.get());
-        }
-
-        delete script;
-    }
+    ConsoleUtil::ExecuteCommand(a_command, objRef);
 }
 
 bool HasCollision(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef) {
@@ -7073,7 +7082,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
         //gfuncs::gfuncs::install->UnlockWord(word);
         logger::debug("{} unlock word 1 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID())); //didn't find a teachword function in NG, so using console command as workaround. 
-        ExecuteConsoleCommand(nullptr, command, nullptr);
+        ConsoleUtil::ExecuteCommand(command, nullptr);
         player->UnlockWord(word);
     }
 
@@ -7082,7 +7091,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
         //playerRef->UnlockWord(word);
         logger::debug("{} unlock word 2 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
-        ExecuteConsoleCommand(nullptr, command, nullptr);
+        ConsoleUtil::ExecuteCommand(command, nullptr);
         player->UnlockWord(word);
     }
 
@@ -7091,7 +7100,7 @@ void UnlockShout(RE::StaticFunctionTag*, RE::TESShout* akShout) {
         //playerRef->UnlockWord(word);
         logger::debug("{} unlock word 3 {} ID {:x}", __func__, word->GetName(), word->GetFormID());
         std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
-        ExecuteConsoleCommand(nullptr, command, nullptr);
+        ConsoleUtil::ExecuteCommand(command, nullptr);
         player->UnlockWord(word);
     }
 }
@@ -8362,7 +8371,8 @@ void SetDbSkseCppCallbackEventsAttached(RE::StaticFunctionTag*) {
 void DbSkseCppCallbackLoad() {
     //if (!IsScriptAttachedToRef(playerRef, "DbSkseCppCallbackEvents")) {
     //    logger::debug("{} attaching DbSkseCppCallbackEvents script to the player.", __func__);
-    //    ExecuteConsoleCommand(nullptr, "player.aps DbSkseCppCallbackEvents", nullptr);
+    //    ConsoleUtil::ExecuteCommand("player.aps DbSkseCppCallbackEvents", nullptr);
+    // 
     //}
     //else {
     //    logger::debug("{} DbSkseCppCallbackEvents script already attached to the player", __func__);
@@ -13556,6 +13566,10 @@ struct ObjectLoadedEventSink : public RE::BSTEventSink<RE::TESObjectLoadedEvent>
 
 ObjectLoadedEventSink* objectLoadedEventSink;
 
+bool IsItemMenuOpenNative(RE::StaticFunctionTag*) {
+    return ui->IsItemMenuOpen();
+}
+
 bool IsItemMenuOpen() {
     for (auto& menu : itemMenus) {
         if (ui->IsMenuOpen(menu)) {
@@ -13563,6 +13577,18 @@ bool IsItemMenuOpen() {
         }
     }
     return false;
+}
+
+bool IsRefActivatedMenu(RE::BSFixedString& menu) {
+    return (
+        menu == RE::DialogueMenu::MENU_NAME ||
+        menu == RE::BarterMenu::MENU_NAME ||
+        menu == RE::GiftMenu::MENU_NAME ||
+        menu == RE::LockpickingMenu::MENU_NAME ||
+        menu == RE::ContainerMenu::MENU_NAME ||
+        menu == RE::BookMenu::MENU_NAME ||
+        menu == RE::CraftingMenu::MENU_NAME
+        );
 }
 
 class InputEventSink : public RE::BSTEventSink<RE::InputEvent*> {
@@ -13615,12 +13641,12 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         //this sink is for managing timers and GetCurrentMenuOpen function.
 
         if (!event) {
-            logger::warn("MenuOpenClose Event doesn't exist!");
+            logger::warn("MenuOpenClose Event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::warn("AnimationEventSink IsBadReadPtr");
+            logger::warn("MenuOpenCloseEventSink IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -13665,14 +13691,17 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                /* std::thread tAddToMenusCurrentlyOpen(AddToMenusCurrentlyOpen, event->menuName);
                 tAddToMenusCurrentlyOpen.join();*/
 
-                if (gfuncs::GetIndexInVector(refActivatedMenus, bsMenuName) > -1) {
+                if (IsRefActivatedMenu(bsMenuName)) {
                     menuRef = lastPlayerActivatedRef;
                     logger::trace("Menu[{}] opened. saved menuRef[{}]", bsMenuName, gfuncs::GetFormName(menuRef));
                 }
 
-                if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
-                    numOfItemMenusCurrentOpen += 1;
+                /*if (gfuncs::GetIndexInVector(refActivatedMenus, bsMenuName) > -1) {
+                    menuRef = lastPlayerActivatedRef;
+                    logger::trace("Menu[{}] opened. saved menuRef[{}]", bsMenuName, gfuncs::GetFormName(menuRef));
+                }*/
 
+                if (IsItemMenuOpen()) {
                     if (UIEvents::registeredUIEventDatas.size() > 0) {
                         if (!inputEventSink->sinkAdded) {
                             inputEventSink->sinkAdded = true;
@@ -13681,15 +13710,19 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                         }
                     }
                 }
+
+                /*if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
+                    numOfItemMenusCurrentOpen += 1;
+                }*/
             }
             else {
                 if (!ui->GameIsPaused() && gamePaused) {
                     gamePaused = false;
                     auto now = std::chrono::system_clock::now();
                     float fGamePausedTime = gfuncs::timePointDiffToFloat(now, lastTimeGameWasPaused);
-                    UpdateTimers(fGamePausedTime);
-                    /*std::thread tUpdateTimers(UpdateTimers, fGamePausedTime);
-                    tUpdateTimers.join();*/
+                    //UpdateTimers(fGamePausedTime);
+                    std::thread tUpdateTimers(UpdateTimers, fGamePausedTime);
+                    tUpdateTimers.join();
                     logger::trace("game was unpaused");
                 }
 
@@ -13702,9 +13735,9 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
                             auto now = std::chrono::system_clock::now();
 
                             float timePointDiff = gfuncs::timePointDiffToFloat(now, lastTimeMenuWasOpened);
-                            UpdateNoMenuModeTimers(timePointDiff);
-                            /* std::thread tUpdateNoMenuModeTimers(UpdateNoMenuModeTimers, timePointDiff);
-                                tUpdateNoMenuModeTimers.join();*/
+                            //UpdateNoMenuModeTimers(timePointDiff);
+                            std::thread tUpdateNoMenuModeTimers(UpdateNoMenuModeTimers, timePointDiff);
+                            tUpdateNoMenuModeTimers.join();
                             logger::trace("inMenuMode = false");
                         }
                     }
@@ -13712,17 +13745,21 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
 
                 //logger::trace("menu [{}] closed numOfMenusCurrentOpen[{}]", event->menuName, numOfMenusCurrentOpen);
 
-                if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
+                if (!IsItemMenuOpen()) {
+                    if (inputEventSink->sinkAdded) {
+                        inputEventSink->sinkAdded = false;
+                        RE::BSInputDeviceManager::GetSingleton()->RemoveEventSink(inputEventSink);
+                        logger::trace("item menu [{}] closed. Removed input event sink", bsMenuName);
+                    }
+                }
+
+                /*if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
                     numOfItemMenusCurrentOpen -= 1;
 
                     if (numOfItemMenusCurrentOpen == 0) {
-                        if (inputEventSink->sinkAdded) {
-                            inputEventSink->sinkAdded = false;
-                            RE::BSInputDeviceManager::GetSingleton()->RemoveEventSink(inputEventSink);
-                            logger::trace("item menu [{}] closed. Removed input event sink", bsMenuName);
-                        }
+
                     }
-                }
+                }*/
             }
         }
         return RE::BSEventNotifyControl::kContinue;
@@ -15026,8 +15063,12 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetAllAliasesWithScriptAttached", "DbSkseFunctions", GetAllAliasesWithScriptAttached);
     vm->RegisterFunction("GetAllRefAliasesWithScriptAttached", "DbSkseFunctions", GetAllRefAliasesWithScriptAttached);
     vm->RegisterFunction("GetAllRefaliases", "DbSkseFunctions", GetAllRefaliases);
+    vm->RegisterFunction("GetAllRefAliasesForRef", "DbSkseFunctions", GetAllRefAliasesForRef);
     vm->RegisterFunction("GetAllQuestObjectRefs", "DbSkseFunctions", GetAllQuestObjectRefs);
+    vm->RegisterFunction("SetAliasQuestObjectFlag", "DbSkseFunctions", SetAliasQuestObjectFlag);
+    vm->RegisterFunction("IsAliasQuestObjectFlagSet", "DbSkseFunctions", IsAliasQuestObjectFlagSet);
     vm->RegisterFunction("GetQuestObjectRefsInContainer", "DbSkseFunctions", GetQuestObjectRefsInContainer);
+    vm->RegisterFunction("GetAllObjectRefsInContainer", "DbSkseFunctions", GetAllObjectRefsInContainer);
     vm->RegisterFunction("GetFavorites", "DbSkseFunctions", GetFavorites);
     vm->RegisterFunction("GetProjectileBaseDecal", "DbSkseFunctions", GetProjectileBaseDecal);
     vm->RegisterFunction("SetProjectileBaseDecal", "DbSkseFunctions", SetProjectileBaseDecal);
@@ -15072,6 +15113,8 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused);
     vm->RegisterFunction("IsInMenu", "DbSkseFunctions", IsInMenu);
     vm->RegisterFunction("GetLastMenuOpened", "DbSkseFunctions", GetLastMenuOpened);
+    vm->RegisterFunction("RefreshItemMenu", "DbSkseFunctions", RefreshItemMenu);
+    vm->RegisterFunction("IsItemMenuOpen", "DbSkseFunctions", IsItemMenuOpenNative);
     vm->RegisterFunction("SetMapMarkerName", "DbSkseFunctions", SetMapMarkerName);
     vm->RegisterFunction("GetMapMarkerName", "DbSkseFunctions", GetMapMarkerName);
     vm->RegisterFunction("SetMapMarkerIconType", "DbSkseFunctions", SetMapMarkerIconType);
@@ -15432,12 +15475,12 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
         logger::error("{}: a_intfc doesn't exist, aborting load.", __func__);
     }
 }
-
+ 
 //init================================================================================================================================================================
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
     skseLoadInterface = skse;
-
+     
     SetupLog();
     SKSE::GetMessagingInterface()->RegisterListener(MessageListener);
 

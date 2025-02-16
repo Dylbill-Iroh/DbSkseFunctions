@@ -30,30 +30,22 @@ endif()
 # Otherwise, you can set OUTPUT_FOLDER to any place you'd like :)
 # set(OUTPUT_FOLDER "C:/path/to/any/folder")
 
-# set(headers ${headers}
-# 	Source/mini/ini.h
-# 	Source/UIEventHooks/Hooks.h
-# 	Source/editorID.hpp
-# 	Source/GeneralFunctions.h
-# 	Source/STLThunk.h
-# 	Source/Testing.h
-# ) 
-# 
-# set(sources ${sources}
-# 	SourceCpp/Testing.cpp
-# )
-
 # Setup your SKSE plugin as an SKSE plugin!
 find_package(CommonLibSSE CONFIG REQUIRED)
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES plugin.cpp) # <--- specifies plugin.cpp
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is required!
  
+# Must have PUBLIC on its own at the end of target_sources
 target_sources(${PROJECT_NAME} 
-PUBLIC SourceCpp/PapyrusUtilEx.cpp
+PUBLIC SourceCpp/ConsoleUtil.cpp
 PUBLIC SourceCpp/GeneralFunctions.cpp
+PUBLIC SourceCpp/PapyrusUtilEx.cpp
+PUBLIC SourceCpp/SendUIMessage.cpp
+PUBLIC SourceCpp/Serialization.cpp
+PUBLIC
 )
-  
+   
 target_include_directories(${PROJECT_NAME}
  PRIVATE
   Source/

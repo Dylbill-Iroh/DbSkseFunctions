@@ -5,6 +5,7 @@ namespace gfuncs {
     RE::TESObjectREFR* lastPlayerActivatedRef;
     RE::TESObjectREFR* menuRef;
     RE::Actor* svPlayerRef;*/
+    std::string uint32_to_string(uint32_t value);
 
     int GetRandomInt(int min, int max);
 
@@ -20,6 +21,8 @@ namespace gfuncs {
     bool IsFormValid(RE::TESForm* form, bool checkDeleted = false);
 
     std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString);
+
+    void SetFormName(RE::TESForm* baseForm, RE::BSFixedString nuName);
 
     RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString = "null", RE::BSFixedString noNameString = "", bool returnIdIfNull = true);
 
@@ -47,7 +50,28 @@ namespace gfuncs {
 
     RE::TESObjectREFR* GetRefFromHandle(RE::RefHandle& handle);
 
+    RE::TESObjectREFR* GetRefFromObjectRefHandle(RE::ObjectRefHandle refHandle);
+
+    bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName);
+
     RE::Actor* GetPlayerDialogueTarget();
+
+    void RefreshItemMenu();
+
+    bool SetAliasQuestObjectFlag(RE::BGSBaseAlias* akAlias, bool set);
+
+    bool IsAliasQuestObjectFlagSet(RE::BGSBaseAlias* akAlias);
+
+    bool IsQuestObject(RE::TESObjectREFR* ref);
+
+    //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
+    bool ContainerContainsRef(RE::TESObjectREFR* containerRef, RE::TESObjectREFR* ref);
+    
+    //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
+    std::int32_t GetBaseFormCount(RE::TESObjectREFR* containerRef, RE::TESBoundObject* akForm);
+
+    //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
+    std::int32_t GetItemCount(RE::TESObjectREFR* containerRef, RE::TESForm* item);
 
     template< typename T >
     std::string IntToHex(T i)

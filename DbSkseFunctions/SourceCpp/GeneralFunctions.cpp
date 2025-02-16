@@ -1,28 +1,30 @@
 #include <Windows.h>
+//#undef GetObject
+#include <cstdint>
+#include <iostream>
+#include <array>
+#include <algorithm>
 #include "GeneralFunctions.h"
-//#include <spdlog/sinks/basic_file_sink.h>
-//#include <stdarg.h>
-//#include <winbase.h>
-//#include <iostream>
-//#include <stdio.h>
-//#include <chrono> //*
-//#include <ctime>
-//#include <cstdlib>
-//#include <algorithm>
-//#include <string>
-//#include "mini/ini.h"
 #include "editorID.hpp"
-//#include "STLThunk.h"
+#include "SendUIMessage.h"
 
 namespace logger = SKSE::log;
 
 namespace gfuncs {
     RE::SkyrimVM* gsvm;
     RE::Actor* gfuncsPlayerRef;
+    RE::UI* gui;
+
+    std::string uint32_to_string(uint32_t value) {
+        std::array<char, 4> r;
+        r[0] = static_cast<char>((value >> 24) & 0xFF);
+        r[1] = static_cast<char>((value >> 16) & 0xFF);
+        r[2] = static_cast<char>((value >> 8) & 0xFF);
+        r[3] = static_cast<char>(value & 0xFF);
+        return std::string{r[0], r[1], r[2], r[3]};
+    }
 
     int GetRandomInt(int min, int max) {
-        // return clib_util::RNG().generate<std::uint32_t>(a_min, a_max);
-
         return (min + (rand() % (max - min + 1)));
     }
 
@@ -113,6 +115,14 @@ namespace gfuncs {
         }
     }
 
+    void SetFormName(RE::TESForm* baseForm, RE::BSFixedString nuName) {
+        RE::TESFullName* pFullName = baseForm->As<RE::TESFullName>();
+        // is a const string, so have to just reassign it.
+        if (pFullName) {
+            pFullName->fullName = nuName;
+        }
+    }
+
     RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString, RE::BSFixedString noNameString, bool returnIdIfNull) {
         if (!IsFormValid(akForm)) {
             return nullString;
@@ -198,7 +208,7 @@ namespace gfuncs {
     }
 
     RE::VMHandle GetHandle(RE::TESForm* akForm) {
-        if (!(akForm)) {
+        if (!IsFormValid(akForm)) {
             logger::warn("{}: akForm doesn't exist or isn't valid", __func__);
             return NULL;
         }
@@ -206,9 +216,9 @@ namespace gfuncs {
         RE::VMTypeID id = static_cast<RE::VMTypeID>(akForm->GetFormType());
         RE::VMHandle handle = gsvm->handlePolicy.GetHandleForObject(id, akForm);
 
-        if (handle == NULL) {
+        /*if (handle == NULL) {
             return NULL;
-        }
+        }*/
 
         return handle;
     }
@@ -253,6 +263,95 @@ namespace gfuncs {
         return nullptr;
     }
 
+    RE::TESObjectREFR* GetRefFromObjectRefHandle(RE::ObjectRefHandle refHandle) {
+        RE::TESObjectREFR* itemReference = nullptr;
+        //std::string msg = "";
+
+        if (refHandle) {
+            //logger::debug("refHandle found");
+
+            //msg = "Getting ref from refHandle.Get()";
+            auto refPtr = refHandle.get();
+            if (refPtr) {
+                itemReference = refPtr.get();
+            }
+
+            if (!IsFormValid(itemReference)) {
+                //msg = "Getting ref by RE::TESForm::LookupByID";
+                RE::TESForm* refForm = RE::TESForm::LookupByID(refHandle.native_handle());
+                if (IsFormValid(refForm)) {
+                    itemReference = refForm->AsReference();
+                }
+            }
+
+            if (!IsFormValid(itemReference)) {
+                //msg = "Getting ref from RE::TESObjectREFR::LookupByHandle";
+                auto niPtr = RE::TESObjectREFR::LookupByHandle(refHandle.native_handle());
+                if (niPtr) {
+                    itemReference = niPtr.get();
+                }
+            }
+
+            /*if (!IsFormValid(itemReference)) {
+                msg = "Getting ref by comparing handle to all object references";
+                const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+                for (auto& [id, form] : *allForms) {
+                    if (IsFormValid(form)) {
+                        auto* ref = form->AsReference();
+                        if (IsFormValid(ref)) {
+                            if (ref->GetHandle() == refHandle) {
+                                itemReference = ref;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }*/
+        }
+        if (!IsFormValid(itemReference)) {
+            itemReference = nullptr;
+        }
+        //logger::trace("{}: {}", __func__, msg);
+        return itemReference;
+    }
+
+    bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName) {
+        if (handle == NULL) {
+            logger::error("{}: handle is null", __func__);
+            return false;
+        }
+
+        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (!vm) {
+            logger::error("{}: vm not found", __func__);
+            return false;
+        }
+
+        auto it = vm->attachedScripts.find(handle);
+        if (it != vm->attachedScripts.end()) {
+            //logger::error("{}: it->second.size() = {}", __func__, it->second.size());
+            for (int i = 0; i < it->second.size(); i++) {
+                auto& attachedScript = it->second[i];
+                if (attachedScript) {
+                    auto* script = attachedScript.get();
+                    if (script) {
+                        auto info = script->GetTypeInfo();
+                        if (info) {
+                            //logger::error("{}: info->name = [{}]", __func__, info->name);
+                            if (info->name == sScriptName) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else {
+            logger::error("{}: vm* couldnt find handle", __func__);
+        }
+        return false;
+    }
+
     RE::Actor* GetPlayerDialogueTarget() {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
@@ -278,6 +377,157 @@ namespace gfuncs {
             }
         }
         return nullptr;
+    }
+
+    void RefreshItemMenu() {
+        if (gui->IsItemMenuOpen()) {
+            RE::SendUIMessage::SendInventoryUpdateMessage(gfuncsPlayerRef, nullptr);
+        }
+    }
+
+    bool SetAliasQuestObjectFlag(RE::BGSBaseAlias* akAlias, bool set) {
+        if (!akAlias) {
+            return false;
+        }
+        if (akAlias->IsQuestObject() != set) {
+            if (set) {
+                akAlias->flags.set(RE::BGSBaseAlias::FLAGS::kQuestObject);
+            }
+            else {
+                akAlias->flags.reset(RE::BGSBaseAlias::FLAGS::kQuestObject);
+            }
+        }
+        return (akAlias->IsQuestObject() == set);
+    }
+
+    bool IsAliasQuestObjectFlagSet(RE::BGSBaseAlias* akAlias) {
+        if (!akAlias) {
+            return false;
+        }
+        return akAlias->IsQuestObject();
+    }
+
+    bool IsQuestObject(RE::TESObjectREFR* ref) {
+        if (!IsFormValid(ref)) {
+            return false;
+        }
+
+        auto aliasArray = ref->extraList.GetByType<RE::ExtraAliasInstanceArray>();
+        if (aliasArray) {
+            //logger::trace("{}: alias array for ref[{}] found", __func__, ref->GetDisplayFullName());
+            for (auto* akAlias : aliasArray->aliases) {
+                if (akAlias) {
+                    if (akAlias->alias) {
+                        if (akAlias->alias->IsQuestObject()) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        //else {
+            //logger::trace("{}: alias array for ref[{}] not found", __func__, ref->GetDisplayFullName());
+        //}
+        return false;
+    }
+
+    //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
+    bool ContainerContainsRef(RE::TESObjectREFR* containerRef, RE::TESObjectREFR* ref) {
+        if (!IsFormValid(containerRef)) {
+            return false;
+        }
+
+        if (!IsFormValid(ref)) {
+            return false;
+        }
+
+        auto* baseCont = containerRef->GetBaseObject();
+        if (!IsFormValid(baseCont)) {
+            return false;
+        }
+
+        auto* container = skyrim_cast<RE::TESObjectCONT*>(baseCont);
+        if (!IsFormValid(container)) {
+            auto* npc = skyrim_cast<RE::TESNPC*>(baseCont);
+            if (!IsFormValid(npc)) {
+                return false;
+            }
+        }
+
+        using func_t = std::int32_t(*)(RE::TESObjectREFR*, RE::TESForm*, std::int64_t, std::int32_t);
+        REL::Relocation<func_t> func{ REL::VariantID(56062, 56497, 0x9E4710) };
+        std::int32_t result = func(containerRef, ref, NULL, NULL);
+        return (result == 1);
+    }
+
+    //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
+    std::int32_t GetBaseFormCount(RE::TESObjectREFR* containerRef, RE::TESBoundObject* akForm) {
+        std::int32_t result = 0;
+
+        if (!IsFormValid(containerRef)) {
+            return result;
+        }
+
+        if (!IsFormValid(akForm)) {
+            return result;
+        }
+
+        auto* baseCont = containerRef->GetBaseObject();
+        if (!IsFormValid(baseCont)) {
+            return result;
+        }
+
+        auto* container = skyrim_cast<RE::TESObjectCONT*>(baseCont);
+        if (!IsFormValid(container)) {
+            auto* npc = skyrim_cast<RE::TESNPC*>(baseCont);
+            if (!IsFormValid(npc)) {
+                return result;
+            }
+        }
+
+        using func_t = std::int32_t(*)(RE::TESObjectREFR*, RE::TESForm*, std::int64_t, std::int32_t);
+        REL::Relocation<func_t> func{ REL::VariantID(56062, 56497, 0x9E4710) };
+        result = func(containerRef, akForm, NULL, NULL);
+        return result;
+    }
+
+    //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
+    std::int32_t GetItemCount(RE::TESObjectREFR* containerRef, RE::TESForm* item) {
+        std::int32_t result = 0;
+
+        if (!IsFormValid(containerRef)) {
+            return result;
+        }
+
+        if (!IsFormValid(item)) {
+            return result;
+        } 
+
+        auto* baseCont = containerRef->GetBaseObject();
+        if (!IsFormValid(baseCont)) {
+            return result;
+        } 
+
+        auto* container = skyrim_cast<RE::TESObjectCONT*>(baseCont);
+        if (!IsFormValid(container)) {
+            auto* npc = skyrim_cast<RE::TESNPC*>(baseCont);
+            if (!IsFormValid(npc)) {
+                return result;
+            }
+        }
+
+        auto* boundObj = skyrim_cast<RE::TESBoundObject*>(item);
+        if (!IsFormValid(boundObj)) {
+            auto* ref = skyrim_cast<RE::TESObjectREFR*>(item);
+            if (!IsFormValid(ref)) {
+                return result;
+            }
+        }
+
+        using func_t = std::int32_t(*)(RE::TESObjectREFR*, RE::TESForm*, std::int64_t, std::int32_t);
+        REL::Relocation<func_t> func{ REL::VariantID(56062, 56497, 0x9E4710) };
+        result = func(containerRef, item, NULL, NULL);
+        return result;
     }
 
     void String_ReplaceAll(std::string& s, std::string searchString, std::string replaceString) {
@@ -919,5 +1169,6 @@ namespace gfuncs {
             std::srand((unsigned)std::time(NULL));
         }
         if (!gfuncsPlayerRef) { gfuncsPlayerRef = RE::TESForm::LookupByID<RE::TESForm>(20)->As<RE::Actor>(); }
+        if (!gui) {gui = RE::UI::GetSingleton(); }
     }
 }
