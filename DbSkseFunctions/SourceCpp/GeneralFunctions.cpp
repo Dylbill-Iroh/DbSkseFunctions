@@ -15,6 +15,46 @@ namespace gfuncs {
     RE::Actor* gfuncsPlayerRef;
     RE::UI* gui;
 
+    enum logLevel { trace, debug, info, warn, error, critical };
+    enum debugLevel { notification, messageBox };
+
+    void LogAndMessage(std::string message, int logLevel, int debugLevel) {
+        switch (logLevel) {
+        case trace:
+            logger::trace("{}", message);
+            break;
+
+        case debug:
+            logger::debug("{}", message);
+            break;
+
+        case info:
+            logger::info("{}", message);
+            break;
+
+        case warn:
+            logger::warn("{}", message);
+            break;
+
+        case error:
+            logger::error("{}", message);
+            break;
+
+        case critical:
+            logger::critical("{}", message);
+            break;
+        }
+
+        /*switch (debugLevel) {
+        case notification:
+            RE::DebugNotification(message.data());
+            break;
+        case messageBox:
+            RE::DebugMessageBox(message.data());
+            break;
+        }*/
+    }
+
     std::string uint32_to_string(uint32_t value) {
         std::array<char, 4> r;
         r[0] = static_cast<char>((value >> 24) & 0xFF);
@@ -352,6 +392,54 @@ namespace gfuncs {
         return false;
     }
 
+    bool IsScriptAttachedToRef(RE::TESObjectREFR* ref, RE::BSFixedString sScriptName) {
+        if (!gfuncs::IsFormValid(ref)) {
+            return false;
+        }
+
+        RE::VMHandle handle = GetHandle(ref);
+        return IsScriptAttachedToHandle(handle, sScriptName);
+    }
+
+    bool IsScriptAttachedToForm(RE::TESForm* akForm, RE::BSFixedString sScriptName) {
+        if (!IsFormValid(akForm)) {
+            return false;
+        }
+
+        RE::VMHandle handle = gfuncs::GetHandle(akForm);
+        return IsScriptAttachedToHandle(handle, sScriptName);
+    }
+
+    RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedString& sScriptName) {
+        if (handle == NULL) {
+            return nullptr;
+        }
+
+        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (!vm) {
+            return nullptr;
+        }
+
+        auto it = vm->attachedScripts.find(handle);
+        if (it != vm->attachedScripts.end()) {
+            for (int i = 0; i < it->second.size(); i++) {
+                auto& attachedScript = it->second[i];
+                if (attachedScript) {
+                    auto* script = attachedScript.get();
+                    if (script) {
+                        auto info = script->GetTypeInfo();
+                        if (info) {
+                            if (info->name == sScriptName) {
+                                return script;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return nullptr;
+    }
+
     RE::Actor* GetPlayerDialogueTarget() {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
@@ -529,6 +617,20 @@ namespace gfuncs {
         result = func(containerRef, item, NULL, NULL);
         return result;
     }
+
+    bool formIsBowOrCrossbow(RE::TESForm* akForm) {
+        if (!gfuncs::IsFormValid(akForm)) {
+            return false;
+        }
+        RE::TESObjectWEAP* weapon = akForm->As<RE::TESObjectWEAP>();
+        if (gfuncs::IsFormValid(weapon)) {
+            if (weapon->IsBow() || weapon->IsCrossbow()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 
     void String_ReplaceAll(std::string& s, std::string searchString, std::string replaceString) {
         if (s == "" || searchString == "") {
@@ -1161,6 +1263,20 @@ namespace gfuncs {
         }
 
         delete args; //args is created using makeFunctionArguments. Delete as it's no longer needed.
+    }
+
+    RE::TESForm* FindNullForm() {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+
+        for (auto& [id, form] : *allForms) {
+            if (form) {
+                if (form->GetFormType() == RE::FormType::None) {
+                    logger::trace("null TESForm* found");
+                    return form;
+                }
+            }
+        }
+        return nullptr;
     }
 
     void Install() {

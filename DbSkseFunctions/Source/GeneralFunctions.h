@@ -5,6 +5,8 @@ namespace gfuncs {
     RE::TESObjectREFR* lastPlayerActivatedRef;
     RE::TESObjectREFR* menuRef;
     RE::Actor* svPlayerRef;*/
+    void LogAndMessage(std::string message, int logLevel = 0, int debugLevel = 0);
+
     std::string uint32_to_string(uint32_t value);
 
     int GetRandomInt(int min, int max);
@@ -54,6 +56,12 @@ namespace gfuncs {
 
     bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName);
 
+    bool IsScriptAttachedToRef(RE::TESObjectREFR* ref, RE::BSFixedString sScriptName);
+
+    bool IsScriptAttachedToForm(RE::TESForm* akForm, RE::BSFixedString sScriptName);
+
+    RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedString& sScriptName);
+
     RE::Actor* GetPlayerDialogueTarget();
 
     void RefreshItemMenu();
@@ -72,6 +80,8 @@ namespace gfuncs {
 
     //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
     std::int32_t GetItemCount(RE::TESObjectREFR* containerRef, RE::TESForm* item);
+
+    bool formIsBowOrCrossbow(RE::TESForm* akForm);
 
     template< typename T >
     std::string IntToHex(T i)
@@ -127,6 +137,8 @@ namespace gfuncs {
     void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& formHandles);
 
     void SendEvents(std::vector<RE::VMHandle> handles, RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args);
+    
+    RE::TESForm* FindNullForm();
 
     void Install();
 }

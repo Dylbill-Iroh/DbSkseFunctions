@@ -35,14 +35,25 @@ find_package(CommonLibSSE CONFIG REQUIRED)
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES plugin.cpp) # <--- specifies plugin.cpp
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is required!
- 
+
 # Must have PUBLIC on its own at the end of target_sources
 target_sources(${PROJECT_NAME} 
+PUBLIC SourceCpp/Actor.cpp
+PUBLIC SourceCpp/ArtObject.cpp
+PUBLIC SourceCpp/Book.cpp
 PUBLIC SourceCpp/ConsoleUtil.cpp
+PUBLIC SourceCpp/CreateForms.cpp
+PUBLIC SourceCpp/FormVectorGetters.cpp
 PUBLIC SourceCpp/GeneralFunctions.cpp
+PUBLIC SourceCpp/Magic.cpp
+PUBLIC SourceCpp/MapMarker.cpp
 PUBLIC SourceCpp/PapyrusUtilEx.cpp
+PUBLIC SourceCpp/ProjectileFunctions.cpp
 PUBLIC SourceCpp/SendUIMessage.cpp
 PUBLIC SourceCpp/Serialization.cpp
+PUBLIC SourceCpp/Sound.cpp
+PUBLIC SourceCpp/Timers.cpp
+PUBLIC SourceCpp/Utility.cpp
 PUBLIC
 )
    
@@ -81,6 +92,6 @@ if(DEFINED OUTPUT_FOLDER)
     endif()
 endif()
 
-if(MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /bigobj")
-endif()
+# if(MSVC)
+#     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /bigobj")
+# endif()

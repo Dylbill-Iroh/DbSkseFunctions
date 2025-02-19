@@ -895,3 +895,13 @@ ObjectReference[] function GetCurrentMapMarkerRefs(int visibleFilter = -1, int c
 ;  0 = (false) only get markers that are not visible or can't be fast traveled to 
 ;  1 = (true)  only get markers that are visible or that can be fast traveled to
 ObjectReference[] function GetAllMapMarkerRefs(int visibleFilter = -1, int canTravelToFilter = -1) Global Native
+
+;This function isn't working yet. Technically it's being set successfully internally but can't get it to display in game. 
+;At least with VisualEffect.play(). I'm working on a fix for this.
+function SetArtObjectNthTextureSet(art artObject, TextureSet textureSet, int n) Global Native
+
+TextureSet function GetArtObjectNthTextureSet(art akArtObject, int n) Global Native
+
+String function GetArtObjectModelNth3dName(art akArtObject, int n) Global Native
+
+int function GetArtObjectNumOfTextureSets(art akArtObject) Global Native
