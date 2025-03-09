@@ -905,3 +905,61 @@ TextureSet function GetArtObjectNthTextureSet(art akArtObject, int n) Global Nat
 String function GetArtObjectModelNth3dName(art akArtObject, int n) Global Native
 
 int function GetArtObjectNumOfTextureSets(art akArtObject) Global Native
+
+;UI functions. These are for use with skse's UI.psc script. Valid menuNames are the same as in UI.psc
+;These will allow you to explore UI targets without needing adobe flash.
+;Before using these functions make sure the menu is open with for example "If (UI.IsMenuOpen("InventoryMenu"))"
+
+;Get all target members that the UI target has. 
+;Example, start with "GetUiTargetMembers("InventoryMenu", "_root)"
+;This will get all target members that _root has. One will be Menu_mc.
+;Then you can do "GetUiTargetMembers("InventoryMenu", "_root.Menu_mc)"
+;And so on and so forth. Another good starting place is for example "GetUiTargetMembers("InventoryMenu", "_global)"
+string[] function GetUiTargetMembers(string menuName, string target) Global Native
+
+;This is the same as GetUiTargetMembers except it gets the type, current value and full target path of members. 
+;Example, start with "UI.GetUiTargetMembers("InventoryMenu", "_root.Menu_mc)"
+;One string in the array will be "type[bool] value[true] member[_root.Menu_mc._visible]"
+string[] function GetUiTargetMembersData(string menuName, string target) Global Native
+
+;types are: 
+;Undefined = 0
+;Null = 1
+;Boolean = 2
+;Number = 3
+;String = 4
+;StringW = 5
+;Object = 6
+;Array = 7
+;DisplayObject = 8
+int function GetUITargetType(string menuName, string target) Global Native
+
+string function GetUITargetTypeAsString(string menuName, string target) Global Native
+
+;Instead of UI.GetBool, UI.GetString ect, gets the current value of the target as string. Bools will be "true" or "false".
+string function GetUITargetValueAsString(string menuName, string target) Global Native
+
+function TraceUiMenuTargetMembersData(string menu, string target, string asUserLog = "") Global
+	int iType = DbSkseFunctions.GetUITargetType(menu, target)
+	string sType = DbSkseFunctions.GetUITargetTypeAsString(menu, target)
+	string sValue = DbSkseFunctions.GetUITargetValueAsString(menu, target)
+
+	String[] Members = DbSkseFunctions.GetUiTargetMembersData(menu, target)
+	int i = 0 
+    
+    string msg = ("Getting members for menu[" + menu + "] target[" + target + "] iType[" + iType + "] sType[" + sType + "] sValue[" + sValue + "]")
+
+    if asUserLog == ""
+        Debug.trace(msg)
+        while i < Members.length 
+            Debug.trace(Members[i])
+            i += 1
+        EndWhile
+    Else 
+        Debug.traceUser(asUserLog, msg)
+        while i < Members.length 
+            Debug.traceUser(asUserLog, Members[i])
+            i += 1
+        EndWhile
+    Endif
+EndFunction

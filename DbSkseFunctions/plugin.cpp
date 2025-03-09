@@ -11,6 +11,7 @@
 #include <mutex>
 #include <thread>
 #include "mini/ini.h"
+#include "logger.h"
 #include "GeneralFunctions.h"
 #include "Magic.h"
 #include "Utility.h"
@@ -29,6 +30,9 @@
 #include "Sound.h"
 #include "Serialization.h"
 #include "Timers.h"
+#include "mINIHelper.h"
+#include "FileSystem.h"
+#include "UIGfx.h"
 
 namespace logger = SKSE::log;
 bool bPlayerIsInCombat = false;
@@ -131,7 +135,9 @@ struct TrackedActorAmmoData {
 //general functions============================================================================================================================================================
 
 void SetSettingsFromIniFile() {
-    auto ini = mINI::GetIniFile("Data/SKSE/Plugins/DbSkseFunctions.ini");
+    mINI::INIFile file("Data/SKSE/Plugins/DbSkseFunctions.ini");
+    mINI::INIStructure ini;
+    file.read(ini);
 
     gameTimerPollingInterval = (mINI::GetIniFloat(ini, "Main", "gameTimerPollingInterval", 1.5) * 1000);
     if (gameTimerPollingInterval < 100) {
@@ -143,25 +149,8 @@ void SetSettingsFromIniFile() {
         iMaxArrowsSavedPerReference = 0;
     }
 
-    logger::info("{} gameTimerPollingInterval set to {} ", __func__, gameTimerPollingInterval);
-    logger::info("{} iMaxArrowsSavedPerReference set to {} ", __func__, iMaxArrowsSavedPerReference);
-}
-
-void SetupLog() {
-    auto ini = mINI::GetIniFile("Data/SKSE/Plugins/DbSkseFunctions.ini");
-    int akLevel = mINI::GetIniInt(ini, "LOG", "iMinLevel", 3);
-    spdlog::level::level_enum iLevel = static_cast<spdlog::level::level_enum>(akLevel);
-
-    auto logsFolder = SKSE::log::log_directory();
-    if (!logsFolder) SKSE::stl::report_and_fail("SKSE log_directory not provided, logs disabled.");
-    auto pluginName = SKSE::PluginDeclaration::GetSingleton()->GetName();
-    auto logFilePath = *logsFolder / std::format("{}.log", pluginName);
-    auto fileLoggerPtr = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logFilePath.string(), true);
-    auto loggerPtr = std::make_shared<spdlog::logger>("log", std::move(fileLoggerPtr));
-    spdlog::set_default_logger(std::move(loggerPtr));
-    spdlog::set_level(iLevel);
-    spdlog::flush_on(spdlog::level::trace);
-    logger::info("{} level set to {}", __func__, akLevel);
+    logger::info("gameTimerPollingInterval set to {} ", gameTimerPollingInterval);
+    logger::info("iMaxArrowsSavedPerReference set to {} ", iMaxArrowsSavedPerReference);
 }
 
 enum logLevel { trace, debug, info, warn, error, critical };
@@ -169,11 +158,11 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(8.5);
+    return float(8.6);
 }
 
 RE::TESWorldSpace* GetCellWorldSpace(RE::StaticFunctionTag*, RE::TESObjectCELL* akCell) {
-    //logger::trace("{}: called", __func__);
+    //logger::trace("called");
     if (gfuncs::IsFormValid(akCell)) {
         RE::TESWorldSpace* worldSpace = akCell->GetRuntimeData().worldSpace;
         if (gfuncs::IsFormValid(worldSpace)) {
@@ -185,7 +174,7 @@ RE::TESWorldSpace* GetCellWorldSpace(RE::StaticFunctionTag*, RE::TESObjectCELL* 
 }
 
 RE::BGSLocation* GetCellLocation(RE::StaticFunctionTag*, RE::TESObjectCELL* akCell) {
-    //logger::trace("{}: called", __func__);
+    //logger::trace("called");
     if (gfuncs::IsFormValid(akCell)) {
         RE::BGSLocation* location = akCell->GetLocation();
         if (gfuncs::IsFormValid(location)) {
@@ -224,7 +213,7 @@ RE::TESObjectREFR* GetLastPlayerMenuActivatedRef(RE::StaticFunctionTag*) {
 
 RE::TESObjectREFR* GetAshPileLinkedRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
     if (!gfuncs::IsFormValid(ref)) {
-        logger::warn("{}: ref doesn't exist or isn't valid", __func__);
+        logger::warn("ref doesn't exist or isn't valid");
         return nullptr;
     }
 
@@ -306,15 +295,15 @@ int GetClosestObjectIndexFromRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref,
 }
 
 void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_command, RE::TESObjectREFR* objRef) {
-    gfuncs::LogAndMessage(std::format("{} called. Command = {}", __func__, a_command));
+    gfuncs::LogAndMessage(std::format("called. Command = {}", a_command));
     ConsoleUtil::ExecuteCommand(a_command, objRef);
 }
 
 bool HasCollision(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef) {
-    gfuncs::LogAndMessage(std::format("{} called", __func__));
+    gfuncs::LogAndMessage(std::format("called"));
 
     if (!gfuncs::IsFormValid(objRef)) {
-        logger::warn("{}: objRef doesn't exist", __func__);
+        logger::warn("objRef doesn't exist");
         return false;
     }
     return objRef->HasCollision();
@@ -322,7 +311,7 @@ bool HasCollision(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef) {
 
 int GetFurnitureWorkbenchType(RE::StaticFunctionTag*, RE::TESFurniture* akFurniture) {
     if (!gfuncs::IsFormValid(akFurniture)) {
-        logger::warn("{}: akFurniture doesn't exist or isn't valid", __func__);
+        logger::warn("akFurniture doesn't exist or isn't valid");
         return -1;
     }
 
@@ -331,7 +320,7 @@ int GetFurnitureWorkbenchType(RE::StaticFunctionTag*, RE::TESFurniture* akFurnit
 
 int GetFurnitureWorkbenchSkillInt(RE::StaticFunctionTag*, RE::TESFurniture* akFurniture) {
     if (!gfuncs::IsFormValid(akFurniture)) {
-        logger::warn("{}: akFurniture doesn't exist or isn't valid", __func__);
+        logger::warn("akFurniture doesn't exist or isn't valid");
         return -1;
     }
 
@@ -340,7 +329,7 @@ int GetFurnitureWorkbenchSkillInt(RE::StaticFunctionTag*, RE::TESFurniture* akFu
 
 std::string GetFurnitureWorkbenchSkillString(RE::StaticFunctionTag*, RE::TESFurniture* akFurniture) {
     if (!gfuncs::IsFormValid(akFurniture)) {
-        logger::warn("{}: akFurniture doesn't exist or isn't valid", __func__);
+        logger::warn("akFurniture doesn't exist or isn't valid");
         return "";
     }
 
@@ -349,21 +338,21 @@ std::string GetFurnitureWorkbenchSkillString(RE::StaticFunctionTag*, RE::TESFurn
 }
 
 std::string GetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword) {
-    logger::trace("{}", __func__);
+    logger::trace("");
     if (!gfuncs::IsFormValid(akKeyword)) {
-        logger::warn("{} akKeyword doesn't exist", __func__);
+        logger::warn("akKeyword doesn't exist");
         return "";
     }
     return std::string(akKeyword->GetFormEditorID());
 }
 
 void SetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword, std::string keywordString) {
-    logger::trace("{} {}", __func__, keywordString);
+    logger::trace("{}", keywordString);
 
     //if (!savedFormIDs) { savedFormIDs = new SavedFormIDs(); }
 
     if (!gfuncs::IsFormValid(akKeyword)) {
-        logger::warn("{} akKeyword doesn't exist", __func__);
+        logger::warn("akKeyword doesn't exist");
         return;
     }
     akKeyword->SetFormEditorID(keywordString.c_str());
@@ -404,24 +393,24 @@ void SaveAllAmmoProjectilesFromPapyrus() {
     //auto* args = RE::MakeFunctionArguments((std::vector<RE::TESAmmo*>)allAmmos);
     //RE::BSFixedString sEvent = "DbSkseFunctions_OnSaveAllAmmoProjectiles";
     //vm->SendEventAll(sEvent, args);
-    //logger::debug("{} sending event to papyrus to save ammo projectiles. Size of ammos = {}", __func__, allAmmos.size());
+    //logger::debug("sending event to papyrus to save ammo projectiles. Size of ammos = {}", allAmmos.size());
 }
 
 //called from DbSkseCppCallbackEvents papyrus script on init and game load
 void SetDbSkseCppCallbackEventsAttached(RE::StaticFunctionTag*) {
     //DbSkseCppCallbackEventsAttached = true;
-    //logger::trace("{} called", __func__);
+    //logger::trace("called");
     //SaveAllAmmoProjectilesFromPapyrus();
 }
 
 void DbSkseCppCallbackLoad() {
     //if (!gfuncs::IsScriptAttachedToRef(playerRef, "DbSkseCppCallbackEvents")) {
-    //    logger::debug("{} attaching DbSkseCppCallbackEvents script to the player.", __func__);
+    //    logger::debug("attaching DbSkseCppCallbackEvents script to the player.");
     //    ConsoleUtil::ExecuteCommand("player.aps DbSkseCppCallbackEvents", nullptr);
     // 
     //}
     //else {
-    //    logger::debug("{} DbSkseCppCallbackEvents script already attached to the player", __func__);
+    //    logger::debug("DbSkseCppCallbackEvents script already attached to the player");
     //}
 }
 
@@ -535,7 +524,7 @@ struct EventData {
                 int handleIndex = gfuncs::GetIndexInVector(it->second, handle);
                 if (handleIndex == -1) { //handle not already added for this form param
                     it->second.push_back(handle);
-                    logger::debug("{}: akForm[{}] ID[{:x}] found, handles sixe[{}]", __func__, gfuncs::GetFormName(akForm), akForm->GetFormID(), it->second.size());
+                    logger::debug("akForm[{}] ID[{:x}] found, handles sixe[{}]", gfuncs::GetFormName(akForm), akForm->GetFormID(), it->second.size());
                 }
             }
             else { //form not found
@@ -543,7 +532,7 @@ struct EventData {
                 handles.push_back(handle);
                 eventFormHandles.insert(std::pair<RE::TESForm*, std::vector<RE::VMHandle>>(akForm, handles));
 
-                logger::debug("{}: akForm[{}] ID[{:x}] doesn't already have handles, handles size[{}] eventFormHandles size[{}]", __func__, gfuncs::GetFormName(akForm), akForm->GetFormID(), handles.size(), eventFormHandles.size());
+                logger::debug("akForm[{}] ID[{:x}] doesn't already have handles, handles size[{}] eventFormHandles size[{}]", gfuncs::GetFormName(akForm), akForm->GetFormID(), handles.size(), eventFormHandles.size());
             }
         }
 
@@ -604,11 +593,11 @@ struct EventData {
             InsertIntoFormHandles(handle, paramFilter, eventParamMaps[paramFilterIndex]);
 
             if (eventSinkIndex == EventEnum_OnCombatStateChanged && paramFilterIndex == 0) {
-                logger::debug("{}: adding handle for Combat State change", __func__);
+                logger::debug("adding handle for Combat State change");
                 if (paramFilter->As<RE::Actor>() == playerRef) {
                     //playerForm = paramFilter;
                     bRegisteredForPlayerCombatChange = true;
-                    logger::debug("{}: bRegisteredForPlayerCombatChange = true", __func__);
+                    logger::debug("bRegisteredForPlayerCombatChange = true");
                 }
             }
         }
@@ -641,7 +630,7 @@ struct EventData {
             if (index < 0) {
                 index = 0;
             }
-            logger::debug("{}: eventSinkIndex [{}] Index = [{}]", __func__, eventSinkIndex, index);
+            logger::debug("eventSinkIndex [{}] Index = [{}]", eventSinkIndex, index);
             EraseFromFormHandles(handle, paramFilter, eventParamMaps[paramFilterIndex]);
         }
 
@@ -695,7 +684,7 @@ struct EventData {
 
         std::size_t size;
         if (!a_intfc->ReadRecordData(size)) {
-            logger::error("{}: Event[{}] Failed to load size of eventParamMaps!", __func__, sEvent);
+            logger::error("Event[{}] Failed to load size of eventParamMaps!", sEvent);
             return false;
         }
 
@@ -709,7 +698,7 @@ struct EventData {
 
     bool Save(SKSE::SerializationInterface* a_intfc) {
         if (!a_intfc->OpenRecord(record, 1)) {
-            logger::error("{}: Failed to open record[{}]", __func__, record);
+            logger::error("Failed to open record[{}]", record);
             return false;
         }
 
@@ -720,7 +709,7 @@ struct EventData {
         const std::size_t size = eventParamMaps.size();
 
         if (!a_intfc->WriteRecordData(size)) {
-            logger::error("{}: record[{}] Failed to write size of arr!", __func__, record);
+            logger::error("record[{}] Failed to write size of arr!", record);
             return false;
         }
 
@@ -1027,7 +1016,7 @@ TrackedProjectileData GetRecentTrackedProjectileData(RE::TESObjectREFR* shooter,
                 for (int i = it->second.size() - 1; i >= 0; --i) {
                     auto akData = it->second[i];
                     float hitTimeDiff = GameHoursToRealTimeSeconds(nullptr, hitGameTime - akData.gameTimeStamp);
-                    //logger::trace("{}: hitTimeDiff = [{}]", __func__, hitTimeDiff);
+                    //logger::trace("hitTimeDiff = [{}]", hitTimeDiff);
                     if (hitTimeDiff < 0.1) {
                         if (akData.shooter == shooter && akData.target == target) {
                             return akData;
@@ -1252,7 +1241,7 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
 };
 
 void CheckForPlayerCombatStatusChange() {
-    logger::trace("{}", __func__);
+    logger::trace("");
 
     bool playerInCombat = player->IsInCombat();
     if (bPlayerIsInCombat != playerInCombat) {
@@ -1273,7 +1262,7 @@ void CheckForPlayerCombatStatusChange() {
             }
         }
 
-        logger::debug("{} target[{}]", __func__, gfuncs::GetFormName(target));
+        logger::debug("target[{}]", gfuncs::GetFormName(target));
 
         // RE::TESForm* Target = .attackedMember.get().get();
 
@@ -1558,7 +1547,7 @@ bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
                 animEventSink->actor = actor;
                 animationEventActorsMap.insert(std::pair<RE::TESObjectREFR*, AnimationEventSink*>(actorRef, animEventSink));
                 actor->AddAnimationGraphEventSink(animEventSink);
-                logger::info("{}: actor [{}]", __func__, gfuncs::GetFormName(actorRef));
+                logger::info("actor [{}]", gfuncs::GetFormName(actorRef));
                 return true;
             }
         }
@@ -1579,7 +1568,7 @@ bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
                         delete it->second;
                         it->second = nullptr;
                         animationEventActorsMap.erase(it);
-                        logger::debug("{}: actor [{}]", __func__, gfuncs::GetFormName(actorRef));
+                        logger::debug("actor [{}]", gfuncs::GetFormName(actorRef));
                         bUnregistered = true;
                     }
                 }
@@ -1588,13 +1577,13 @@ bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
                     delete it->second;
                     it->second = nullptr;
                     animationEventActorsMap.erase(it);
-                    logger::debug("{}: actor [{}]", __func__, gfuncs::GetFormName(actorRef));
+                    logger::debug("actor [{}]", gfuncs::GetFormName(actorRef));
                     bUnregistered = true;
                 }
             }
             else { //animation event doesn't exist
                 animationEventActorsMap.erase(it);
-                logger::debug("{}: actor [{}]", __func__, gfuncs::GetFormName(actorRef));
+                logger::debug("actor [{}]", gfuncs::GetFormName(actorRef));
                 bUnregistered = true;
             }
         }
@@ -2623,12 +2612,12 @@ QuestObjectiveEventSink* questObjectiveEventSink;
 RE::PLAYER_TARGET_LOC* GetPlayerQueuedTargetLoc() {
     if (REL::Module::IsAE()) {
         uint32_t offset = 0x648;
-        //logger::critical("{}: AE Offset [{:x}]", __func__, offset);
+        //logger::critical("AE Offset [{:x}]", offset);
         return reinterpret_cast<RE::PLAYER_TARGET_LOC*>((uintptr_t)player + offset);
     }
     else if (REL::Module::IsSE()) {
         uint32_t offset = 0x640;
-        //logger::critical("{}: SE Offset [{:x}]", __func__, offset);
+        //logger::critical("SE Offset [{:x}]", offset);
         return reinterpret_cast<RE::PLAYER_TARGET_LOC*>((uintptr_t)player + offset);
     }
     else {
@@ -3093,13 +3082,13 @@ bool ShouldActorActionEventSinkBeAdded() {
 
 //hit events use the equip event to track equipped ammo on actors
 bool AddEquipEventSink() {
-    logger::trace("{}", __func__);
+    logger::trace("");
     if (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() || !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty() || !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
         if (!equipEventSink->sinkAdded) {
             equipEventSink->sinkAdded = true;
             eventSourceholder->AddEventSink(equipEventSink);
             RegisterActorsForBowDrawAnimEvents();
-            logger::debug("{} Equip Event Sink Added", __func__);
+            logger::debug("Equip Event Sink Added");
             return true;
         }
     }
@@ -3107,12 +3096,12 @@ bool AddEquipEventSink() {
 }
 
 bool RemoveEquipEventSink() {
-    logger::trace("{}", __func__);
+    logger::trace("");
     if (eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() && eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty() && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
         if (equipEventSink->sinkAdded) {
             equipEventSink->sinkAdded = false;
             eventSourceholder->RemoveEventSink(equipEventSink); //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
-            logger::debug("{} Equip Event Sink Removed", __func__);
+            logger::debug("Equip Event Sink Removed");
             return true;
         }
     }
@@ -3123,7 +3112,7 @@ bool AddHitEventSink() {
     if (!hitEventSink->sinkAdded && (!eventDataPtrs[EventEnum_HitEvent]->isEmpty() || !eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty())) {
         hitEventSink->sinkAdded = true;
         eventSourceholder->AddEventSink(hitEventSink);
-        logger::trace("{}", __func__);
+        logger::trace("");
         return true;
     }
     return false;
@@ -3133,7 +3122,7 @@ bool RemoveHitEventSink() {
     if (hitEventSink->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty() && eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
         hitEventSink->sinkAdded = false;
         eventSourceholder->RemoveEventSink(hitEventSink);
-        logger::debug("{}", __func__);
+        logger::debug("");
         return true;
     }
     return false;
@@ -3150,7 +3139,7 @@ void AddSink(int index) {
             combatEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded = true;
             eventSourceholder->AddEventSink(combatEventSink);
-            logger::debug("{}, EventEnum_OnCombatStateChanged sink added", __func__);
+            logger::debug("EventEnum_OnCombatStateChanged sink added");
         }
         break;
 
@@ -3161,7 +3150,7 @@ void AddSink(int index) {
             furnitureEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded = true;
             eventSourceholder->AddEventSink(furnitureEventSink);
-            logger::debug("{}, EventEnum_FurnitureExit sink added", __func__);
+            logger::debug("EventEnum_FurnitureExit sink added");
         }
         break;
 
@@ -3169,20 +3158,20 @@ void AddSink(int index) {
         if (!eventDataPtrs[EventEnum_OnActivate]->sinkAdded && !eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = true;
             //eventSourceholder->AddEventSink(activateEventSink); //always activate to track lastPlayerActivatedRef
-            logger::debug("{}, EventEnum_OnActivate sink added", __func__);
+            logger::debug("EventEnum_OnActivate sink added");
         }
         break;
 
     case EventEnum_HitEvent:
         if (AddHitEventSink()) {
-            //logger::debug("{}, EventEnum_hitEvent sink added", __func__);
+            //logger::debug("EventEnum_hitEvent sink added");
         }
         if (AddEquipEventSink()); {
-            logger::debug("{}, EventEnum_HitEvent Equip event sink added", __func__);
+            logger::debug("EventEnum_HitEvent Equip event sink added");
         }
         if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = true;
-            logger::debug("{}, EventEnum_hitEvent sink added", __func__);
+            logger::debug("EventEnum_hitEvent sink added");
         }
         break;
 
@@ -3193,27 +3182,27 @@ void AddSink(int index) {
             deathEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_DeathEvent]->sinkAdded = true;
             eventSourceholder->AddEventSink(deathEventSink);
-            logger::debug("{}, EventEnum_DyingEvent sink added", __func__);
+            logger::debug("EventEnum_DyingEvent sink added");
         }
         break;
 
     case EventEnum_OnObjectEquipped:
         if (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty()) {
             eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = true;
-            logger::debug("{}, EventEnum_OnObjectEquipped sink added", __func__);
+            logger::debug("EventEnum_OnObjectEquipped sink added");
         }
         if (AddEquipEventSink()) {
-            logger::debug("{}, EventEnum_OnObjectEquipped Equip event sink added", __func__);
+            logger::debug("EventEnum_OnObjectEquipped Equip event sink added");
         }
         break;
 
     case EventEnum_OnObjectUnequipped:
         if (!eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty()) {
             eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded = true;
-            logger::debug("{}, EventEnum_OnObjectUnequipped sink added", __func__);
+            logger::debug("EventEnum_OnObjectUnequipped sink added");
         }
         if (AddEquipEventSink()) {
-            logger::debug("{}, EventEnum_OnObjectUnequipped Equip event sink added", __func__);
+            logger::debug("EventEnum_OnObjectUnequipped Equip event sink added");
         }
         break;
 
@@ -3222,7 +3211,7 @@ void AddSink(int index) {
             waitStartEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded = true;
             eventSourceholder->AddEventSink(waitStartEventSink);
-            logger::debug("{}, EventEnum_OnWaitStart sink added", __func__);
+            logger::debug("EventEnum_OnWaitStart sink added");
         }
         break;
 
@@ -3231,7 +3220,7 @@ void AddSink(int index) {
             waitStopEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded = true;
             eventSourceholder->AddEventSink(waitStopEventSink);
-            logger::debug("{}, EventEnum_OnWaitStop sink added", __func__);
+            logger::debug("EventEnum_OnWaitStop sink added");
         }
         break;
 
@@ -3240,7 +3229,7 @@ void AddSink(int index) {
             magicEffectApplyEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded = true;
             eventSourceholder->AddEventSink(magicEffectApplyEventSink);
-            logger::debug("{}, EventEnum_OnMagicEffectApply sink added", __func__);
+            logger::debug("EventEnum_OnMagicEffectApply sink added");
         }
         break;
 
@@ -3249,7 +3238,7 @@ void AddSink(int index) {
             spellCastEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = true;
             eventSourceholder->AddEventSink(spellCastEventSink);
-            logger::debug("{}, EventEnum_OnSpellCast sink added", __func__);
+            logger::debug("EventEnum_OnSpellCast sink added");
         }
         break;
 
@@ -3258,7 +3247,7 @@ void AddSink(int index) {
             containerChangedEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = true;
             eventSourceholder->AddEventSink(containerChangedEventSink);
-            logger::debug("{}, EventEnum_OnContainerChanged sink added", __func__);
+            logger::debug("EventEnum_OnContainerChanged sink added");
         }
         break;
 
@@ -3267,7 +3256,7 @@ void AddSink(int index) {
             lockChangedEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_LockChanged]->sinkAdded = true;
             eventSourceholder->AddEventSink(lockChangedEventSink);
-            logger::debug("{}, EventEnum_LockChanged sink added", __func__);
+            logger::debug("EventEnum_LockChanged sink added");
         }
         break;
 
@@ -3278,7 +3267,7 @@ void AddSink(int index) {
             openCloseEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnOpen]->sinkAdded = true;
             eventSourceholder->AddEventSink(openCloseEventSink);
-            logger::debug("{}, EventEnum_OnClose sink added", __func__);
+            logger::debug("EventEnum_OnClose sink added");
         }
         break;
 
@@ -3297,7 +3286,7 @@ void AddSink(int index) {
     case EventEnum_EndSheathe:
         if (!actorActionEventSink->sinkAdded && ShouldActorActionEventSinkBeAdded()) {
             actorActionEventSink->sinkAdded = true;
-            logger::debug("{}, actorActionEventSink sink added", __func__);
+            logger::debug("actorActionEventSink sink added");
             eventDataPtrs[EventEnum_EndSheathe]->sinkAdded = true;
             SKSE::GetActionEventSource()->AddEventSink(actorActionEventSink);
         }
@@ -3309,7 +3298,7 @@ void AddSink(int index) {
         }
         if (!eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded && !eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
             eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded = true;
-            logger::debug("{}, EventEnum_OnProjectileImpact sink added", __func__);
+            logger::debug("EventEnum_OnProjectileImpact sink added");
         }
         break;
 
@@ -3319,7 +3308,7 @@ void AddSink(int index) {
             eventDataPtrs[EventEnum_OnItemCrafted]->sinkAdded = true;
             UIEvents::InstallUiEventHook(UIEvents::UiItemMenuEnum_Crafting_Menu); //track crafting menu selection data, (mostly needed for item count).
             RE::ItemCrafted::GetEventSource()->AddEventSink(itemCraftedEventSink);
-            logger::debug("{}, EventEnum_OnItemCrafted sink added", __func__);
+            logger::debug("EventEnum_OnItemCrafted sink added");
         }
         break;
 
@@ -3329,7 +3318,7 @@ void AddSink(int index) {
             eventDataPtrs[EventEnum_OnItemsPickpocketed]->sinkAdded = true;
             UIEvents::InstallUiEventHook(UIEvents::UiItemMenuEnum_ContainerMenu); //track container menu selection data, (to get the form taken / pickpocketed).
             RE::ItemsPickpocketed::GetEventSource()->AddEventSink(itemsPickpocketedEventSink);
-            logger::debug("{}, EventEnum_OnItemsPickpocketed sink added", __func__);
+            logger::debug("EventEnum_OnItemsPickpocketed sink added");
         }
         break;
 
@@ -3338,7 +3327,7 @@ void AddSink(int index) {
             locationClearedEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnLocationCleared]->sinkAdded = true;
             RE::LocationCleared::GetEventSource()->AddEventSink(locationClearedEventSink);
-            logger::debug("{}, EventEnum_OnLocationCleared sink added", __func__);
+            logger::debug("EventEnum_OnLocationCleared sink added");
         }
         break;
 
@@ -3347,7 +3336,7 @@ void AddSink(int index) {
             enterBleedoutEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnEnterBleedout]->sinkAdded = true;
             eventSourceholder->AddEventSink(enterBleedoutEventSink);
-            logger::debug("{}, EventEnum_OnEnterBleedout sink added", __func__);
+            logger::debug("EventEnum_OnEnterBleedout sink added");
         }
         break;
 
@@ -3358,7 +3347,7 @@ void AddSink(int index) {
             SaveActorRaces(); //save current actors loaded in game race's
             eventSourceholder->AddEventSink(switchRaceCompleteEventSink);
             eventSourceholder->AddEventSink(objectInitEventSink); //save new actors loaded races to send akOldRace parameter on switchRaceComplete event
-            logger::debug("{}, EventEnum_OnSwitchRaceComplete sink added", __func__);
+            logger::debug("EventEnum_OnSwitchRaceComplete sink added");
         }
         break;
 
@@ -3367,7 +3356,7 @@ void AddSink(int index) {
             footstepEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnActorFootStep]->sinkAdded = true;
             RE::BGSFootstepManager::GetSingleton()->AddEventSink(footstepEventSink);
-            logger::debug("{}, EventEnum_OnActorFootStep sink added", __func__);
+            logger::debug("EventEnum_OnActorFootStep sink added");
         }
         break;
 
@@ -3376,7 +3365,7 @@ void AddSink(int index) {
             questObjectiveEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->sinkAdded = true;
             RE::ObjectiveState::GetEventSource()->AddEventSink(questObjectiveEventSink);
-            logger::debug("{}, EventEnum_OnQuestObjectiveStateChanged sink added", __func__);
+            logger::debug("EventEnum_OnQuestObjectiveStateChanged sink added");
         }
         break;
 
@@ -3388,10 +3377,10 @@ void AddSink(int index) {
             if (posPlayerEventSource) {
                 positionPlayerEventSink->sinkAdded = true;
                 posPlayerEventSource->AddEventSink(positionPlayerEventSink);
-                logger::debug("{}, positionPlayerEventSink added", __func__);
+                logger::debug("positionPlayerEventSink added");
             }
             else {
-                logger::error("{}, posPlayerEventSource not found, positionPlayerEventSink sink not added", __func__);
+                logger::error("posPlayerEventSource not found, positionPlayerEventSink sink not added");
             }
         }
         break;
@@ -3404,10 +3393,10 @@ void AddSink(int index) {
                 eventDataPtrs[EventEnum_OnPlayerChangeCell]->sinkAdded = true;
                 //actorCellEventSink->previousCell = playerRef->GetParentCell();
                 playerCellChangeSource->AddEventSink(actorCellEventSink);
-                logger::debug("{}, EventEnum_OnPlayerChangeCell sink added", __func__);
+                logger::debug("EventEnum_OnPlayerChangeCell sink added");
             }
             else {
-                logger::error("{}, playerCellChangeSource not found, EventEnum_OnPlayerChangeCell sink not added", __func__);
+                logger::error("playerCellChangeSource not found, EventEnum_OnPlayerChangeCell sink not added");
             }
         }
         break;
@@ -3423,7 +3412,7 @@ void RemoveSink(int index) {
             combatEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(combatEventSink);
-            logger::debug("{}, EventEnum_OnCombatStateChanged sink removed", __func__);
+            logger::debug("EventEnum_OnCombatStateChanged sink removed");
         }
         break;
 
@@ -3434,7 +3423,7 @@ void RemoveSink(int index) {
             furnitureEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(furnitureEventSink);
-            logger::debug("{}, EventEnum_FurnitureEnter sink removed", __func__);
+            logger::debug("EventEnum_FurnitureEnter sink removed");
         }
         break;
 
@@ -3442,20 +3431,20 @@ void RemoveSink(int index) {
         if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded && eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = false;
             //eventSourceholder->RemoveEventSink(activateEventSink); //always activate to track lastPlayerActivatedRef
-            logger::debug("{}, EventEnum_OnActivate sink removed", __func__);
+            logger::debug("EventEnum_OnActivate sink removed");
         }
         break;
 
     case EventEnum_HitEvent:
         if (RemoveHitEventSink()) {
-            //logger::debug("{}, EventEnum_hitEvent sink removed", __func__);
+            //logger::debug("EventEnum_hitEvent sink removed");
         }
         if (RemoveEquipEventSink()) {
-            logger::debug("{}, EventEnum_HitEvent equip event sink removed", __func__);
+            logger::debug("EventEnum_HitEvent equip event sink removed");
         }
         if (eventDataPtrs[EventEnum_HitEvent]->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = false;
-            logger::debug("{}, EventEnum_hitEvent sink removed", __func__);
+            logger::debug("EventEnum_hitEvent sink removed");
         }
         break;
 
@@ -3466,27 +3455,27 @@ void RemoveSink(int index) {
             deathEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_DeathEvent]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(deathEventSink);
-            logger::debug("{}, EventEnum_DeathEvent sink removed", __func__);
+            logger::debug("EventEnum_DeathEvent sink removed");
         }
         break;
 
     case EventEnum_OnObjectEquipped:
         if (eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty()) {
             eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = false;
-            logger::debug("{}, EventEnum_OnObjectEquipped sink removed", __func__);
+            logger::debug("EventEnum_OnObjectEquipped sink removed");
         }
         if (RemoveEquipEventSink()) {
-            logger::debug("{}, EventEnum_OnObjectEquipped equip event sink removed", __func__);
+            logger::debug("EventEnum_OnObjectEquipped equip event sink removed");
         }
         break;
 
     case EventEnum_OnObjectUnequipped:
         if (eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty()) {
             eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded = false;
-            logger::debug("{}, EventEnum_OnObjectUnequipped sink removed", __func__);
+            logger::debug("EventEnum_OnObjectUnequipped sink removed");
         }
         if (RemoveEquipEventSink()) {
-            logger::debug("{}, EventEnum_OnObjectUnequipped equip event sink removed", __func__);
+            logger::debug("EventEnum_OnObjectUnequipped equip event sink removed");
         }
         break;
 
@@ -3495,7 +3484,7 @@ void RemoveSink(int index) {
             waitStartEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(waitStartEventSink);
-            logger::debug("{}, EventEnum_OnWaitStart sink removed", __func__);
+            logger::debug("EventEnum_OnWaitStart sink removed");
         }
         break;
 
@@ -3504,7 +3493,7 @@ void RemoveSink(int index) {
             waitStopEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(waitStopEventSink);
-            logger::debug("{}, EventEnum_OnWaitStop sink removed", __func__);
+            logger::debug("EventEnum_OnWaitStop sink removed");
         }
         break;
 
@@ -3513,7 +3502,7 @@ void RemoveSink(int index) {
             magicEffectApplyEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(magicEffectApplyEventSink);
-            logger::debug("{}, EventEnum_OnMagicEffectApply sink removed", __func__);
+            logger::debug("EventEnum_OnMagicEffectApply sink removed");
         }
         break;
 
@@ -3522,7 +3511,7 @@ void RemoveSink(int index) {
             spellCastEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(spellCastEventSink);
-            logger::debug("{}, EventEnum_OnSpellCast sink removed", __func__);
+            logger::debug("EventEnum_OnSpellCast sink removed");
         }
         break;
 
@@ -3531,7 +3520,7 @@ void RemoveSink(int index) {
             containerChangedEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(containerChangedEventSink);
-            logger::debug("{}, EventEnum_OnContainerChanged sink removed", __func__);
+            logger::debug("EventEnum_OnContainerChanged sink removed");
         }
         break;
 
@@ -3540,7 +3529,7 @@ void RemoveSink(int index) {
             lockChangedEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_LockChanged]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(lockChangedEventSink);
-            logger::debug("{}, EventEnum_LockChanged sink removed", __func__);
+            logger::debug("EventEnum_LockChanged sink removed");
         }
         break;
 
@@ -3551,7 +3540,7 @@ void RemoveSink(int index) {
             openCloseEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnOpen]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(openCloseEventSink);
-            logger::debug("{}, EventEnum_OnOpen sink removed", __func__);
+            logger::debug("EventEnum_OnOpen sink removed");
         }
         break;
 
@@ -3572,7 +3561,7 @@ void RemoveSink(int index) {
             actorActionEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_EndSheathe]->sinkAdded = false;
             SKSE::GetActionEventSource()->RemoveEventSink(actorActionEventSink);
-            logger::debug("{}, actorActionEventSink sink removed", __func__);
+            logger::debug("actorActionEventSink sink removed");
         }
         break;
 
@@ -3582,7 +3571,7 @@ void RemoveSink(int index) {
         }
         if (eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded && eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
             eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded = false;
-            logger::debug("{}, EventEnum_OnProjectileImpact sink removed", __func__);
+            logger::debug("EventEnum_OnProjectileImpact sink removed");
         }
         break;
 
@@ -3591,7 +3580,7 @@ void RemoveSink(int index) {
             itemCraftedEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnItemCrafted]->sinkAdded = false;
             RE::ItemCrafted::GetEventSource()->RemoveEventSink(itemCraftedEventSink);
-            logger::debug("{}, EventEnum_OnItemCrafted sink removed", __func__);
+            logger::debug("EventEnum_OnItemCrafted sink removed");
         }
         break;
 
@@ -3600,7 +3589,7 @@ void RemoveSink(int index) {
             itemsPickpocketedEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnItemsPickpocketed]->sinkAdded = false;
             RE::ItemsPickpocketed::GetEventSource()->RemoveEventSink(itemsPickpocketedEventSink);
-            logger::debug("{}, EventEnum_OnItemsPickpocketed sink removed", __func__);
+            logger::debug("EventEnum_OnItemsPickpocketed sink removed");
         }
         break;
 
@@ -3609,7 +3598,7 @@ void RemoveSink(int index) {
             locationClearedEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnLocationCleared]->sinkAdded = false;
             RE::LocationCleared::GetEventSource()->RemoveEventSink(locationClearedEventSink);
-            logger::debug("{}, EventEnum_OnLocationCleared sink removed", __func__);
+            logger::debug("EventEnum_OnLocationCleared sink removed");
         }
         break;
 
@@ -3618,7 +3607,7 @@ void RemoveSink(int index) {
             enterBleedoutEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnEnterBleedout]->sinkAdded = false;
             eventSourceholder->RemoveEventSink(enterBleedoutEventSink);
-            logger::debug("{}, EventEnum_OnEnterBleedout sink removed", __func__);
+            logger::debug("EventEnum_OnEnterBleedout sink removed");
         }
         break;
 
@@ -3629,7 +3618,7 @@ void RemoveSink(int index) {
             eventSourceholder->RemoveEventSink(switchRaceCompleteEventSink);
             eventSourceholder->RemoveEventSink(objectInitEventSink);
             actorRacesSaved = false;
-            logger::debug("{}, EventEnum_OnSwitchRaceComplete sink removed", __func__);
+            logger::debug("EventEnum_OnSwitchRaceComplete sink removed");
         }
         break;
 
@@ -3638,7 +3627,7 @@ void RemoveSink(int index) {
             footstepEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnActorFootStep]->sinkAdded = false;
             RE::BGSFootstepManager::GetSingleton()->RemoveEventSink(footstepEventSink);
-            logger::debug("{}, EventEnum_OnActorFootStep sink removed", __func__);
+            logger::debug("EventEnum_OnActorFootStep sink removed");
         }
         break;
 
@@ -3647,7 +3636,7 @@ void RemoveSink(int index) {
             questObjectiveEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->sinkAdded = false;
             RE::ObjectiveState::GetEventSource()->RemoveEventSink(questObjectiveEventSink);
-            logger::debug("{}, EventEnum_OnQuestObjectiveStateChanged sink removed", __func__);
+            logger::debug("EventEnum_OnQuestObjectiveStateChanged sink removed");
         }
         break;
 
@@ -3659,10 +3648,10 @@ void RemoveSink(int index) {
             if (posPlayerEventSource) {
                 positionPlayerEventSink->sinkAdded = false;
                 posPlayerEventSource->RemoveEventSink(positionPlayerEventSink);
-                logger::debug("{}, positionPlayerEventSink removed", __func__);
+                logger::debug("positionPlayerEventSink removed");
             }
             else {
-                logger::error("{}, posPlayerEventSource not found, positionPlayerEventSink sink not removed", __func__);
+                logger::error("posPlayerEventSource not found, positionPlayerEventSink sink not removed");
             }
         }
         break;
@@ -3674,10 +3663,10 @@ void RemoveSink(int index) {
                 actorCellEventSink->sinkAdded = false;
                 eventDataPtrs[EventEnum_OnPlayerChangeCell]->sinkAdded = false;
                 playerCellChangeSource->RemoveEventSink(actorCellEventSink);
-                logger::debug("{}, EventEnum_OnPlayerChangeCell sink removed", __func__);
+                logger::debug("EventEnum_OnPlayerChangeCell sink removed");
             }
             else {
-                logger::error("{}, playerCellChangeSource not found, EventEnum_OnPlayerChangeCell sink not removed", __func__);
+                logger::error("playerCellChangeSource not found, EventEnum_OnPlayerChangeCell sink not removed");
             }
         }
         break;
@@ -3706,19 +3695,19 @@ int GetEventIndex(std::vector<EventData*> v, RE::BSFixedString asEvent) {
 
 // is registered
 bool IsFormRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!gfuncs::IsFormValid(eventReceiver)) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return false;
     }
 
-    logger::trace("{} getting handle is registered for: {}", __func__, gfuncs::GetFormName(eventReceiver));
+    logger::trace("getting handle is registered for: {}", gfuncs::GetFormName(eventReceiver));
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("couldn't get handle for form [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return false;
     }
 
@@ -3727,25 +3716,25 @@ bool IsFormRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString as
         return eventDataPtrs[index]->HasHandle(handle, paramFilter, paramFilterIndex);
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
         return false;
     }
 }
 
 bool IsAliasRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::BGSBaseAlias* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!eventReceiver) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return false;
     }
 
-    logger::trace("{} getting handle is registered for: {}", __func__, eventReceiver->aliasName);
+    logger::trace("getting handle is registered for: {}", eventReceiver->aliasName);
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
+        logger::error("couldn't get handle for alias [{}] ID [{:x}]", eventReceiver->aliasName, eventReceiver->GetVMTypeID());
         return false;
     }
 
@@ -3754,25 +3743,25 @@ bool IsAliasRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString a
         return eventDataPtrs[index]->HasHandle(handle, paramFilter, paramFilterIndex);
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
         return false;
     }
 }
 
 bool IsActiveMagicEffectRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::ActiveEffect* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!eventReceiver) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return false;
     }
 
-    logger::trace("{} getting handle is registered for: {} instance", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("getting handle is registered for: {} instance", gfuncs::GetFormName(eventReceiver->GetBaseObject()));
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
+        logger::error("couldn't get handle for effect [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
         return false;
     }
 
@@ -3781,7 +3770,7 @@ bool IsActiveMagicEffectRegisteredForGlobalEvent(RE::StaticFunctionTag*, RE::BSF
         return eventDataPtrs[index]->HasHandle(handle, paramFilter, paramFilterIndex);
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
         return false;
     }
 }
@@ -3810,7 +3799,7 @@ bool RegisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int p
 
     int size = list->forms.size();
 
-    logger::trace("{}: size[{}] scriptAddedFormCount[{}] iCount[{}]", __func__, size, list->scriptAddedFormCount, iCount);
+    logger::trace("size[{}] scriptAddedFormCount[{}] iCount[{}]", size, list->scriptAddedFormCount, iCount);
 
     return true;
 }
@@ -3836,26 +3825,26 @@ bool UnregisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int
 
     int size = list->forms.size();
 
-    logger::trace("{}: size[{}] scriptAddedFormCount[{}]", __func__, size, list->scriptAddedFormCount);
+    logger::trace("size[{}] scriptAddedFormCount[{}]", size, list->scriptAddedFormCount);
 
     return true;
 }
 
 //register
 void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!gfuncs::IsFormValid(eventReceiver)) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return;
     }
 
-    logger::trace("{} adding handle for: {}", __func__, gfuncs::GetFormName(eventReceiver));
+    logger::trace("adding handle for: {}", gfuncs::GetFormName(eventReceiver));
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("couldn't get handle for form [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -3870,7 +3859,7 @@ void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEven
                     AddSink(index);
                 }
                 else {
-                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to register", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                    logger::warn("passed in paramFilter formlist[{}] for event [{}] has no forms to register", gfuncs::GetFormName(akFormList), asEvent);
                 }
             }
         }
@@ -3881,24 +3870,24 @@ void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEven
         }
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
     }
 }
 
 void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::BGSBaseAlias* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!eventReceiver) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return;
     }
 
-    logger::trace("{} adding handle for: {}", __func__, eventReceiver->aliasName);
+    logger::trace("adding handle for: {}", eventReceiver->aliasName);
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
+        logger::error("couldn't get handle for alias [{}] ID [{:x}]", eventReceiver->aliasName, eventReceiver->GetVMTypeID());
         return;
     }
 
@@ -3913,7 +3902,7 @@ void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEve
                     AddSink(index);
                 }
                 else {
-                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to register", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                    logger::warn("passed in paramFilter formlist[{}] for event [{}] has no forms to register", gfuncs::GetFormName(akFormList), asEvent);
                 }
             }
         }
@@ -3924,24 +3913,24 @@ void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEve
         }
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
     }
 }
 
 void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::ActiveEffect* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!eventReceiver) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return;
     }
 
-    logger::trace("{} adding handle for: {} instance", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("adding handle for: {} instance", gfuncs::GetFormName(eventReceiver->GetBaseObject()));
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
+        logger::error("couldn't get handle for effect [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
         return;
     }
 
@@ -3956,7 +3945,7 @@ void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixed
                     AddSink(index);
                 }
                 else {
-                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to register", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                    logger::warn("passed in paramFilter formlist[{}] for event [{}] has no forms to register", gfuncs::GetFormName(akFormList), asEvent);
                 }
             }
         }
@@ -3967,25 +3956,25 @@ void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixed
         }
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
     }
 }
 
 //unregister
 void UnregisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!gfuncs::IsFormValid(eventReceiver)) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return;
     }
 
-    logger::trace("{} removing handle for: {}", __func__, gfuncs::GetFormName(eventReceiver));
+    logger::trace("removing handle for: {}", gfuncs::GetFormName(eventReceiver));
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("couldn't get handle for form [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -4000,7 +3989,7 @@ void UnregisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEv
                     eventDataPtrs[index]->CheckAndRemoveSink();
                 }
                 else {
-                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to unregister", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                    logger::warn("passed in paramFilter formlist[{}] for event [{}] has no forms to unregister", gfuncs::GetFormName(akFormList), asEvent);
                 }
             }
         }
@@ -4010,24 +3999,24 @@ void UnregisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEv
         }
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
     }
 }
 
 void UnregisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::BGSBaseAlias* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!eventReceiver) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return;
     }
 
-    logger::trace("{} removing handle for: {}", __func__, eventReceiver->aliasName);
+    logger::trace("removing handle for: {}", eventReceiver->aliasName);
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
+        logger::error("couldn't get handle for alias [{}] ID [{:x}]", eventReceiver->aliasName, eventReceiver->GetVMTypeID());
         return;
     }
 
@@ -4042,7 +4031,7 @@ void UnregisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asE
                     eventDataPtrs[index]->CheckAndRemoveSink();
                 }
                 else {
-                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to unregister", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                    logger::warn("passed in paramFilter formlist[{}] for event [{}] has no forms to unregister", gfuncs::GetFormName(akFormList), asEvent);
                 }
             }
         }
@@ -4052,24 +4041,24 @@ void UnregisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asE
         }
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
     }
 }
 
 void UnregisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::ActiveEffect* eventReceiver, RE::TESForm* paramFilter, int paramFilterIndex) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!eventReceiver) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return;
     }
 
-    logger::trace("{} removing handle for: {} instance", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("removing handle for: {} instance", gfuncs::GetFormName(eventReceiver->GetBaseObject()));
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
+        logger::error("couldn't get handle for effect [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
         return;
     }
 
@@ -4084,7 +4073,7 @@ void UnregisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFix
                     eventDataPtrs[index]->CheckAndRemoveSink();
                 }
                 else {
-                    logger::warn("{}: passed in paramFilter formlist[{}] for event [{}] has no forms to unregister", __func__, gfuncs::GetFormName(akFormList), asEvent);
+                    logger::warn("passed in paramFilter formlist[{}] for event [{}] has no forms to unregister", gfuncs::GetFormName(akFormList), asEvent);
                 }
             }
         }
@@ -4094,25 +4083,25 @@ void UnregisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFix
         }
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
     }
 }
 
 //unregister all
 void UnregisterFormForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::TESForm* eventReceiver) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!gfuncs::IsFormValid(eventReceiver)) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return;
     }
 
-    logger::trace("{} removing handle for: {}", __func__, gfuncs::GetFormName(eventReceiver));
+    logger::trace("removing handle for: {}", gfuncs::GetFormName(eventReceiver));
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for form [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("couldn't get handle for form [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
         return;
     }
 
@@ -4121,24 +4110,24 @@ void UnregisterFormForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString 
         eventDataPtrs[index]->RemoveAllHandles(handle);
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
     }
 }
 
 void UnregisterAliasForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::BGSBaseAlias* eventReceiver) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!eventReceiver) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return;
     }
 
-    logger::trace("{} removing all handles for: {}", __func__, eventReceiver->aliasName);
+    logger::trace("removing all handles for: {}", eventReceiver->aliasName);
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for alias [{}] ID [{:x}]", __func__, eventReceiver->aliasName, eventReceiver->GetVMTypeID());
+        logger::error("couldn't get handle for alias [{}] ID [{:x}]", eventReceiver->aliasName, eventReceiver->GetVMTypeID());
         return;
     }
 
@@ -4147,24 +4136,24 @@ void UnregisterAliasForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString
         eventDataPtrs[index]->RemoveAllHandles(handle);
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
     }
 }
 
 void UnregisterActiveMagicEffectForGlobalEvent_All(RE::StaticFunctionTag*, RE::BSFixedString asEvent, RE::ActiveEffect* eventReceiver) {
-    logger::trace("{} {}", __func__, asEvent);
+    logger::trace("{}", asEvent);
 
     if (!eventReceiver) {
-        logger::warn("{}: eventReceiver not found", __func__);
+        logger::warn("eventReceiver not found");
         return;
     }
 
-    logger::trace("{} removing all handles for: {} instance", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()));
+    logger::trace("removing all handles for: {} instance", gfuncs::GetFormName(eventReceiver->GetBaseObject()));
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("{}: couldn't get handle for effect [{}] ID [{:x}]", __func__, gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
+        logger::error("couldn't get handle for effect [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
         return;
     }
 
@@ -4173,7 +4162,7 @@ void UnregisterActiveMagicEffectForGlobalEvent_All(RE::StaticFunctionTag*, RE::B
         eventDataPtrs[index]->RemoveAllHandles(handle);
     }
     else {
-        logger::error("{}: event [{}] not recognized", __func__, asEvent);
+        logger::error("event [{}] not recognized", asEvent);
     }
 }
 
@@ -4185,10 +4174,10 @@ void CreateEventSinks() {
     if (!xMarker) { xMarker = RE::TESForm::LookupByID(59); }
 
     if (xMarker) {
-        logger::trace("{}: xmarker [{}] found", __func__, gfuncs::GetFormName(xMarker));
+        logger::trace("xmarker [{}] found", gfuncs::GetFormName(xMarker));
     }
     else {
-        logger::warn("{}: xmarker form not found", __func__);
+        logger::warn("xmarker form not found");
     }
 
     if (eventDataPtrs.size() == 0) {
@@ -4281,18 +4270,18 @@ void CreateEventSinks() {
     if (iMaxArrowsSavedPerReference > 0) {
         if (skseLoadInterface) {
             if (ProjectileImpactHook::Install(skseLoadInterface->RuntimeVersion())) {
-                logger::info("{}: ProjectileImpactHook installed successfully", __func__);
+                logger::info("ProjectileImpactHook installed successfully");
             }
             else {
-                logger::warn("{}: ProjectileImpactHook not installed", __func__);
+                logger::warn("ProjectileImpactHook not installed");
             }
         }
         else {
-            logger::critical("{}: skseLoadInterface not found, aborting ProjectileImpactHook install", __func__);
+            logger::critical("skseLoadInterface not found, aborting ProjectileImpactHook install");
         }
     }
     else {
-        logger::info("{}: iMaxArrowsSavedPerReference is [{}], aborting ProjectileImpactHook install", __func__, iMaxArrowsSavedPerReference);
+        logger::info("iMaxArrowsSavedPerReference is [{}], aborting ProjectileImpactHook install", iMaxArrowsSavedPerReference);
     }
 
     UIEvents::Install();
@@ -4540,9 +4529,6 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("UnregisterActiveMagicEffectForUiItemMenuEvent", "DbSkseEvents", UIEvents::UnregisterActiveMagicEffectForUiItemMenuEvent);
     vm->RegisterFunction("UnregisterActiveMagicEffectForUiItemMenuEvent_All", "DbSkseEvents", UIEvents::UnregisterActiveMagicEffectForUiItemMenuEvent_All);
 
-    //timers
-
-
     logger::trace("Papyrus Functions Bound");
 
     return true;
@@ -4611,6 +4597,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         auto* papyrusInterface = SKSE::GetPapyrusInterface();
         papyrusInterface->Register(BindPapyrusFunctions);
         papyrusInterface->Register(timers::BindPapyrusFunctions);
+        papyrusInterface->Register(gfx::BindPapyrusFunctions);
 
         SetSettingsFromIniFile();
         CreateEventSinks();
@@ -4677,11 +4664,11 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             SaveActorRaces();
         }
         else {
-            logger::debug("{}: already loading or saving. loading = {} saving = {}, aborting load.", __func__, bIsLoadingSerialization, bIsSavingSerialization);
+            logger::debug("already loading or saving. loading = {} saving = {}, aborting load.", bIsLoadingSerialization, bIsSavingSerialization);
         }
     }
     else {
-        logger::error("{}: a_intfc doesn't exist, aborting load.", __func__);
+        logger::error("a_intfc doesn't exist, aborting load.");
     }
 }
 
@@ -4703,18 +4690,18 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
             logger::trace("SaveCallback complete");
         }
         else {
-            logger::debug("{}: already loading or saving. loading = {} saving = {}, aborting load.", __func__, bIsLoadingSerialization, bIsSavingSerialization);
+            logger::debug("already loading or saving. loading = {} saving = {}, aborting load.", bIsLoadingSerialization, bIsSavingSerialization);
         }
     }
     else {
-        logger::error("{}: a_intfc doesn't exist, aborting load.", __func__);
+        logger::error("a_intfc doesn't exist, aborting load.");
     }
 }
 
 //init================================================================================================================================================================
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
-    SetupLog();
+    SetupLog("Data/SKSE/Plugins/DbSkseFunctions.ini");
 
     skseLoadInterface = skse;
 

@@ -31,35 +31,46 @@ endif()
 # set(OUTPUT_FOLDER "C:/path/to/any/folder")
 
 # Setup your SKSE plugin as an SKSE plugin!
+include(FetchContent)
 find_package(CommonLibSSE CONFIG REQUIRED)
+FetchContent_Declare(
+        ctre
+        GIT_REPOSITORY https://github.com/hanickadot/compile-time-regular-expressions.git
+        GIT_TAG main
+)
+FetchContent_MakeAvailable(ctre)
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES plugin.cpp) # <--- specifies plugin.cpp
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
+target_link_libraries(${PROJECT_NAME} PRIVATE ctre)
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is required!
 
 # Must have PUBLIC on its own at the end of target_sources
 target_sources(${PROJECT_NAME} 
-PUBLIC SourceCpp/Actor.cpp
-PUBLIC SourceCpp/ArtObject.cpp
-PUBLIC SourceCpp/Book.cpp
-PUBLIC SourceCpp/ConsoleUtil.cpp
-PUBLIC SourceCpp/CreateForms.cpp
-PUBLIC SourceCpp/FormVectorGetters.cpp
-PUBLIC SourceCpp/GeneralFunctions.cpp
-PUBLIC SourceCpp/Magic.cpp
-PUBLIC SourceCpp/MapMarker.cpp
-PUBLIC SourceCpp/PapyrusUtilEx.cpp
-PUBLIC SourceCpp/ProjectileFunctions.cpp
-PUBLIC SourceCpp/SendUIMessage.cpp
-PUBLIC SourceCpp/Serialization.cpp
-PUBLIC SourceCpp/Sound.cpp
-PUBLIC SourceCpp/Timers.cpp
-PUBLIC SourceCpp/Utility.cpp
+PUBLIC src/Actor.cpp
+PUBLIC src/ArtObject.cpp
+PUBLIC src/Book.cpp
+PUBLIC src/ConsoleUtil.cpp
+PUBLIC src/CreateForms.cpp
+PUBLIC src/FileSystem.cpp
+PUBLIC src/FormVectorGetters.cpp
+PUBLIC src/GeneralFunctions.cpp
+PUBLIC src/Magic.cpp
+PUBLIC src/MapMarker.cpp
+PUBLIC src/mINIHelper.cpp
+PUBLIC src/PapyrusUtilEx.cpp
+PUBLIC src/ProjectileFunctions.cpp
+PUBLIC src/SendUIMessage.cpp
+PUBLIC src/Serialization.cpp
+PUBLIC src/Sound.cpp
+PUBLIC src/Timers.cpp
+PUBLIC src/UIGfx.cpp
+PUBLIC src/Utility.cpp
 PUBLIC
 )
    
 target_include_directories(${PROJECT_NAME}
  PRIVATE
-  Source/
+  include/
 )
 
 # When your SKSE .dll is compiled, this will automatically copy the .dll into your mods folder.
