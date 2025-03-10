@@ -19,6 +19,7 @@
 #include "Actor.h"
 #include "ArtObject.h"
 #include "Book.h"
+#include "Cell.h"
 #include "ConsoleUtil.h"
 #include "CreateForms.h"
 #include "FormVectorGetters.h"
@@ -158,31 +159,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(8.6);
-}
-
-RE::TESWorldSpace* GetCellWorldSpace(RE::StaticFunctionTag*, RE::TESObjectCELL* akCell) {
-    //logger::trace("called");
-    if (gfuncs::IsFormValid(akCell)) {
-        RE::TESWorldSpace* worldSpace = akCell->GetRuntimeData().worldSpace;
-        if (gfuncs::IsFormValid(worldSpace)) {
-            return worldSpace;
-        }
-    }
-
-    return nullptr;
-}
-
-RE::BGSLocation* GetCellLocation(RE::StaticFunctionTag*, RE::TESObjectCELL* akCell) {
-    //logger::trace("called");
-    if (gfuncs::IsFormValid(akCell)) {
-        RE::BGSLocation* location = akCell->GetLocation();
-        if (gfuncs::IsFormValid(location)) {
-            return location;
-        }
-    }
-
-    return nullptr;
+    return float(8.7);
 }
 
 bool SetAliasQuestObjectFlag(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, bool set) {
@@ -295,12 +272,12 @@ int GetClosestObjectIndexFromRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref,
 }
 
 void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_command, RE::TESObjectREFR* objRef) {
-    gfuncs::LogAndMessage(std::format("called. Command = {}", a_command));
+    logger::trace("called. Command = {}", a_command);
     ConsoleUtil::ExecuteCommand(a_command, objRef);
 }
 
 bool HasCollision(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef) {
-    gfuncs::LogAndMessage(std::format("called"));
+    logger::trace("called");
 
     if (!gfuncs::IsFormValid(objRef)) {
         logger::warn("objRef doesn't exist");
@@ -4341,8 +4318,6 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
     vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
     vm->RegisterFunction("GetAllArmorsForSlotMask", "DbSkseFunctions", GetAllArmorsForSlotMask);
-    vm->RegisterFunction("GetCellWorldSpace", "DbSkseFunctions", GetCellWorldSpace);
-    vm->RegisterFunction("GetCellLocation", "DbSkseFunctions", GetCellLocation);
     vm->RegisterFunction("GetAllInteriorCells", "DbSkseFunctions", GetAllInteriorCells);
     vm->RegisterFunction("GetAllExteriorCells", "DbSkseFunctions", GetAllExteriorCells);
     vm->RegisterFunction("GetAttachedCells", "DbSkseFunctions", GetAttachedCells);
@@ -4586,7 +4561,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         DbSkseCppCallbackEventsAttached = false;
         DbSkseCppCallbackLoad(); //attach papyrus DbSkseCppCallbackEvents script to the player and save all ammo projectiles
         RegisterActorsForBowDrawAnimEvents();
-        //gfuncs::LogAndMessage("kNewGame: sent after a new game is created, before the game has loaded", trace);
+        //logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
         break;
 
     case SKSE::MessagingInterface::kDataLoaded:
@@ -4598,6 +4573,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         papyrusInterface->Register(BindPapyrusFunctions);
         papyrusInterface->Register(timers::BindPapyrusFunctions);
         papyrusInterface->Register(gfx::BindPapyrusFunctions);
+        papyrusInterface->Register(cell::BindPapyrusFunctions);
 
         SetSettingsFromIniFile();
         CreateEventSinks();
@@ -4711,6 +4687,9 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     serialization->SetUniqueID('DbSF');
     serialization->SetSaveCallback(SaveCallback);
     serialization->SetLoadCallback(LoadCallback);
+
+    //replaced gfuncs::LogAndMessage with logger:: functions.
+    //fs::ReplaceLogAndMessageFuncs();
 
     return true;
 }

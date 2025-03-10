@@ -152,6 +152,14 @@ WorldSpace function GetCellWorldSpace(cell akCell) global native
 
 Location Function GetCellLocation(cell akCell) global native
 
+bool Function IsCellPublic(cell akCell) global native
+
+Function SetCellPublic(cell akCell, bool bPublic) global native
+
+bool Function IsCellOffLimits(cell akCell) global native
+
+Function SetCellOffLimits(cell akCell, bool bOffLimits) global native
+
 ;Get all interior cells in game that match the akLocation and or akOwner 
 ;if matchMode == 0, get all cells in game where either the passed in akLocation or akOwner match.
 ;if matchMode == 1, get all cells in game where both the passed in akLocation and akOwner match. 

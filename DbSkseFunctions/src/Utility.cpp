@@ -1116,20 +1116,20 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
     // Try opening the clipboard
     if (!OpenClipboard(nullptr)) {
-        gfuncs::LogAndMessage("Couldn't open clipboard", error);
+        logger::error("Couldn't open clipboard");
         return "";
     }
 
     HANDLE hData = GetClipboardData(CF_TEXT);
     if (hData == nullptr) {
-        gfuncs::LogAndMessage("Clipboard data not found", error);
+        logger::error("Clipboard data not found");
         CloseClipboard();
         return "";
     }
 
     char* pszText = static_cast<char*>(GlobalLock(hData));
     if (pszText == nullptr) {
-        gfuncs::LogAndMessage("Couldn't GlobalLock Clipboard Data", error);
+        logger::error("Couldn't GlobalLock Clipboard Data");
         CloseClipboard();
         return "";
     }

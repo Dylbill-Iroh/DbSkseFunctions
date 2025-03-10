@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.21)
 # Set your project name. This will be the name of your SKSE .dll file.
 project(DbSkseFunctions VERSION 0.0.1 LANGUAGES CXX)
 
-# #
+# # 
 # YOU DO NOT NEED TO EDIT ANYTHING BELOW HERE
 # #
 
@@ -49,6 +49,7 @@ target_sources(${PROJECT_NAME}
 PUBLIC src/Actor.cpp
 PUBLIC src/ArtObject.cpp
 PUBLIC src/Book.cpp
+PUBLIC src/Cell.cpp
 PUBLIC src/ConsoleUtil.cpp
 PUBLIC src/CreateForms.cpp
 PUBLIC src/FileSystem.cpp

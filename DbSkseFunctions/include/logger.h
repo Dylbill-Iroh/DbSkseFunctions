@@ -4,6 +4,7 @@
 #include <ctre.hpp>
 #include "mini/ini.h"
 #include "mINIHelper.h"
+#include "GeneralFunctions.h"
 
 //Add function name tag to log. 
 //Thanks to Noname365 aka Judah for this
@@ -52,17 +53,28 @@ void SetupLog(std::string iniFilePath = "", std::string iniSection = "LOG", std:
 
     //fix the bug on AE where logs are written to "My Games/Skyrim.INI/ instead of "My Games/Skyrim Special Edition/SKSE
     std::filesystem::path logsFolderPath = logsFolder.value();
-    while (logsFolderPath.has_parent_path() && logsFolderPath.filename().string() != "My Games") {
-        logsFolderPath = logsFolderPath.parent_path();
-    }
+    std::string sLogPath = logsFolderPath.generic_string(); 
+    gfuncs::ConvertToLowerCase(sLogPath);
 
-    if (logsFolderPath.filename().string() != "My Games") {
-        SKSE::stl::report_and_fail("My Games folder not found, logs disabled.");
+    if (sLogPath.find("my games") != std::string::npos) {
+        std::string parentPathName = logsFolderPath.filename().string();
+        gfuncs::ConvertToLowerCase(parentPathName);
+        while (logsFolderPath.has_parent_path() && parentPathName != "my games") {
+            logsFolderPath = logsFolderPath.parent_path();
+            parentPathName = logsFolderPath.filename().string();
+            gfuncs::ConvertToLowerCase(parentPathName);
+        }
+
+        if (parentPathName == "my games") {
+            logsFolderPath.append("Skyrim Special Edition");
+            logsFolderPath.append("SKSE");
+        }
+        else {
+            logsFolderPath = logsFolder.value();
+        }
     }
 
     auto pluginName = SKSE::PluginDeclaration::GetSingleton()->GetName();
-    logsFolderPath.append("Skyrim Special Edition");
-    logsFolderPath.append("SKSE");
     std::string pluginFileName = std::format("{}.log", pluginName);
     logsFolderPath.append(pluginFileName);
 

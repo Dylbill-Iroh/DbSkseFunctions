@@ -3,15 +3,21 @@
 namespace gfuncs {
     void LogAndMessage(std::string message, int logLevel = 0, int debugLevel = 0);
 
+    void ConvertToLowerCase(std::string& s);
+
     std::string uint32_to_string(uint32_t value);
 
     int GetRandomInt(int min, int max);
 
-    std::string IntToHex(int i);
-
-    int HexToInt(std::string hex);
+    bool IsHexString(std::string s);
 
     bool IsDecString(std::string s);
+
+    std::string IntToHex(int i);
+
+    std::string IntToHexPapyrus(int i);
+
+    int HexToInt(std::string hex);
 
     uint64_t StringToUint64_t(std::string s);
 
@@ -102,7 +108,9 @@ namespace gfuncs {
 
     void String_ReplaceAll(std::string& s, std::vector<std::string> searchStrings, std::vector<std::string> replaceStrings);
 
-    int GetIndexInVector(std::vector<RE::FormID>& v, RE::FormID& element);
+    bool StringContainsStringInVector(std::vector<std::string>& v, std::string value);
+
+    int GetIndexInVector(std::vector<uint32_t>& v, uint32_t& element);
 
     int GetIndexInVector(std::vector<RE::TESForm*>& v, RE::TESForm* element);
 
@@ -129,6 +137,8 @@ namespace gfuncs {
     int GetWeatherType(RE::TESWeather* weather);
 
     RE::BSFixedString GetBSUIMessageDataTypeString(RE::BSUIMessageData* msgData);
+
+    void RemoveDuplicates(std::vector<RE::FormID>& vec);
 
     void RemoveDuplicates(std::vector<RE::VMHandle>& vec);
 

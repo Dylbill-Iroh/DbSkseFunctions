@@ -624,57 +624,57 @@ bool SetCellOrWorldSpaceOriginForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* 
 }
 
 bool SetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, std::string name) {
-    gfuncs::LogAndMessage("Renaming map marker");
+    logger::trace("Renaming map marker");
     if (!gfuncs::IsFormValid(mapMarker)) {
-        gfuncs::LogAndMessage("SetMapMarkerName: mapMarker doesn't exist", warn);
+        logger::warn("mapMarker doesn't exist");
         return false;
     }
 
     auto* mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
-        gfuncs::LogAndMessage("Warning, map marker list not found.", warn);
+        logger::warn("Warning, map marker list not found.");
         return false;
     }
 
     if (!mapMarkerData->mapData) {
-        gfuncs::LogAndMessage("Warning, mapData not found.", warn);
+        logger::warn("Warning, mapData not found.");
         return false;
     }
 
     if (mapMarkerData->mapData->locationName.fullName == NULL) {
-        gfuncs::LogAndMessage("Warning, LocationName not found.", warn);
+        logger::warn("Warning, LocationName not found.");
         return false;
     }
 
     const char* cName = name.data();
     mapMarkerData->mapData->locationName.fullName = cName;
-    gfuncs::LogAndMessage(std::format("New map marker name = {}", mapMarkerData->mapData->locationName.GetFullName()));
+    logger::trace("New map marker name = {}", mapMarkerData->mapData->locationName.GetFullName());
 
     return true;
 }
 
 std::string GetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
-    gfuncs::LogAndMessage("Getting Marker Name");
+    logger::trace("Getting Marker Name");
     if (!gfuncs::IsFormValid(mapMarker)) {
-        gfuncs::LogAndMessage("GetMapMarkerName: mapMarker doesn't exist", warn);
+        logger::warn("GetMapMarkerName: mapMarker doesn't exist");
         return "";
     }
 
     auto* mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
-        gfuncs::LogAndMessage("GetMapMarkerName Warning, map marker list not found.", warn);
+        logger::warn("GetMapMarkerName Warning, map marker list not found.");
         return "";
     }
 
     if (!mapMarkerData->mapData) {
-        gfuncs::LogAndMessage("GetMapMarkerName Warning, mapData not found.", warn);
+        logger::warn("GetMapMarkerName Warning, mapData not found.");
         return "";
     }
 
     if (mapMarkerData->mapData->locationName.fullName == NULL) {
-        gfuncs::LogAndMessage("GetMapMarkerName Warning, LocationName not found.", warn);
+        logger::warn("GetMapMarkerName Warning, LocationName not found.");
         return "";
     }
 
@@ -683,21 +683,21 @@ std::string GetMapMarkerName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarke
 
 bool SetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, int iconType) {
     if (!gfuncs::IsFormValid(mapMarker)) {
-        gfuncs::LogAndMessage("SetMapMarkerIconType: mapMarker doesn't exist", warn);
+        logger::warn("SetMapMarkerIconType: mapMarker doesn't exist");
         return false;
     }
 
-    gfuncs::LogAndMessage(std::format("Setting Map Marker Type to {}", iconType));
+    logger::trace("Setting Map Marker Type to {}", iconType);
 
     auto* mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
-        gfuncs::LogAndMessage("SetMapMarkerIconType Warning, map marker extra data list not found.", warn);
+        logger::warn("SetMapMarkerIconType Warning, map marker extra data list not found.");
         return false;
     }
 
     if (!mapMarkerData->mapData) {
-        gfuncs::LogAndMessage("SetMapMarkerIconType Warning, mapData not found.", warn);
+        logger::warn("SetMapMarkerIconType Warning, mapData not found.");
         return false;
     }
 
@@ -707,21 +707,21 @@ bool SetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, 
 }
 
 int GetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
-    gfuncs::LogAndMessage("Getting Map Marker Type");
+    logger::trace("Getting Map Marker Type");
     if (!gfuncs::IsFormValid(mapMarker)) {
-        gfuncs::LogAndMessage("GetMapMarkerIconType: mapMarker doesn't exist", warn);
+        logger::warn("GetMapMarkerIconType: mapMarker doesn't exist");
         return false;
     }
 
     auto* mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
-        gfuncs::LogAndMessage("GetMapMarkerIconType Warning, map marker list not found.", warn);
+        logger::warn("GetMapMarkerIconType Warning, map marker list not found.");
         return false;
     }
 
     if (!mapMarkerData->mapData) {
-        gfuncs::LogAndMessage("GetMapMarkerIconType Warning, mapData not found.", warn);
+        logger::warn("GetMapMarkerIconType Warning, mapData not found.");
         return false;
     }
 

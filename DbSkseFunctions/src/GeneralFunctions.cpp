@@ -4,6 +4,7 @@
 #include <iostream>
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include "GeneralFunctions.h"
 #include "editorID.hpp"
 #include "SendUIMessage.h"
@@ -14,6 +15,8 @@ namespace gfuncs {
     RE::SkyrimVM* gsvm;
     RE::Actor* gfuncsPlayerRef;
     RE::UI* gui;
+    const std::string hexDigits = "0123456789abcdef";
+    const std::string reverseHexDigits = "fedcba9876543210";
 
     enum logLevel { trace, debug, info, warn, error, critical };
     enum debugLevel { notification, messageBox };
@@ -55,6 +58,10 @@ namespace gfuncs {
         }*/
     }
 
+    void ConvertToLowerCase(std::string& s) {
+        transform(s.begin(), s.end(), s.begin(), ::tolower);
+    }
+
     std::string uint32_to_string(uint32_t value) {
         std::array<char, 4> r;
         r[0] = static_cast<char>((value >> 24) & 0xFF);
@@ -63,22 +70,23 @@ namespace gfuncs {
         r[3] = static_cast<char>(value & 0xFF);
         return std::string{r[0], r[1], r[2], r[3]};
     }
-
     
     int GetRandomInt(int min, int max) {
         return (min + (rand() % (max - min + 1)));
     }
 
-    std::string IntToHex(int i) {
-        std::stringstream stream;
-        stream << "0x"
-            << std::setfill('0') << std::setw(sizeof(int) * 2)
-            << std::hex << i;
-        return stream.str();
-    }
+    bool IsHexString(std::string s) {
+        if (s == "") {
+            return false;
+        }
 
-    int HexToInt(std::string hex) {
-        return stoi(hex, 0, 16);
+        auto beginItr = s.begin();
+
+        if (s.find("0x") == 0) {
+            beginItr += 2;
+        }
+
+        return(std::all_of(beginItr, s.end(), ::isxdigit));
     }
 
     bool IsDecString(std::string s) {
@@ -89,6 +97,40 @@ namespace gfuncs {
         return(std::all_of(s.begin(), s.end(), ::isdigit));
     }
 
+    std::string IntToHex(int i) {
+        std::stringstream stream;
+        stream << "0x"
+            << std::setfill('0') << std::setw(sizeof(int) * 2)
+            << std::hex << i;
+        return stream.str();
+    }
+
+    std::string IntToHexPapyrus(int i) {
+        if (i == 0) {
+            return "0";
+        }
+
+        std::string s = ""; 
+
+        if (i >= 0) {
+            while (i > 0) {
+                s = (hexDigits.at((i % 16)) + s);
+                i /= 16;
+            }
+        }
+        else {
+            i = (std::abs(i) - 1);
+            while (i > 0) {
+                s = (reverseHexDigits.at((i % 16)) + s);
+                i /= 16;
+            }
+        }
+        return s;
+    }
+
+    int HexToInt(std::string hex) {
+        return stoi(hex, 0, 16);
+    }
 
     uint64_t StringToUint64_t(std::string s) {
         uint64_t value;
@@ -678,7 +720,17 @@ namespace gfuncs {
         }
     }
 
-    int GetIndexInVector(std::vector<RE::FormID>& v, RE::FormID& element) {
+    bool StringContainsStringInVector(std::vector<std::string>& v, std::string value) {
+        gfuncs::ConvertToLowerCase(value);
+        for (auto& s : v) {
+            if (value.find(s) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    int GetIndexInVector(std::vector<uint32_t>& v, uint32_t& element) {
         if (element == NULL) {
             return -1;
         }
@@ -1237,6 +1289,12 @@ namespace gfuncs {
             }
         }
         return "Unrecognized";
+    }
+
+    void RemoveDuplicates(std::vector<RE::FormID>& vec)
+    {
+        std::sort(vec.begin(), vec.end());
+        vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
     }
 
     void RemoveDuplicates(std::vector<RE::VMHandle>& vec)
