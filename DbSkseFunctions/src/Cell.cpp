@@ -47,13 +47,16 @@ namespace cell {
     }
 
     void SetCellOffLimits(RE::StaticFunctionTag*, RE::TESObjectCELL* akCell, bool bOffLimits) {
+        logger::info("called: {}", bOffLimits);
+
         if (gfuncs::IsFormValid(akCell)) {
             if (bOffLimits) {
                 akCell->formFlags |= RE::TESObjectCELL::RecordFlags::kOffLimits;
             }
             else {
-                akCell->formFlags &= RE::TESObjectCELL::RecordFlags::kOffLimits;
+                akCell->formFlags &= ~RE::TESObjectCELL::RecordFlags::kOffLimits;
             }
+            //akCell->AddChange(RE::TESForm::ChangeFlags::ChangeFlag::kFlags);
         }
     }
 
