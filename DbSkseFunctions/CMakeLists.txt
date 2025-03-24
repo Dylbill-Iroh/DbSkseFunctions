@@ -26,7 +26,7 @@ endif()
 if(DEFINED ENV{SKYRIM_MODS_FOLDER} AND IS_DIRECTORY "$ENV{SKYRIM_MODS_FOLDER}")
     set(OUTPUT_FOLDER "$ENV{SKYRIM_MODS_FOLDER}/${PROJECT_NAME}")
 endif()
-# 
+#  
 # Otherwise, you can set OUTPUT_FOLDER to any place you'd like :)
 # set(OUTPUT_FOLDER "C:/path/to/any/folder")
 
@@ -60,6 +60,7 @@ PUBLIC src/MapMarker.cpp
 PUBLIC src/mINIHelper.cpp
 PUBLIC src/PapyrusUtilEx.cpp
 PUBLIC src/ProjectileFunctions.cpp
+PUBLIC src/BipedSlots.cpp
 PUBLIC src/SendUIMessage.cpp
 PUBLIC src/Serialization.cpp
 PUBLIC src/Sound.cpp

@@ -100,3 +100,34 @@ int GetArtObjectNumOfTextureSets(RE::StaticFunctionTag*, RE::BGSArtObject* akArt
 
     return swap->numAlternateTextures;
 }
+
+RE::BSFixedString GetFormWorldModelNth3dName(RE::StaticFunctionTag*, RE::TESForm* akForm, int n) {
+    if (!gfuncs::IsFormValid(akForm)) {
+        logger::warn("akForm isn't valid");
+        return "";
+    }
+
+    RE::TESModel* model = akForm->As<RE::TESModel>();
+    if (!model) {
+        logger::info("model not found for [{}]", gfuncs::GetFormName(akForm));
+        return "";
+    }
+   
+    RE::TESModelTextureSwap* swap = akForm->As<RE::TESModelTextureSwap>();
+    if (!swap) {
+        logger::warn("TESModelTextureSwap not found for [{}]", gfuncs::GetFormName(akForm));
+        return "";
+    }
+
+    if (!swap->alternateTextures) { 
+        logger::warn("swap->alternateTextures not found for [{}]", gfuncs::GetFormName(akForm));
+        return "";
+    }
+
+    if (n >= swap->numAlternateTextures || n < 0) {
+        logger::warn("index n[{}] for [{}] is out of range from swap->numAlternateTextures[{}]", n, gfuncs::GetFormName(akForm), swap->numAlternateTextures);
+        return "";
+    }
+
+    return swap->alternateTextures[n].name3D;
+}

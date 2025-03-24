@@ -4,6 +4,52 @@
 
 namespace logger = SKSE::log;
 
+std::vector<RE::TESForm*> GetAllFormsThatUseTextureSet(RE::StaticFunctionTag*, RE::BGSTextureSet* akTextureSet, std::string modName) {
+    std::vector<RE::TESForm*> v;
+    if (!gfuncs::IsFormValid(akTextureSet)) {
+        logger::error("akTextureSet doesn't exist");
+        return v;
+    }
+
+    logger::info("Getting forms from [{}] that use textureSet({})", modName, gfuncs::GetFormDataString(akTextureSet));
+
+    gfuncs::ConvertToLowerCase(modName);
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+
+    for (auto& [id, form] : *allForms) {
+        if (gfuncs::IsFormValid(form, false)) {
+            auto file = form->GetFile(0);
+            if (file) {
+                std::string sfileName = std::string(file->GetFilename());
+                gfuncs::ConvertToLowerCase(sfileName);
+                if (sfileName == modName || modName == "") {
+                    RE::TESModelTextureSwap* swap = form->As<RE::TESModelTextureSwap>();
+                    if (swap) {
+                        if (swap->alternateTextures) {
+                            bool formFound = false;
+                            std::string sFormData = "";
+                            for (int i = 0; i < swap->numAlternateTextures; i++) {
+                                RE::BGSTextureSet* ts = swap->alternateTextures[i].textureSet;
+                                if (swap->alternateTextures[i].textureSet == akTextureSet) {
+                                    if (!formFound) {
+                                        formFound = true;
+                                        sFormData = gfuncs::GetFormDataString(form);
+                                        v.push_back(form);
+                                    }
+                                    logger::info("form({}) index[{}] 3dName[{}] from mod[{}] uses ts",
+                                        sFormData, swap->alternateTextures[i].index3D, swap->alternateTextures[i].name3D, sfileName);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return v;
+}
+
 std::vector<RE::TESQuest*> GetAllActiveQuests(RE::StaticFunctionTag*) {
     logger::debug("called");
 

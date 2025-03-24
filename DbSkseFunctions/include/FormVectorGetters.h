@@ -1,5 +1,7 @@
 #pragma once
 
+std::vector<RE::TESForm*> GetAllFormsThatUseTextureSet(RE::StaticFunctionTag*, RE::BGSTextureSet* akTextureSet, std::string modName);
+
 std::vector<RE::TESQuest*> GetAllActiveQuests(RE::StaticFunctionTag*);
 
 std::vector<RE::TESForm*> GetAllConstructibleObjects(RE::StaticFunctionTag*, RE::TESForm * createdObject);

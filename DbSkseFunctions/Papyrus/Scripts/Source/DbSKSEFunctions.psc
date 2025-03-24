@@ -914,6 +914,13 @@ String function GetArtObjectModelNth3dName(art akArtObject, int n) Global Native
 
 int function GetArtObjectNumOfTextureSets(art akArtObject) Global Native
 
+;this only works on models that have a new texture sets applied to them. The int n is the index of the model with the override texture set.
+String function GetFormWorldModelNth3dName(form akForm, int n) Global Native
+
+;get all forms that use the akTextureSet. 
+;If modName != "", only gets forms from that mod, otherwise gets all forms in game that use the textureset
+form[] function GetAllFormsThatUseTextureSet(TextureSet akTextureSet, string modName = "") Global Native
+
 ;UI functions. These are for use with skse's UI.psc script. Valid menuNames are the same as in UI.psc
 ;These will allow you to explore UI targets without needing adobe flash.
 ;Before using these functions make sure the menu is open with for example "If (UI.IsMenuOpen("InventoryMenu"))"
@@ -971,3 +978,26 @@ function TraceUiMenuTargetMembersData(string menu, string target, string asUserL
         EndWhile
     Endif
 EndFunction
+
+;race functions for getting and setting slot masks, similar to skse's Armor GetSlotMask, SetSlotMask ect..
+;use Armor.GetMaskForSlot for convenience. Example, to add the ring slot to slot mask: 
+;AddRaceSlotToMask(someRace, Armor.GetMaskForSlot(36))
+
+int function GetRaceSlotMask(Race akRace) global native
+function SetRaceSlotMask(Race akRace, int slotMask) global native
+function AddRaceSlotToMask(Race akRace, int slotMask) global native
+function RemoveRaceSlotFromMask(Race akRace, int slotMask) global native
+
+;does the race / armor or armorAddon have the slot mask?
+;use Armor.GetMaskForSlot for convenience. Example, find if the race has the ring slot:
+;RaceSlotMaskHasPartOf(someRace, Armor.GetMaskForSlot(36))
+
+bool function RaceSlotMaskHasPartOf(Race akRace, int slotMask) global native
+
+bool function ArmorSlotMaskHasPartOf(Armor akArmor, int slotMask) global native
+bool function ArmorAddonSlotMaskHasPartOf(Armor akArmorAddon, int slotMask) global native
+
+Race[] function GetArmorAddonRaces(armorAddon akArmorAddon) global native
+bool function ArmorAddonHasRace(armorAddon akArmorAddon, race akRace) global native
+function AddAdditionalRaceToArmorAddon(armorAddon akArmorAddon, race akRace) global native
+function RemoveAdditionalRaceFromArmorAddon(armorAddon akArmorAddon, race akRace) global native

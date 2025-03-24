@@ -7,3 +7,5 @@ RE::BGSTextureSet* GetArtObjectNthTextureSet(RE::StaticFunctionTag*, RE::BGSArtO
 RE::BSFixedString GetArtObjectModelNth3dName(RE::StaticFunctionTag*, RE::BGSArtObject* akArtObject, int n);
 
 int GetArtObjectNumOfTextureSets(RE::StaticFunctionTag*, RE::BGSArtObject* akArtObject);
+
+RE::BSFixedString GetFormWorldModelNth3dName(RE::StaticFunctionTag*, RE::TESForm* akForm, int n);

@@ -1,15 +1,5 @@
 #pragma once
-//#include <Windows.h>
-//#include <spdlog/sinks/basic_file_sink.h>
-//#include <stdarg.h>
-//#include <winbase.h>
-//#include <iostream>
-//#include <stdio.h>
-//#include <chrono>
-//#include <ctime>
-//#include <algorithm>
-//#include <string>
-//#include "mini/ini.h"
+#include <mutex>
 #include "editorID.hpp"
 #include "GeneralFunctions.h"
 #include "STLThunk.h"
@@ -84,6 +74,7 @@ namespace UIEvents {
     };
 
     std::vector<UIEventData> registeredUIEventDatas;
+    std::mutex registeredUIEventDatasMutex;
 
     struct UiFormData {
         RE::TESForm* form;
@@ -145,12 +136,15 @@ namespace UIEvents {
 
     void SendUISelectionEvents(std::string menuName, UiFormData data, int eventType) {
         std::vector<RE::VMHandle> handles;
-        for (int i = 0; i < registeredUIEventDatas.size(); i++) {
+        registeredUIEventDatasMutex.lock();
+        auto size = registeredUIEventDatas.size();
+        for (int i = 0; i < size; i++) {
             auto& uiEventData = registeredUIEventDatas[i];
             if (UIEventDataMatchesParams(uiEventData, menuName, data.form, eventType)) {
                 handles.push_back(uiEventData.registeredHandle);
             }
         }
+        registeredUIEventDatasMutex.unlock();
 
         gfuncs::RemoveDuplicates(handles);
         auto* args = RE::MakeFunctionArguments((std::string)menuName, (RE::TESForm*)data.form, (int)eventType, (int)data.count, (bool)data.selectedFromPlayerInventory, (bool)data.stolen);
@@ -902,11 +896,12 @@ namespace UIEvents {
     }
 
     int GetIndexInVector(std::vector<UIEventData>& v, UIEventData& element) {
-        if (v.size() == 0) {
+        auto size = v.size();
+        if (size == 0) {
             return -1;
         }
 
-        for (int i = 0; i < v.size(); i++) {
+        for (int i = 0; i < size; i++) {
             if (v[i] == element) {
                 return i;
             }
@@ -917,8 +912,11 @@ namespace UIEvents {
     
     void UnregisterHandleForUiItemEvent_All(RE::VMHandle handle) {
         isUnregistering_All = true;
+        registeredUIEventDatasMutex.lock();
+
         int size = registeredUIEventDatas.size();
         if (size == 0) {
+            registeredUIEventDatasMutex.unlock();
             return;
         }
 
@@ -933,6 +931,8 @@ namespace UIEvents {
                 i++;
             }
         }
+        registeredUIEventDatasMutex.unlock();
+
         isUnregistering_All = false;
     }
 
@@ -960,7 +960,11 @@ namespace UIEvents {
         }
 
         UIEventData data(handle, menuName, paramFilter, eventType);
-        return (GetIndexInVector(registeredUIEventDatas, data) != -1);
+        registeredUIEventDatasMutex.lock();
+        int index = GetIndexInVector(registeredUIEventDatas, data);
+        registeredUIEventDatasMutex.unlock();
+
+        return (index != -1);
     }
 
     void RegisterFormForUiItemMenuEvent(RE::StaticFunctionTag*, std::string menuName, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int eventType) {
@@ -988,6 +992,8 @@ namespace UIEvents {
         }
 
         UIEventData data(handle, menuName, paramFilter, eventType);
+        registeredUIEventDatasMutex.lock();
+
         int index = GetIndexInVector(registeredUIEventDatas, data);
         if (index == -1) {
             registeredUIEventDatas.push_back(data);
@@ -995,6 +1001,7 @@ namespace UIEvents {
             logger::trace("registered menu[{}] eventReceiver[{}] paramFilter[{}] eventType[{}]",
                 __func__, menuName, gfuncs::GetFormName(eventReceiver), gfuncs::GetFormName(paramFilter), eventType);
         }
+        registeredUIEventDatasMutex.unlock();
     }
 
     void UnregisterFormForUiItemMenuEvent(RE::StaticFunctionTag*, std::string menuName, RE::TESForm* eventReceiver, RE::TESForm* paramFilter, int eventType) {
@@ -1020,12 +1027,15 @@ namespace UIEvents {
         }
 
         UIEventData data(handle, menuName, paramFilter, eventType);
+        registeredUIEventDatasMutex.lock();
+
         int index = GetIndexInVector(registeredUIEventDatas, data);
         if (index > -1) {
             registeredUIEventDatas.erase(registeredUIEventDatas.begin() + index);
             logger::trace("Unregistered menu[{}] eventReceiver[{}] paramFilter[{}] eventType[{}]",
                 __func__, menuName, gfuncs::GetFormName(eventReceiver), gfuncs::GetFormName(paramFilter), eventType);
         }
+        registeredUIEventDatasMutex.unlock();
     }
 
     void UnregisterFormForUiItemMenuEvent_All(RE::StaticFunctionTag*, RE::TESForm* eventReceiver) {
@@ -1076,7 +1086,10 @@ namespace UIEvents {
         }
 
         UIEventData data(handle, menuName, paramFilter, eventType);
-        return (GetIndexInVector(registeredUIEventDatas, data) != -1);
+        registeredUIEventDatasMutex.lock();
+        int index = GetIndexInVector(registeredUIEventDatas, data); 
+        registeredUIEventDatasMutex.unlock();
+        return (index != -1);
     }
 
     void RegisterAliasForUiItemMenuEvent(RE::StaticFunctionTag*, std::string menuName, RE::BGSBaseAlias* eventReceiver, RE::TESForm* paramFilter, int eventType) {
@@ -1104,6 +1117,8 @@ namespace UIEvents {
         }
 
         UIEventData data(handle, menuName, paramFilter, eventType);
+        registeredUIEventDatasMutex.lock();
+
         int index = GetIndexInVector(registeredUIEventDatas, data);
         if (index == -1) {
             registeredUIEventDatas.push_back(data);
@@ -1111,6 +1126,7 @@ namespace UIEvents {
             logger::trace("registered menu[{}] eventReceiver[{}] paramFilter[{}] eventType[{}]",
                 __func__, menuName, eventReceiver->aliasName, gfuncs::GetFormName(paramFilter), eventType);
         }
+        registeredUIEventDatasMutex.unlock();
     }
 
     void UnregisterAliasForUiItemMenuEvent(RE::StaticFunctionTag*, std::string menuName, RE::BGSBaseAlias* eventReceiver, RE::TESForm* paramFilter, int eventType) {
@@ -1136,12 +1152,15 @@ namespace UIEvents {
         }
 
         UIEventData data(handle, menuName, paramFilter, eventType);
+        registeredUIEventDatasMutex.lock();
+
         int index = GetIndexInVector(registeredUIEventDatas, data);
         if (index > -1) {
             registeredUIEventDatas.erase(registeredUIEventDatas.begin() + index);
             logger::trace("Unregistered menu[{}] eventReceiver[{}] paramFilter[{}] eventType[{}]",
                 __func__, menuName, eventReceiver->aliasName, gfuncs::GetFormName(paramFilter), eventType);
         }
+        registeredUIEventDatasMutex.unlock();
     }
 
     void UnregisterAliasForUiItemMenuEvent_All(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver) {
@@ -1192,7 +1211,10 @@ namespace UIEvents {
         }
 
         UIEventData data(handle, menuName, paramFilter, eventType);
-        return (GetIndexInVector(registeredUIEventDatas, data) != -1);
+        registeredUIEventDatasMutex.lock();
+        int index = GetIndexInVector(registeredUIEventDatas, data);
+        registeredUIEventDatasMutex.unlock();
+        return (index != -1);
     }
 
     void RegisterActiveMagicEffectForUiItemMenuEvent(RE::StaticFunctionTag*, std::string menuName, RE::ActiveEffect* eventReceiver, RE::TESForm* paramFilter, int eventType) {
@@ -1220,6 +1242,7 @@ namespace UIEvents {
         }
 
         UIEventData data(handle, menuName, paramFilter, eventType);
+        registeredUIEventDatasMutex.lock();
         int index = GetIndexInVector(registeredUIEventDatas, data);
         if (index == -1) {
             registeredUIEventDatas.push_back(data);
@@ -1227,6 +1250,7 @@ namespace UIEvents {
             logger::trace("registered menu[{}] eventReceiver[{}] paramFilter[{}] eventType[{}]",
                 __func__, menuName, gfuncs::GetFormName(eventReceiver->GetBaseObject()), gfuncs::GetFormName(paramFilter), eventType);
         }
+        registeredUIEventDatasMutex.unlock();
     }
 
     void UnregisterActiveMagicEffectForUiItemMenuEvent(RE::StaticFunctionTag*, std::string menuName, RE::ActiveEffect* eventReceiver, RE::TESForm* paramFilter, int eventType) {
@@ -1252,12 +1276,16 @@ namespace UIEvents {
         }
 
         UIEventData data(handle, menuName, paramFilter, eventType);
+        registeredUIEventDatasMutex.lock();
+
         int index = GetIndexInVector(registeredUIEventDatas, data);
         if (index > -1) {
             registeredUIEventDatas.erase(registeredUIEventDatas.begin() + index);
             logger::trace("Unregistered menu[{}] eventReceiver[{}] paramFilter[{}] eventType[{}]",
                 __func__, menuName, gfuncs::GetFormName(eventReceiver->GetBaseObject()), gfuncs::GetFormName(paramFilter), eventType);
         }
+        registeredUIEventDatasMutex.unlock();
+
     }
 
     void UnregisterActiveMagicEffectForUiItemMenuEvent_All(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver) {
