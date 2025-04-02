@@ -2,8 +2,6 @@
 #include "Sound.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
-
 //Music=================================================================================================================================================================
 
 //function copied from More Informative Console
@@ -142,6 +140,20 @@ RE::BSSoundHandle* GetSoundHandleById(int id) {
     }
 
     return nullptr;
+}
+
+RE::BSSoundHandle PlaySound(RE::TESSound* akSound, RE::TESObjectREFR* akSource, float volume) {
+    RE::BSSoundHandle soundHandle;
+    if (akSound && akSource) {
+        auto* audiomanager = RE::BSAudioManager::GetSingleton();
+
+        audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor);
+
+        soundHandle.SetObjectToFollow(akSource->Get3D());
+        soundHandle.SetVolume(volume);
+        soundHandle.Play();
+    }
+    return soundHandle;
 }
 
 int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* akSource, float volume,

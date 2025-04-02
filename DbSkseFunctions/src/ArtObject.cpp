@@ -1,8 +1,6 @@
 #include "ArtObject.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
-
 void SetArtObjectNthTextureSet(RE::StaticFunctionTag*, RE::BGSArtObject* akArtObject, RE::BGSTextureSet* akTextureSet, int n) {
     if (!gfuncs::IsFormValid(akArtObject)) {
         logger::warn("akArtObject isn't valid");

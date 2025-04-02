@@ -4,8 +4,6 @@
 #include <filesystem>
 #include "FileSystem.h"
 
-namespace logger = SKSE::log;
-
 namespace fs {
     std::vector<std::filesystem::path> GetAllFilesInDirectory(const std::filesystem::path& dir_path) {
         std::vector<std::filesystem::path> files;

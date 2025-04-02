@@ -3,8 +3,6 @@
 #include "GeneralFunctions.h"
 #include "editorID.hpp"
 
-namespace logger = SKSE::log;
-
 enum logLevel { trace, debug, info, warn, error, critical };
 enum debugLevel { notification, messageBox };
 

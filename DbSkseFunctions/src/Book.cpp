@@ -2,8 +2,6 @@
 #include "GeneralFunctions.h"
 #include "Actor.h"
 
-namespace logger = SKSE::log;
-
 std::map<RE::TESObjectBOOK*, int> skillBooksMap;
 
 void SetBookSpell(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, RE::SpellItem* akSpell) {

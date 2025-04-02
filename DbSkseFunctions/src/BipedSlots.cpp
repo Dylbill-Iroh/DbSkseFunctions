@@ -1,8 +1,6 @@
 #include "BipedSlots.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
-
 namespace biped {
 	std::vector<RE::TESRace*> GetArmorAddonRaces(RE::StaticFunctionTag*, RE::TESObjectARMA* armorAddon) {
 		std::vector<RE::TESRace*> races;

@@ -4,8 +4,6 @@
 #include "GeneralFunctions.h"
 #include "STLThunk.h"
 
-namespace logger = SKSE::log;
-
 namespace UIEvents {
     bool isUnregistering_All = false;
     bool inventoryMenuHookInstalled = false;

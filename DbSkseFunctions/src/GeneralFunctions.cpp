@@ -9,8 +9,6 @@
 #include "editorID.hpp"
 #include "SendUIMessage.h"
 
-namespace logger = SKSE::log;
-
 namespace gfuncs {
     RE::SkyrimVM* gsvm;
     RE::Actor* gfuncsPlayerRef;
@@ -266,7 +264,7 @@ namespace gfuncs {
 
         std::string editorID = GetFormEditorId(nullptr, akForm, "");
 
-        std::string dataString = std::format("(name[{}] editorID[{}] formID[{:x}]) type[{}]", name, editorID, akForm->GetFormID(), akForm->GetFormType());
+        std::string dataString = std::format("(name[{}] editorID[{}] formID[{:x}]) type[{}])", name, editorID, akForm->GetFormID(), akForm->GetFormType());
 
         return dataString;
     }
@@ -1290,6 +1288,12 @@ namespace gfuncs {
         }
         return "Unrecognized";
     }
+
+    void RemoveDuplicates(std::vector<std::string>& vec)
+    {
+        std::sort(vec.begin(), vec.end());
+        vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
+    } 
 
     void RemoveDuplicates(std::vector<RE::FormID>& vec)
     {

@@ -4,8 +4,6 @@
 #include "ConsoleUtil.h"
 #include "Utility.h"
 
-namespace logger = SKSE::log;
-
 std::string GetWordOfPowerTranslation(RE::StaticFunctionTag*, RE::TESWordOfPower* akWord) {
     if (!gfuncs::IsFormValid(akWord)) {
         logger::warn("akWord doesn't exist.");

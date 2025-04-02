@@ -1,7 +1,6 @@
 #include "MapMarker.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
 enum logLevel { trace, debug, info, warn, error, critical };
 enum debugLevel { notification, messageBox };
 

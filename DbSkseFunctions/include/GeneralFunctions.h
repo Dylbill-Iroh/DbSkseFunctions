@@ -138,6 +138,8 @@ namespace gfuncs {
 
     RE::BSFixedString GetBSUIMessageDataTypeString(RE::BSUIMessageData* msgData);
 
+    void RemoveDuplicates(std::vector<std::string>& vec);
+
     void RemoveDuplicates(std::vector<RE::FormID>& vec);
 
     void RemoveDuplicates(std::vector<RE::VMHandle>& vec);

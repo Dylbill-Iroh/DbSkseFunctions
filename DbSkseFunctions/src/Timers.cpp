@@ -2,8 +2,6 @@
 #include "GeneralFunctions.h"
 #include "Utility.h"
 
-namespace logger = SKSE::log;
-
 int gameTimerPollingInterval = 1500; //in milliseconds
 
 //menu mode timer ===================================================================================================================================

@@ -1,6 +1,5 @@
 #include "PapyrusUtilEx.h"
 #include "GeneralFunctions.h"
-namespace logger = SKSE::log;
 
 //papyrusUtilEX functions=======================================================================================================================
 std::string GetFormHandle(RE::StaticFunctionTag*, RE::TESForm* akForm) {

@@ -1,4 +1,5 @@
 #pragma once
+std::vector<RE::TESObjectREFR*> GetAllContainerRefsThatContainForm(RE::StaticFunctionTag*, RE::TESForm* akForm);
 
 std::vector<RE::TESForm*> GetAllFormsThatUseTextureSet(RE::StaticFunctionTag*, RE::BGSTextureSet* akTextureSet, std::string modName);
 

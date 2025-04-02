@@ -1,8 +1,6 @@
 #include "Actor.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
-
 std::map<RE::Actor*, RE::TESRace*> savedActorRacesMap;
 
 std::map<int, std::string>ActorValueIntsMap = {

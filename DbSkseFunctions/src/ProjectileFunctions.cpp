@@ -1,8 +1,6 @@
 #include "ProjectileFunctions.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
-
 std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentHitProjectiles;
 std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentShotProjectiles;
 

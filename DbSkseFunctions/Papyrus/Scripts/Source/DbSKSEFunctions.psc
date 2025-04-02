@@ -921,6 +921,9 @@ String function GetFormWorldModelNth3dName(form akForm, int n) Global Native
 ;If modName != "", only gets forms from that mod, otherwise gets all forms in game that use the textureset
 form[] function GetAllFormsThatUseTextureSet(TextureSet akTextureSet, string modName = "") Global Native
 
+;get all container refs, including actors, that have at least 1 of the akForm in their inventory.
+ObjectReference[] Function GetAllContainerRefsThatContainForm(form akForm) Global Native
+
 ;UI functions. These are for use with skse's UI.psc script. Valid menuNames are the same as in UI.psc
 ;These will allow you to explore UI targets without needing adobe flash.
 ;Before using these functions make sure the menu is open with for example "If (UI.IsMenuOpen("InventoryMenu"))"
@@ -978,6 +981,23 @@ function TraceUiMenuTargetMembersData(string menu, string target, string asUserL
         EndWhile
     Endif
 EndFunction
+
+
+;Log the animation variables in the variables array for the ref. 
+;Valid types are: 0 = bool, 1 = int, 2 = float, 3 (default) = log all types.
+;If variables == none (default) logs default variables from the CK wiki page for the type, or all variables from the wiki if type is 3.
+;CK wiki page: (https://www.creationkit.com/index.php?title=List_of_Animation_Variables). To see which default variables are logged see the
+;DbAnimationVariableBools.txt, DbAnimationVariableInts.txt and DbAnimationVariableFloats.txt files in Data/Interface/DbMiscFunctions.
+;Logs to 'info' level, so make sure [LOG] iMinLevel is 2 or less in Data/Skse/Plugins/DbSkseFunctions.ini
+;Can view the log in C:/Users/YourUserName/Documents/My Games/Skyrim Special Edition/SKSE/DbSkseFunctions.log
+;To view in game check out my mod Console Log Viewer: https://www.nexusmods.com/skyrimspecialedition/mods/144291
+Function LogAnimationVariables(ObjectReference ref, string[] variables = none, int type = 3) Global Native
+
+;Log all animation variables and their values for the ref
+;Logs to 'info' level, so make sure [LOG] iMinLevel is 2 or less in Data/Skse/Plugins/DbSkseFunctions.ini
+;Can view the log in C:/Users/YourUserName/Documents/My Games/Skyrim Special Edition/SKSE/DbSkseFunctions.log
+;To view in game check out my mod Console Log Viewer: https://www.nexusmods.com/skyrimspecialedition/mods/144291
+Function LogAllAnimationVariables(ObjectReference ref) Global Native
 
 ;race functions for getting and setting slot masks, similar to skse's Armor GetSlotMask, SetSlotMask ect..
 ;use Armor.GetMaskForSlot for convenience. Example, to add the ring slot to slot mask: 

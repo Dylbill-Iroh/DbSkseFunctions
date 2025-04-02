@@ -1,8 +1,6 @@
 #include "CreateForms.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
-
 RE::BGSKeyword* CreateKeyword(RE::StaticFunctionTag*) {
     logger::trace("called");
 

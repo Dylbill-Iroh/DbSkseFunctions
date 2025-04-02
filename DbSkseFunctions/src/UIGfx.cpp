@@ -1,8 +1,6 @@
 #include "UIGfx.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
-
 namespace gfx {
     std::string GetGFxTypeString(int type) {
         switch (type) {

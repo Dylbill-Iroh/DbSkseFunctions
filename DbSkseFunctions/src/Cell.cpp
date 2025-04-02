@@ -1,8 +1,6 @@
 #include "Cell.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
-
 namespace cell {
     RE::TESWorldSpace* GetCellWorldSpace(RE::StaticFunctionTag*, RE::TESObjectCELL* akCell) {
         if (gfuncs::IsFormValid(akCell)) {

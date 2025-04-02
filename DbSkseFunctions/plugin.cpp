@@ -17,6 +17,7 @@
 #include "Utility.h"
 #include "MapMarker.h"
 #include "Actor.h"
+#include "Animation.h"
 #include "ArtObject.h"
 #include "Book.h"
 #include "Cell.h"
@@ -36,7 +37,6 @@
 #include "FileSystem.h"
 #include "UIGfx.h"
 
-namespace logger = SKSE::log;
 bool bPlayerIsInCombat = false;
 bool bRegisteredForPlayerCombatChange = false;
 //bool inMenuMode = false;
@@ -160,7 +160,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(8.9);
+    return float(9.1);
 }
 
 bool SetAliasQuestObjectFlag(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, bool set) {
@@ -731,7 +731,6 @@ struct AnimationEventSink : public RE::BSTEventSink<RE::BSAnimationGraphEvent> {
     }
 };
 
-std::mutex animationEventActorsMapMutex;
 std::map<RE::TESObjectREFR*, AnimationEventSink*> animationEventActorsMap;
 
 int GetImpactResultInt(RE::ImpactResult& result) {
@@ -1102,7 +1101,6 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
                     RE::Actor* actor = attacker->As<RE::Actor>();
                     if (gfuncs::IsFormValid(actor)) {
                         ammo = actor->GetCurrentAmmo();
-                        animationEventActorsMapMutex.lock();
                         auto it = animationEventActorsMap.find(attacker);
                         if (it != animationEventActorsMap.end()) { //akactor found in animationEventActorsMap
                             if (it->second) {
@@ -1175,7 +1173,6 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
                                 it->second->lastHitAmmo = ammo;
                             }
                         }
-                        animationEventActorsMapMutex.unlock();
                     }
                 }
             }
@@ -1510,7 +1507,6 @@ bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
     if (gfuncs::IsFormValid(actorRef)) {
         RE::Actor* actor = actorRef->As<RE::Actor>();
         if (actorHasBowEquipped(actor)) {
-            animationEventActorsMapMutex.lock();
             auto it = animationEventActorsMap.find(actorRef);
             if (it == animationEventActorsMap.end()) { //actorRef not already registered
                 AnimationEventSink* animEventSink = new AnimationEventSink();
@@ -1520,7 +1516,6 @@ bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
                 logger::info("actor [{}]", gfuncs::GetFormName(actorRef));
                 return true;
             }
-            animationEventActorsMapMutex.unlock();
         }
     }
     return false;
@@ -1529,7 +1524,6 @@ bool RegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
 bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
     bool bUnregistered = false;
     if (gfuncs::IsFormValid(actorRef)) {
-        animationEventActorsMapMutex.lock();
         auto it = animationEventActorsMap.find(actorRef);
         if (it != animationEventActorsMap.end()) { //actorRef registered
             if (it->second) {
@@ -1559,7 +1553,6 @@ bool UnRegisterActorForBowDrawAnimEvent(RE::TESObjectREFR* actorRef) {
                 bUnregistered = true;
             }
         }
-        animationEventActorsMapMutex.unlock();
     }
     return bUnregistered;
 }
@@ -1657,7 +1650,6 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
                 RE::TESAmmo* akAmmo = baseObject->As<RE::TESAmmo>();
                 if (gfuncs::IsFormValid(akAmmo)) {
                     if (akActorRef) {
-                        animationEventActorsMapMutex.lock();
                         auto it = animationEventActorsMap.find(akActorRef);
                         if (it != animationEventActorsMap.end()) {
                             float timeDiff = GameHoursToRealTimeSeconds(nullptr, (fTime - it->second->lastReleaseGameTime));
@@ -1671,7 +1663,6 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
                                 it->second->forceChangedAmmos.push_back(data);
                             }
                         }
-                        animationEventActorsMapMutex.unlock();
                     }
                 }
                 if (gfuncs::formIsBowOrCrossbow(baseObject)) {
@@ -4334,6 +4325,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("SortFormArray", "DbSkseFunctions", SortFormArray);
     vm->RegisterFunction("FormListToArray", "DbSkseFunctions", FormListToArray);
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
+    vm->RegisterFunction("GetAllContainerRefsThatContainForm", "DbSkseFunctions", GetAllContainerRefsThatContainForm);
     vm->RegisterFunction("GetAllFormsThatUseTextureSet", "DbSkseFunctions", GetAllFormsThatUseTextureSet);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
     vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
@@ -4596,6 +4588,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         papyrusInterface->Register(gfx::BindPapyrusFunctions);
         papyrusInterface->Register(cell::BindPapyrusFunctions);
         papyrusInterface->Register(biped::BindPapyrusFunctions);
+        papyrusInterface->Register(animation::BindPapyrusFunctions);
 
         SetSettingsFromIniFile();
         CreateEventSinks();

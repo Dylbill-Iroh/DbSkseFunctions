@@ -422,6 +422,36 @@ Bool Function ToggleCreationKitMarkers(Bool ShowMarkers = true, ObjectReference 
     Return True
 EndFunction
 
+;Enable all the object refs in akCell that match formTypeFilter.
+;If formTypeFilter is 0 (default) enable all refs in the cell. 
+;Requires skse.
+function EnableRefsInCell(cell akCell, int formTypeFilter = 0) Global
+    int m = akCell.GetNumRefs(formTypeFilter)
+    int i = 0 
+    while i < m 
+        ObjectReference ref = akCell.GetNthRef(i, formTypeFilter)
+        if ref 
+            ref.Enable()
+        Endif
+        i += 1
+    EndWhile
+EndFunction
+
+;Disable all the object refs in akCell that match formTypeFilter.
+;If formTypeFilter is 0 (default) disable all refs in the cell. 
+;Requires skse.
+function DisableRefsInCell(cell akCell, int formTypeFilter = 0) Global
+    int m = akCell.GetNumRefs(formTypeFilter)
+    int i = 0 
+    while i < m 
+        ObjectReference ref = akCell.GetNthRef(i, formTypeFilter)
+        if ref 
+            ref.Disable()
+        Endif
+        i += 1
+    EndWhile
+EndFunction 
+
 ;create new xMarker ObjectReference 
 ;if PlaceAtMeRef == none (default) places new marker at the player.
 ;no requirements
@@ -820,6 +850,19 @@ Bool Function FormHasKeywordInJsonUtilList(Form akForm, String JsonFilePath, Str
         
         Return true
     Endif
+EndFunction
+
+;Copy keywords from form A onto form B. 
+;Requires skse and papyrus extender
+Function CopykeywordsToForm(Form A, Form B) Global
+    keyword[] keywords = A.GetKeywords() 
+    int i = 0 
+    while i < keywords.length 
+        if !A.HasKeyword(keywords[i])
+            PO3_SKSEFunctions.AddKeywordToForm(B, keywords[i])
+        Endif
+        i += 1
+    EndWhile
 EndFunction
 
 ;Requires SKSE
@@ -5190,6 +5233,28 @@ String Function StringRemoveCharAt(String s, Int Index) Global
     Endif
 EndFunction
 
+;Find the last index of the string toFind in string s. 
+;returns -1 if not found. 
+;requires skse
+int function StringRFind(string s, string toFind) Global 
+    int iReturn = -1
+    if s == "" || toFind == ""
+        return iReturn
+    Endif
+
+    int sLength = stringUtil.GetLength(s)
+    int i = stringUtil.find(s, toFind)
+    while i != -1 
+        if i != -1 
+            iReturn = i 
+            i += sLength
+            i = stringUtil.find(s, toFind, i)
+        Endif
+    EndWhile
+
+    return iReturn
+EndFunction
+
 ;Remove Non printable characters from string 
 ;Requires skse.
 String Function StringRemoveNonPrintableCharacters(String s) Global
@@ -6157,12 +6222,24 @@ EndFunction
 ;Requires skse and papyrusutil
 Function WriteAnimationVariableBoolsToFile(ObjectReference akRef, String OutputFilePath, String VariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableBools.txt") Global
     String[] Variables = StringUtil.Split(MiscUtil.ReadFromFile(VariablesSourceFilePath), "\n")
+    string lastChar = stringUtil.GetNthChar(Variables[0], (stringUtil.GetLength(Variables[0]) - 1))
+    int lastCharCode = StringUtil.AsOrd(lastChar)
     Int i = 0 
     Int L = Variables.length 
-    While i < L 
-        MiscUtil.WriteToFile(OutputFilePath, Variables[i] + " = " + akRef.GetAnimationVariableBool(Variables[i]) + "\n")
-        i += 1
-    EndWhile 
+
+    if lastChar == "\n" || lastCharCode == 13 ;13 is \r, carriage return, must be removed
+        While i < L 
+            string sVar = StringRemoveCharAt(Variables[i], (StringUtil.GetLength(Variables[i]) - 1))
+            MiscUtil.WriteToFile(OutputFilePath, sVar + " = " + akRef.GetAnimationVariableBool(sVar) + "\n")
+            i += 1
+        EndWhile 
+    Else 
+        While i < L 
+            string sVar = Variables[i]
+            MiscUtil.WriteToFile(OutputFilePath, sVar + " = " + akRef.GetAnimationVariableBool(sVar) + "\n")
+            i += 1
+        EndWhile 
+    Endif
 Endfunction
 
 ;Write int animation variables of akRef found in DbAnimationVariableInts.txt to OutputFilePath.
@@ -6171,12 +6248,24 @@ Endfunction
 ;Requires skse and papyrusutil
 Function WriteAnimationVariableIntsToFile(ObjectReference akRef, String OutputFilePath, String VariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableInts.txt") Global
     String[] Variables = StringUtil.Split(MiscUtil.ReadFromFile(VariablesSourceFilePath), "\n")
+    string lastChar = stringUtil.GetNthChar(Variables[0], (stringUtil.GetLength(Variables[0]) - 1))
+    int lastCharCode = StringUtil.AsOrd(lastChar)
     Int i = 0 
     Int L = Variables.length 
-    While i < L 
-        MiscUtil.WriteToFile(OutputFilePath, Variables[i] + " = " + akRef.GetAnimationVariableInt(Variables[i]) + "\n")
-        i += 1
-    EndWhile 
+
+    if lastChar == "\n" || lastCharCode == 13 ;13 is \r, carriage return, must be removed
+        While i < L 
+            string sVar = StringRemoveCharAt(Variables[i], (StringUtil.GetLength(Variables[i]) - 1))
+            MiscUtil.WriteToFile(OutputFilePath, sVar + " = " + akRef.GetAnimationVariableInt(sVar) + "\n")
+            i += 1
+        EndWhile 
+    Else 
+        While i < L 
+            string sVar = Variables[i]
+            MiscUtil.WriteToFile(OutputFilePath, sVar + " = " + akRef.GetAnimationVariableInt(sVar) + "\n")
+            i += 1
+        EndWhile 
+    Endif
 Endfunction
 
 ;Write Float animation variables of akRef found in DbAnimationVariableFloats.txt to OutputFilePath.
@@ -6185,12 +6274,24 @@ Endfunction
 ;Requires skse and papyrusutil
 Function WriteAnimationVariableFloatsToFile(ObjectReference akRef, String OutputFilePath, String VariablesSourceFilePath = "Data/interface/DbMiscFunctions/DbAnimationVariableFloats.txt") Global
     String[] Variables = StringUtil.Split(MiscUtil.ReadFromFile(VariablesSourceFilePath), "\n")
+    string lastChar = stringUtil.GetNthChar(Variables[0], (stringUtil.GetLength(Variables[0]) - 1))
+    int lastCharCode = StringUtil.AsOrd(lastChar)
     Int i = 0 
     Int L = Variables.length 
-    While i < L 
-        MiscUtil.WriteToFile(OutputFilePath, Variables[i] + " = " + akRef.GetAnimationVariableFloat(Variables[i]) + "\n")
-        i += 1
-    EndWhile 
+
+    if lastChar == "\n" || lastCharCode == 13 ;13 is \r, carriage return, must be removed
+        While i < L 
+            string sVar = StringRemoveCharAt(Variables[i], (StringUtil.GetLength(Variables[i]) - 1))
+            MiscUtil.WriteToFile(OutputFilePath, sVar + " = " + akRef.GetAnimationVariableFloat(sVar) + "\n")
+            i += 1
+        EndWhile 
+    Else 
+        While i < L 
+            string sVar = Variables[i]
+            MiscUtil.WriteToFile(OutputFilePath, sVar + " = " + akRef.GetAnimationVariableFloat(sVar) + "\n")
+            i += 1
+        EndWhile 
+    Endif
 Endfunction
 
 ;Requires skse and papyrusutil

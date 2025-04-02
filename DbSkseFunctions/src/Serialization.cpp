@@ -1,8 +1,6 @@
 #include "Serialization.h"
 #include "GeneralFunctions.h"
 
-namespace logger = SKSE::log;
-
 namespace serialize {
     RE::TESForm* LoadForm(SKSE::SerializationInterface* a_intfc) {
         RE::FormID formID;

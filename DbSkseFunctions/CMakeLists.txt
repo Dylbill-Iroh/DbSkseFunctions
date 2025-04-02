@@ -47,6 +47,7 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is require
 # Must have PUBLIC on its own at the end of target_sources
 target_sources(${PROJECT_NAME} 
 PUBLIC src/Actor.cpp
+PUBLIC src/Animation.cpp
 PUBLIC src/ArtObject.cpp
 PUBLIC src/Book.cpp
 PUBLIC src/Cell.cpp

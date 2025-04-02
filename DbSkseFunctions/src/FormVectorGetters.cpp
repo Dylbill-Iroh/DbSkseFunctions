@@ -2,7 +2,26 @@
 #include "GeneralFunctions.h"
 #include "Utility.h"
 
-namespace logger = SKSE::log;
+std::vector<RE::TESObjectREFR*> GetAllContainerRefsThatContainForm(RE::StaticFunctionTag*, RE::TESForm* akForm) {
+    std::vector<RE::TESObjectREFR*> v; 
+    if (!gfuncs::IsFormValid(akForm)) {
+        logger::error("akTextureSet doesn't exist");
+        return v;
+    } 
+
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+    for (auto& [id, form] : *allForms) {
+        if (gfuncs::IsFormValid(form)) {
+            RE::TESObjectREFR* ref = form->AsReference();
+            if (gfuncs::IsFormValid(ref)) {
+                if (gfuncs::GetItemCount(ref, akForm) > 0) {
+                    v.push_back(ref);
+                }
+            }
+        }
+    }
+    return v;
+}
 
 std::vector<RE::TESForm*> GetAllFormsThatUseTextureSet(RE::StaticFunctionTag*, RE::BGSTextureSet* akTextureSet, std::string modName) {
     std::vector<RE::TESForm*> v;
@@ -17,7 +36,7 @@ std::vector<RE::TESForm*> GetAllFormsThatUseTextureSet(RE::StaticFunctionTag*, R
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
 
     for (auto& [id, form] : *allForms) {
-        if (gfuncs::IsFormValid(form, false)) {
+        if (gfuncs::IsFormValid(form)) {
             auto file = form->GetFile(0);
             if (file) {
                 std::string sfileName = std::string(file->GetFilename());
