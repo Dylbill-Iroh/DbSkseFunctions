@@ -1,8 +1,45 @@
 #include <Windows.h>
+#include <cmath>
+#include <vector>
+#include <iostream>
+#include <fstream>
 #include "Animation.h"
 #include "GeneralFunctions.h"
 
 namespace animation {
+    RE::BSScript::Internal::VirtualMachine* vm;
+
+    struct AnimationGraphData {
+        RE::IAnimationGraphManagerHolder* managerHolder = nullptr;
+        RE::BSAnimationGraphManager* manager = nullptr;
+        RE::BSTArray<RE::AnimVariableCacheInfo> actorVariablesCache;
+    };
+
+    AnimationGraphData GetAnimationGraphData(RE::TESObjectREFR* ref) {
+        AnimationGraphData data;
+        RE::IAnimationGraphManagerHolder* aniManagerHolder = static_cast<RE::IAnimationGraphManagerHolder*>(ref);
+        if (aniManagerHolder) {
+            data.managerHolder = aniManagerHolder;
+            RE::BSTSmartPointer<RE::BSAnimationGraphManager> aniManagerPtr;
+
+            if (aniManagerHolder->GetAnimationGraphManager(aniManagerPtr)) {
+                data.manager = aniManagerPtr.get();
+            }
+
+            RE::Actor* akActor = skyrim_cast<RE::Actor*>(ref);
+            if (gfuncs::IsFormValid(akActor)) {
+                const auto* ai = akActor->GetActorRuntimeData().currentProcess;
+                if (ai) {
+                    if (ai->middleHigh) {
+                        data.actorVariablesCache = ai->middleHigh->animationVariableCache->variableCache;
+                    }
+                }
+            }
+        }
+
+        return data;
+    }
+
     std::pair<bool, float> GetAnimationVariableFloat(RE::IAnimationGraphManagerHolder* aniManagerHolder, std::string& variable) {
         float var = 0.0;
         if (aniManagerHolder->GetGraphVariableFloat(variable, var)) {
@@ -285,6 +322,198 @@ namespace animation {
         }
     }
 
+    std::vector<std::string> GetAnimationGraphManagerCharacterProperties(RE::BSAnimationGraphManager* manager, std::string refName) {
+        std::vector<std::string> CharacterProperties;
+
+        if (manager) {
+            if (IsBadReadPtr(manager, sizeof(manager))) {
+                logger::warn("[{}] manager IsBadReadPtr", refName);
+                return CharacterProperties;
+            }
+
+            logger::info("[{}] ref manager->graphs size[{}]", refName, manager->graphs.size());
+
+            if (manager->graphs.size() > 0) {
+                int i = 0;
+                for (auto& graph : manager->graphs) {
+                    if (graph) {
+                        //logger::info("[{}] i[{}] graph found", refName, i);
+
+                        auto* graphPtr = graph.get();
+                        if (graphPtr) {
+                            //logger::info("[{}] i[{}] graphPtr found", refName, i);
+
+                            auto* behaviorGraph = graphPtr->behaviorGraph;
+                            if (behaviorGraph) {
+                                //logger::info("[{}] i[{}] behaviorGraph found", refName, i);
+
+                                auto graphData = behaviorGraph->data;
+                                if (graphData) {
+                                    //logger::info("[{}] i[{}] graphData found", refName, i);
+
+                                    auto* data = graphData.get();
+                                    if (data) {
+                                        //logger::info("[{}] i[{}] data found", refName, i);
+
+                                        auto stringData = data->stringData;
+                                        if (stringData) {
+                                            //logger::info("[{}] i[{}] stringData found", refName, i);
+
+                                            auto characterPropertyNames = stringData->characterPropertyNames;
+
+                                            logger::info("[{}] i[{}] characterPropertyNames size[{}]", refName, i, characterPropertyNames.size());
+                                            if (characterPropertyNames.size() > 0) {
+                                                for (auto& name : characterPropertyNames) {
+                                                    auto* cname = name.c_str();
+
+                                                    if (cname) {
+                                                        CharacterProperties.push_back(cname);
+                                                        //logger::info("[{}] ref graph variable[{}]", refName, cname);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    i++;
+                }
+            }
+        }
+        gfuncs::RemoveDuplicates(CharacterProperties);
+        return CharacterProperties;
+    }
+
+    std::vector<std::string> GetAnimationGraphManagerAttributes(RE::BSAnimationGraphManager* manager, std::string refName) {
+        std::vector<std::string> attributes;
+
+        if (manager) {
+            if (IsBadReadPtr(manager, sizeof(manager))) {
+                logger::warn("[{}] manager IsBadReadPtr", refName);
+                return attributes;
+            }
+
+            logger::info("[{}] ref manager->graphs size[{}]", refName, manager->graphs.size());
+
+            if (manager->graphs.size() > 0) {
+                int i = 0;
+                for (auto& graph : manager->graphs) {
+                    if (graph) {
+                        //logger::info("[{}] i[{}] graph found", refName, i);
+
+                        auto* graphPtr = graph.get();
+                        if (graphPtr) {
+                            //logger::info("[{}] i[{}] graphPtr found", refName, i);
+
+                            auto* behaviorGraph = graphPtr->behaviorGraph;
+                            if (behaviorGraph) {
+                                //logger::info("[{}] i[{}] behaviorGraph found", refName, i);
+
+                                auto graphData = behaviorGraph->data;
+                                if (graphData) {
+                                    //logger::info("[{}] i[{}] graphData found", refName, i);
+
+                                    auto* data = graphData.get();
+                                    if (data) {
+                                        //logger::info("[{}] i[{}] data found", refName, i);
+
+                                        auto stringData = data->stringData;
+                                        if (stringData) {
+                                            //logger::info("[{}] i[{}] stringData found", refName, i);
+
+                                            auto attributeNames = stringData->attributeNames;
+
+                                            logger::info("[{}] i[{}] attributeNames size[{}]", refName, i, attributeNames.size());
+                                            if (attributeNames.size() > 0) {
+                                                for (auto& name : attributeNames) {
+                                                    auto* cname = name.c_str();
+
+                                                    if (cname) {
+                                                        attributes.push_back(cname);
+                                                        //logger::info("[{}] ref graph variable[{}]", refName, cname);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    i++;
+                }
+            }
+        }
+        gfuncs::RemoveDuplicates(attributes);
+        return attributes;
+    }
+
+    std::vector<std::string> GetAnimationGraphManagerEvents(RE::BSAnimationGraphManager* manager, std::string refName) {
+        std::vector<std::string> events;
+
+        if (manager) {
+            if (IsBadReadPtr(manager, sizeof(manager))) {
+                logger::warn("[{}] manager IsBadReadPtr", refName);
+                return events;
+            }
+
+            logger::info("[{}] ref manager->graphs size[{}]", refName, manager->graphs.size());
+
+            if (manager->graphs.size() > 0) {
+                int i = 0;
+                for (auto& graph : manager->graphs) {
+                    if (graph) {
+                        //logger::info("[{}] i[{}] graph found", refName, i);
+
+                        auto* graphPtr = graph.get();
+                        if (graphPtr) {
+                            //logger::info("[{}] i[{}] graphPtr found", refName, i);
+
+                            auto* behaviorGraph = graphPtr->behaviorGraph;
+                            if (behaviorGraph) {
+                                //logger::info("[{}] i[{}] behaviorGraph found", refName, i);
+
+                                auto graphData = behaviorGraph->data;
+                                if (graphData) {
+                                    //logger::info("[{}] i[{}] graphData found", refName, i);
+
+                                    auto* data = graphData.get();
+                                    if (data) {
+                                        //logger::info("[{}] i[{}] data found", refName, i);
+
+                                        auto stringData = data->stringData;
+                                        if (stringData) {
+                                            //logger::info("[{}] i[{}] stringData found", refName, i);
+                                            
+                                            auto eventNames = stringData->eventNames;
+
+                                            logger::info("[{}] i[{}] eventNames size[{}]", refName, i, eventNames.size());
+                                            if (eventNames.size() > 0) {
+                                                for (auto& name : eventNames) {
+                                                    auto* cname = name.c_str();
+
+                                                    if (cname) {
+                                                        events.push_back(cname);
+                                                        //logger::info("[{}] ref graph variable[{}]", refName, cname);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    i++;
+                }
+            }
+        }
+        gfuncs::RemoveDuplicates(events);
+        return events;
+    }
+
     std::vector<std::string> GetAnimationGraphManagerVariables(RE::BSAnimationGraphManager* manager, RE::BSTArray<RE::AnimVariableCacheInfo>& actorVariablesCache, std::string refName) {
         std::vector<std::string> variables;
 
@@ -324,10 +553,10 @@ namespace animation {
 
                                             auto variableNames = stringData->variableNames;
                                             //logger::info("[{}] i[{}] variableNames size[{}]", refName, i, variableNames.size());
-
                                             if (variableNames.size() > 0) {
                                                 for (auto& name : variableNames) {
                                                     auto* cname = name.c_str();
+                                                    
                                                     if (cname) { 
                                                         variables.push_back(cname);
                                                         //logger::info("[{}] ref graph variable[{}]", refName, cname);
@@ -444,6 +673,72 @@ namespace animation {
         return variables;
     }
 
+    void LogAllAnimationsCharacterProperties(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+        if (!gfuncs::IsFormValid(ref)) {
+            logger::warn("ref doesn't exist");
+            return;
+        }
+        std::string refName = std::string(gfuncs::GetFormName(ref));
+        logger::info("logging all animation character properties for {}", gfuncs::GetFormDataString(ref));
+
+        std::vector<std::string> properties = {};
+        auto graphData = GetAnimationGraphData(ref);
+        if (graphData.manager) {
+            properties = GetAnimationGraphManagerCharacterProperties(graphData.manager, refName);
+        }
+
+        logger::info("[{}] total number of properties found[{}]", refName, properties.size());
+        if (properties.size() > 0) {
+            for (auto& event : properties) {
+                logger::info("[{}] property[{}]", refName, event);
+            }
+        }
+    }
+
+    void LogAllAnimationsAttributes(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+        if (!gfuncs::IsFormValid(ref)) {
+            logger::warn("ref doesn't exist");
+            return;
+        }
+        std::string refName = std::string(gfuncs::GetFormName(ref));
+        logger::info("logging all animation attributes for {}", gfuncs::GetFormDataString(ref));
+
+        std::vector<std::string> attributes = {};
+        auto graphData = GetAnimationGraphData(ref);
+        if (graphData.manager) {
+            attributes = GetAnimationGraphManagerAttributes(graphData.manager, refName);
+        }
+
+        logger::info("[{}] total number of attributes found[{}]", refName, attributes.size());
+        if (attributes.size() > 0) {
+            for (auto& event : attributes) {
+                logger::info("[{}] attribute[{}]", refName, event);
+            }
+        }
+    }
+
+    void LogAllAnimations(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+        if (!gfuncs::IsFormValid(ref)) {
+            logger::warn("ref doesn't exist");
+            return;
+        }
+        std::string refName = std::string(gfuncs::GetFormName(ref));
+        logger::info("logging all animations for {}", gfuncs::GetFormDataString(ref));
+
+        std::vector<std::string> events = {};
+        auto graphData = GetAnimationGraphData(ref);
+        if (graphData.manager) {
+            events = GetAnimationGraphManagerEvents(graphData.manager, refName);
+        } 
+
+        logger::info("[{}] total number of animations found[{}]", refName, events.size());
+        if (events.size() > 0) {
+            for (auto& event : events) {
+                logger::info("[{}] animation[{}]", refName, event);
+            }
+        }
+    }
+
     void LogAllAnimationVariables(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
         if (!gfuncs::IsFormValid(ref)) {
             logger::warn("ref doesn't exist");
@@ -454,39 +749,114 @@ namespace animation {
         logger::info("logging all animation variables for {}", gfuncs::GetFormDataString(ref));
 
         std::vector<std::string> variables = {};
-        RE::BSAnimationGraphManager* manager;
+        
+        auto graphData = GetAnimationGraphData(ref);
+        if (graphData.manager) {
+            variables = GetAnimationGraphManagerVariables(graphData.manager, graphData.actorVariablesCache, refName);
+        }
 
-        RE::IAnimationGraphManagerHolder* aniManagerHolder = static_cast<RE::IAnimationGraphManagerHolder*>(ref);
-        if (aniManagerHolder) {
-            RE::BSTSmartPointer<RE::BSAnimationGraphManager> aniManagerPtr;
+        logger::info("[{}] total number of variables found[{}]", refName, variables.size());
 
-            if (aniManagerHolder->GetAnimationGraphManager(aniManagerPtr)) {
-                manager = aniManagerPtr.get();
-            }
-            RE::BSTArray<RE::AnimVariableCacheInfo> actorVariablesCache;
-            
-            RE::Actor* akActor = skyrim_cast<RE::Actor*>(ref);
-            if (gfuncs::IsFormValid(akActor)) {
-                const auto* ai = akActor->GetActorRuntimeData().currentProcess;
-                if (ai) {
-                    if (ai->middleHigh) {
-                        actorVariablesCache = ai->middleHigh->animationVariableCache->variableCache;
-                    }
-                }
-            }
-
-            variables = GetAnimationGraphManagerVariables(manager, actorVariablesCache, refName);
-            logger::info("[{}] total number of variables found[{}]", refName, variables.size());
-
-            if (variables.size() > 0) {
-                LogAllTypeAnimationVariables(aniManagerHolder, refName, variables);
-            }
+        if (variables.size() > 0) {
+            LogAllTypeAnimationVariables(graphData.managerHolder, refName, variables);
         }
     }
 
+    std::string GetBase3DNodeNameForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool firstPerson) {
+        std::string nodeName = "";
+
+        if (!gfuncs::IsFormValid(ref)) {
+            logger::warn("ref doesn't exist");
+            return nodeName;
+        }
+
+        RE::NiAVObject* niObj;
+        if (firstPerson) {
+            niObj = ref->Get3D1(true);
+        }
+        else {
+            niObj = ref->Get3D();
+        }
+
+        auto refDataString = gfuncs::GetFormDataString(ref);
+
+        if (!niObj) {
+            logger::warn("Couldn't get 3d for [{}]", refDataString);
+            return nodeName;
+        }
+
+        RE::NiObjectNET* baseNiNet = niObj;
+
+        if (baseNiNet) {
+            logger::info("[{}], node[{}]", refDataString, baseNiNet->name);
+            nodeName = (std::string(baseNiNet->name));
+        }
+        else {
+            logger::info("[{}], baseNiNet not found", refDataString);
+        }
+
+        return nodeName;
+    }
+
+    std::vector<std::string> GetAll3DNodeNamesForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool firstPerson) {
+        std::vector<std::string> nodeNames;
+
+        if (!gfuncs::IsFormValid(ref)) {
+            logger::warn("ref doesn't exist");
+            return nodeNames;
+        }
+
+        RE::NiAVObject* niObj;
+        if (firstPerson) {
+            niObj = ref->Get3D1(true);
+        }
+        else {
+            niObj = ref->Get3D();
+        }
+
+        auto refDataString = gfuncs::GetFormDataString(ref);
+        auto refName = gfuncs::GetFormName(ref);
+
+        if (!niObj) {
+            logger::warn("couldn't get 3d for [{}]", refDataString);
+            return nodeNames;
+        }
+
+        RE::NiObjectNET* baseNiNet = niObj;
+
+        logger::info("Getting 3d node names for [{}]", refDataString);
+
+        if (baseNiNet) {
+            logger::info("[{}], node[{}]", refName, baseNiNet->name);
+            nodeNames.push_back(std::string(baseNiNet->name));
+        }
+        else {
+            logger::info("[{}], baseNiNet not found", refDataString);
+        }
+
+        RE::BSVisit::TraverseScenegraphObjects(niObj, [&](RE::NiAVObject* childNodeObj) {
+            RE::NiObjectNET* niNet = childNodeObj;
+            if (niNet) {
+                logger::info("[{}], node[{}]", refName, niNet->name);
+                nodeNames.push_back(std::string(niNet->name));
+            }
+
+            return RE::BSVisit::BSVisitControl::kContinue;
+        });
+
+        
+        gfuncs::RemoveDuplicates(nodeNames);
+        return nodeNames;
+    }
+    
     bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
+        vm->RegisterFunction("LogAllAnimationsCharacterProperties", "DbSkseFunctions", LogAllAnimationsCharacterProperties);
+        vm->RegisterFunction("LogAllAnimationsAttributes", "DbSkseFunctions", LogAllAnimationsAttributes);
         vm->RegisterFunction("LogAnimationVariables", "DbSkseFunctions", LogAnimationVariables);
         vm->RegisterFunction("LogAllAnimationVariables", "DbSkseFunctions", LogAllAnimationVariables);
+        vm->RegisterFunction("LogAllAnimations", "DbSkseFunctions", LogAllAnimations);
+        vm->RegisterFunction("GetBase3DNodeNameForRef", "DbSkseFunctions", GetBase3DNodeNameForRef);
+        vm->RegisterFunction("GetAll3DNodeNamesForRef", "DbSkseFunctions", GetAll3DNodeNamesForRef);
         return true;
     }
 }

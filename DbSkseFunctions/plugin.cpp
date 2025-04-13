@@ -160,7 +160,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(9.1);
+    return float(9.2);
 }
 
 bool SetAliasQuestObjectFlag(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, bool set) {
@@ -190,24 +190,18 @@ RE::TESObjectREFR* GetLastPlayerMenuActivatedRef(RE::StaticFunctionTag*) {
 }
 
 RE::TESObjectREFR* GetAshPileLinkedRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+    RE::TESObjectREFR* returnRef = nullptr;
+
     if (!gfuncs::IsFormValid(ref)) {
         logger::warn("ref doesn't exist or isn't valid");
-        return nullptr;
+        return returnRef;
     }
 
     auto* data = ref->extraList.GetByType<RE::ExtraAshPileRef>();
     if (data) {
-        if (data->ashPileRef) {
-            auto refPtr = data->ashPileRef.get();
-            if (refPtr) {
-                RE::TESObjectREFR* returnRef = refPtr.get();
-                if (gfuncs::IsFormValid(returnRef)) {
-                    return returnRef;
-                }
-            }
-        }
+        returnRef = gfuncs::GetRefFromObjectRefHandle(data->ashPileRef);
     }
-    return nullptr;
+    return returnRef;
 }
 
 RE::TESObjectREFR* GetClosestObjectFromRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, std::vector<RE::TESObjectREFR*> refs) {
@@ -2916,7 +2910,6 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
 
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*/*source*/) {
         //this sink is for managing timers and GetCurrentMenuOpen function.
-
         if (!event) {
             logger::warn("MenuOpenClose Event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
@@ -4657,6 +4650,7 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
         else {
             logger::debug("already loading or saving. loading = {} saving = {}, aborting load.", bIsLoadingSerialization, bIsSavingSerialization);
         }
+        
     }
     else {
         logger::error("a_intfc doesn't exist, aborting load.");
@@ -4703,6 +4697,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     serialization->SetSaveCallback(SaveCallback);
     serialization->SetLoadCallback(LoadCallback);
 
+    
     //replaced gfuncs::LogAndMessage with logger:: functions.
     //fs::ReplaceLogAndMessageFuncs();
     return true;
