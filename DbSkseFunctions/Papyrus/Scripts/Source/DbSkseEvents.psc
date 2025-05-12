@@ -158,11 +158,33 @@ Event OnProjectileImpactGlobal(ObjectReference shooter, ObjectReference target, 
 	float distanceTraveled, string damagedNodeName, ObjectReference projectileMarker, float[] projectileHitTranslation)
 EndEvent
 
+;Like OnMagicEffectApplied. Is triggered when the magicEffect is added to a target.
+;Is trigged regardless if the MagicEffect or spell conditions evaluate to true.
 Event OnMagicEffectAppliedGlobal(ObjectReference Caster, ObjectReference Target, MagicEffect akEffect)
 Endevent
 
-Event OnActiveMagicEffectAppliedGlobal(ObjectReference Caster, ObjectReference Target, Form akSource, MagicEffect akEffect, \
-	ActiveMagicEffect akActiveEffect, int castringSource, int conditionStatus)
+;Like ActiveMagicEffect OnEffectStart 
+;Triggers when the akEffect becomes active on the Target, meaning the conditions for the effect or spell evaluate to true.
+;Source could be a spell, enchantment, potion, ingredient ect. The magic item that applied the akEffect.
+;For castingSource:
+;;LeftHand = 0,
+;RightHand = 1,
+;Other = 2, (most likely shout) 
+;Instant = 3
+Event OnEffectStartGlobal(Actor Caster, Actor Target, MagicEffect akEffect, form source, int castingSource) 
+EndEvent
+
+;Like ActiveMagicEffect OnEffectFinish
+;Triggers when the akEffect becomes inactive or finishes on the Target.
+;Source could be a spell, enchantment, potion, ingredient ect. The magic item that applied the akEffect.
+;For castingSource:
+;;LeftHand = 0,
+;RightHand = 1,
+;Other = 2, (most likely shout) 
+;Instant = 3
+;elapsedSeconds is that amount real time seconds since the effect was last started on the Target. Time spent in menus is counted. 
+;elapsedGameHours is the amount of game hours elapsed since the effect was last started on the Target.
+Event OnEffectFinishGlobal(Actor Caster, Actor Target, MagicEffect akEffect, form source, int castingSource, float elapsedSeconds, float elapsedGameHours)
 EndEvent
 
 ;Event sent when an ObjectReference casts a spell. Source could be a spell, enchantment, potion or ingredient.

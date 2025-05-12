@@ -344,13 +344,24 @@ namespace gfuncs {
             return NULL;
         }
 
-        RE::VMTypeID id = akEffect->VMTYPEID;
+        //RE::VMTypeID id = akEffect->VMTYPEID;
+        RE::VMTypeID id = RE::ActiveEffect::VMTYPEID;
         RE::VMHandle handle = gsvm->handlePolicy.GetHandleForObject(id, akEffect);
 
-        if (handle == NULL) {
-            return NULL;
-        }
+        //if (handle == NULL) {
+            //return NULL;
+        //}
         return handle;
+    }
+
+    RE::ActiveEffect* GetActiveEffectFromHandle(RE::VMHandle handle) {
+        RE::ActiveEffect* activeEffect = nullptr;
+        RE::VMTypeID id = RE::ActiveEffect::VMTYPEID;
+        auto* obj = gsvm->handlePolicy.GetObjectForHandle(id, handle);
+        if (obj) {
+            activeEffect = static_cast<RE::ActiveEffect*>(obj);
+        }
+        return activeEffect;
     }
 
     RE::TESObjectREFR* GetRefFromHandle(RE::RefHandle& handle) {

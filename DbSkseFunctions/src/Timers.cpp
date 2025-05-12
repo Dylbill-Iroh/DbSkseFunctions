@@ -2741,11 +2741,12 @@ namespace timers {
 
     //called after menu close event if game not paused
     void UpdateNoMenuModeTimers(float timeElapsedWhilePaused) {
+        currentNoMenuModeTimersMutex.lock();
+
         if (currentNoMenuModeTimers.size() == 0) {
+            currentNoMenuModeTimersMutex.unlock();
             return;
         }
-
-        currentNoMenuModeTimersMutex.lock();
 
         for (auto* noMenuModeTimer : currentNoMenuModeTimers) {
             if (noMenuModeTimer) {
@@ -2765,11 +2766,13 @@ namespace timers {
 
     //called after menu close event if game not paused
     void UpdateTimers(float timeElapsedWhilePaused) {
+        currentTimersMutex.lock();
+
         if (currentTimers.size() == 0) {
+            currentTimersMutex.unlock();
             return;
         }
 
-        currentTimersMutex.lock();
         for (auto* timer : currentTimers) {
             if (timer) {
                 if (!timer->cancelled && !timer->finished) {

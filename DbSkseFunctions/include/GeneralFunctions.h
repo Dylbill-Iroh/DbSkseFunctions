@@ -56,6 +56,8 @@ namespace gfuncs {
 
     RE::VMHandle GetHandle(RE::ActiveEffect* akEffect);
 
+    RE::ActiveEffect* GetActiveEffectFromHandle(RE::VMHandle handle);
+
     RE::TESObjectREFR* GetRefFromHandle(RE::RefHandle& handle);
 
     RE::TESObjectREFR* GetRefFromObjectRefHandle(RE::ObjectRefHandle refHandle);

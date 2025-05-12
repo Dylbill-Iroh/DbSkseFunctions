@@ -95,7 +95,7 @@ namespace objectRef {
             return;
         }
 
-        logger::info("{}", gfuncs::GetFormDataString(ref));
+        logger::trace("{}", gfuncs::GetFormDataString(ref));
         ref->UpdateRefLight();
     }
 
@@ -106,7 +106,7 @@ namespace objectRef {
             return v;
         }
 
-        logger::info("ref[{}]", gfuncs::GetFormName(ref));
+        logger::trace("ref[{}]", gfuncs::GetFormName(ref));
         RE::NiPoint3 velocity;
         ref->GetLinearVelocity(velocity);
         v[0] = velocity.x;

@@ -12,6 +12,8 @@
 #include <condition_variable>
 #include <thread>
 #include <future>
+#include <typeinfo>
+#include <any>
 #include "mini/ini.h"
 #include "logger.h"
 #include "GeneralFunctions.h"
@@ -171,7 +173,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(9.3);
+    return float(9.4);
 }
 
 RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
@@ -297,8 +299,10 @@ enum EventsEnum {
     EventEnum_OnPositionPlayerStart,
     EventEnum_OnPositionPlayerFinish,
     EventEnum_OnPlayerChangeCell,
+    EventEnum_OnEffectStart,
+    EventEnum_OnEffectFinish,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnPlayerChangeCell
+    EventEnum_Last = EventEnum_OnEffectFinish
 };
 
 struct EventData {
@@ -405,9 +409,10 @@ struct EventData {
 
     }
 
-    void AddHandle(RE::VMHandle handle, RE::TESForm* paramFilter, int paramFilterIndex) {
-        if (!paramFilter) {
+    void AddHandle(RE::VMHandle handle, RE::TESForm* paramFilter, int paramFilterIndex, std::string eventReceiverName, RE::FormID eventReceiverId) {
+        if (!gfuncs::IsFormValid(paramFilter)) {
             globalHandles.push_back(handle);
+            logger::debug("registering [{}] ID[{:x}] for all [{}] events", eventReceiverName, eventReceiverId, sEvent);
 
             if (eventSinkIndex == EventEnum_OnCombatStateChanged) {
                 bRegisteredForPlayerCombatChange = true;
@@ -422,6 +427,8 @@ struct EventData {
                 index = 0;
             }
             InsertIntoFormHandles(handle, paramFilter, eventParamMaps[paramFilterIndex]);
+            logger::debug("registering [{}] ID[{:x}] paramFilter[{}] paramFilterIndex[{}] sEvent[{}]", 
+                eventReceiverName, eventReceiverId, gfuncs::GetFormName(paramFilter), paramFilterIndex, sEvent);
 
             if (eventSinkIndex == EventEnum_OnCombatStateChanged && paramFilterIndex == 0) {
                 logger::debug("adding handle for Combat State change");
@@ -2637,6 +2644,387 @@ struct ActorCellEventSink : public RE::BSTEventSink<RE::BGSActorCellEvent> {
 
 ActorCellEventSink* actorCellEventSink;
 
+std::unordered_map<RE::ActiveEffect*, std::pair<std::chrono::system_clock::time_point, float>> activeEffectStartTimeMap;
+std::mutex activeEffectStartTimeMapMutex;
+
+namespace EffectStartEvent {
+    bool effectStartInstalled = false;
+    bool effectStartRegistered = false;
+    std::mutex effectStartInstallMutex;
+
+    template <class T>
+    class EffectStartHook {
+    public:
+        static void thunk(T* effect) {
+            if (effectStartRegistered) {
+                if (effect) {
+                    RE::ActiveEffect* activeEffect = static_cast<RE::ActiveEffect*>(effect);
+                    if (activeEffect) {
+                        if (IsBadReadPtr(activeEffect, sizeof(activeEffect))) {
+                            logger::warn("EffectStart: activeEffect IsBadReadPtr");
+                        }
+                        else {
+                            std::pair<std::chrono::system_clock::time_point, float> startTime{std::chrono::system_clock::now(), calendar->GetHoursPassed()};
+                            activeEffectStartTimeMapMutex.lock();
+                            activeEffectStartTimeMap[activeEffect] = startTime;
+                            activeEffectStartTimeMapMutex.unlock();
+
+                            //logger::info("EffectStart: activeEffect found. effectName[{}]", effectName);
+
+                            RE::EffectSetting* baseEffect = activeEffect->GetBaseObject();
+                            if (!gfuncs::IsFormValid(baseEffect)) {
+                                baseEffect = nullptr;
+                            }
+
+                            RE::Actor* caster = nullptr;
+                            RE::ActorPtr casterPtr = activeEffect->GetCasterActor();
+                            if (casterPtr) {
+                                caster = casterPtr.get();
+                                if (!gfuncs::IsFormValid(caster)) {
+                                    caster = nullptr;
+                                }
+                            }
+
+                            RE::Actor* target = nullptr;
+                            auto magicTarget = activeEffect->target;
+                            if (magicTarget) {
+                                //logger::info("magicTarget found");
+                                target = skyrim_cast<RE::Actor*>(magicTarget);
+                                if (!gfuncs::IsFormValid(target)) {
+                                    target = nullptr;
+                                }
+                            }
+
+                            RE::TESForm* source = activeEffect->spell;
+                            if (!gfuncs::IsFormValid(source)) {
+                                source = nullptr;
+                            }
+                            
+                            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEffectStart]->globalHandles;
+                            gfuncs::CombineEventHandles(handles, caster, eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[0]);
+                            gfuncs::CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[1]);
+                            gfuncs::CombineEventHandles(handles, baseEffect, eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[2]);
+                            gfuncs::CombineEventHandles(handles, source, eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[3]);
+
+                            gfuncs::RemoveDuplicates(handles);
+
+                            if (handles.size() > 0) {
+                                int castingSource = static_cast<int>(activeEffect->castingSource);
+                                auto* args = RE::MakeFunctionArguments((RE::Actor*)caster, (RE::Actor*)target,
+                                    (RE::EffectSetting*)baseEffect, (RE::TESForm*)source, (int)castingSource);
+
+                                gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnEffectStart]->sEvent, args);
+
+                                auto effectClassName = typeid(*effect).name();
+
+                                logger::trace("EffectStart [{}]: effect[{}] caster[{}] target[{}] source[{}] castingSource[{}]",
+                                    effectClassName,
+                                    gfuncs::GetFormName(baseEffect),
+                                    gfuncs::GetFormName(caster),
+                                    gfuncs::GetFormName(target),
+                                    gfuncs::GetFormName(source),
+                                    castingSource
+                                );
+                            }
+                        }
+                    }
+                    else {
+                        logger::trace("EffectStart: activeEffect is nullptr");
+                    }
+                }
+                else {
+                    logger::trace("EffectStart: effect is nullptr");
+                }
+            }
+            return func(effect);
+        }
+
+        static void Install() {
+            stl::write_vfunc2<T, 0, EffectStartHook<T>>();
+        }
+
+        static inline REL::Relocation<void(T*)> func;
+        static inline std::uint32_t idx = 0x14; //RE::ActiveEffect::Start()
+    };
+
+    void Install() {
+        effectStartInstallMutex.lock();
+        if (!effectStartInstalled) {
+            effectStartInstalled = true;
+            logger::info("");
+            
+            //install all sub classes of RE::ActiveEffect
+            EffectStartHook<RE::BoundItemEffect>::Install();
+            EffectStartHook<RE::CloakEffect>::Install();
+            EffectStartHook<RE::CommandEffect>::Install();
+            EffectStartHook<RE::CommandSummonedEffect>::Install();
+            EffectStartHook<RE::ConcussionEffect>::Install();
+            EffectStartHook<RE::CureEffect>::Install();
+            EffectStartHook<RE::DetectLifeEffect>::Install();
+            EffectStartHook<RE::DisguiseEffect>::Install();
+            EffectStartHook<RE::DispelEffect>::Install();
+            EffectStartHook<RE::EtherealizationEffect>::Install();
+            EffectStartHook<RE::GuideEffect>::Install();
+            EffectStartHook<RE::LightEffect>::Install();
+            EffectStartHook<RE::LockEffect>::Install();
+            EffectStartHook<RE::OpenEffect>::Install();
+            EffectStartHook<RE::ScriptEffect>::Install();
+            EffectStartHook<RE::SoulTrapEffect>::Install();
+            EffectStartHook<RE::SpawnHazardEffect>::Install();
+            EffectStartHook<RE::StaggerEffect>::Install();
+            EffectStartHook<RE::SummonCreatureEffect>::Install();
+            EffectStartHook<RE::TelekinesisEffect>::Install();
+            EffectStartHook<RE::ValueModifierEffect>::Install();
+            EffectStartHook<RE::VampireLordEffect>::Install();
+            EffectStartHook<RE::WerewolfEffect>::Install();
+            EffectStartHook<RE::WerewolfFeedEffect>::Install();
+
+            //sub sub classes that include Start() and Finish() overrides =====================================
+            
+            //extends ValueModifierEffect
+            EffectStartHook<RE::AccumulatingValueModifierEffect>::Install();
+
+            //extends DualValueModifierEffect which extends ValueModifierEffect. 
+            EffectStartHook<RE::EnhanceWeaponEffect>::Install(); 
+
+            //extends TargetValueModifierEffect which extends ValueModifierEffect. 
+            EffectStartHook<RE::FrenzyEffect>::Install(); 
+
+            //extends ValueModifierEffect
+            EffectStartHook<RE::InvisibilityEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectStartHook<RE::DarknessEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectStartHook<RE::NightEyeEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectStartHook<RE::ParalysisEffect>::Install();
+
+            //extends CommandEffect 
+            EffectStartHook<RE::ReanimateEffect>::Install();
+
+            //extends ScriptEffect
+            EffectStartHook<RE::SlowTimeEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectStartHook<RE::GrabActorEffect>::Install();
+
+
+            //sub sub classes that only include Start() override
+            //===========================================================================================================
+
+            //extends TargetValueModifierEffect which extends ValueModifierEffect. 
+            EffectStartHook<RE::CalmEffect>::Install();
+
+            //extends DemoralizeEffect which extends TargetValueModifierEffect which extends ValueModifierEffect. 
+            EffectStartHook<RE::BanishEffect>::Install();
+
+            //extends StaggerEffect
+            EffectStartHook<RE::DisarmEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectStartHook<RE::TargetValueModifierEffect>::Install();
+
+
+        }
+        effectStartInstallMutex.unlock();
+    }
+}
+
+namespace EffectFinishEvent {
+    bool effectFinishInstalled = false;
+    bool effectFinishRegistered = false;
+    std::mutex effectFinishInstallMutex;
+
+    template <class T>
+    class EffectFinishHook {
+    public:
+        static void thunk(T* effect) {
+            if (effectFinishRegistered) {
+                if (effect) {
+                    RE::ActiveEffect* activeEffect = static_cast<RE::ActiveEffect*>(effect);
+                    if (activeEffect) {
+                        if (IsBadReadPtr(activeEffect, sizeof(activeEffect))) {
+                            logger::warn("EffectFinish: activeEffect IsBadReadPtr");
+                        }
+                        else {
+                            std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+                            std::chrono::system_clock::time_point startTime = now;
+                            float startGameTime = 0.0;
+
+                            activeEffectStartTimeMapMutex.lock();
+                            auto timeMapItr = activeEffectStartTimeMap.find(activeEffect);
+                            if (timeMapItr != activeEffectStartTimeMap.end()) {
+                                //timeMapItr->second is a <timepoint, float> pair. 
+                                //timepoint is timepoint when this effect started.
+                                //float is gameHoursPassed when this effect started.
+                                startTime = timeMapItr->second.first;
+                                startGameTime = timeMapItr->second.second;
+                                activeEffectStartTimeMap.erase(timeMapItr);
+                            }
+                            activeEffectStartTimeMapMutex.unlock();
+
+                            //logger::info("EffectFinish: activeEffect found.");
+
+                            RE::EffectSetting* baseEffect = activeEffect->GetBaseObject();
+                            if (!gfuncs::IsFormValid(baseEffect)) {
+                                baseEffect = nullptr;
+                            }
+
+                            RE::Actor* caster = nullptr;
+                            RE::ActorPtr casterPtr = activeEffect->GetCasterActor();
+                            if (casterPtr) {
+                                caster = casterPtr.get();
+                                if (!gfuncs::IsFormValid(caster)) {
+                                    caster = nullptr;
+                                }
+                            }
+
+                            RE::Actor* target = nullptr;
+                            auto magicTarget = activeEffect->target;
+                            if (magicTarget) {
+                                //logger::info("magicTarget found");
+                                target = skyrim_cast<RE::Actor*>(magicTarget);
+                                if (!gfuncs::IsFormValid(target)) {
+                                    target = nullptr;
+                                }
+                            }
+
+                            RE::TESForm* source = activeEffect->spell;
+                            if (!gfuncs::IsFormValid(source)) {
+                                source = nullptr;
+                            }
+
+                            //this only applies to abilities, and is the elapsedSeconds since the ability spell was added, not since it was last started.
+                            //float elapsedSeconds = activeEffect->elapsedSeconds; 
+
+                            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEffectFinish]->globalHandles;
+                            gfuncs::CombineEventHandles(handles, caster, eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[0]);
+                            gfuncs::CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[1]);
+                            gfuncs::CombineEventHandles(handles, baseEffect, eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[2]);
+                            gfuncs::CombineEventHandles(handles, source, eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[3]);
+
+                            gfuncs::RemoveDuplicates(handles);
+
+                            if (handles.size() > 0) {
+                                float elapsedSeconds = 0.0;
+                                float elapsedGameHours = 0.0;
+                                if (startTime != now) {
+                                    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime);
+                                    elapsedSeconds = float(milliseconds.count()) * float(0.001);
+                                    elapsedGameHours  = calendar->GetHoursPassed() - startGameTime;
+                                }
+
+                                int castingSource = static_cast<int>(activeEffect->castingSource);
+
+                                auto* args = RE::MakeFunctionArguments((RE::Actor*)caster, (RE::Actor*)target,
+                                    (RE::EffectSetting*)baseEffect, (RE::TESForm*)source, (int)castingSource, 
+                                    (float)elapsedSeconds, (float)elapsedGameHours);
+
+                                gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnEffectFinish]->sEvent, args);
+
+                                auto effectClassName = typeid(*effect).name();
+
+                                logger::trace("EffectFinish [{}]: effect[{}] caster[{}] target[{}] source[{}] castingSource[{}] elapsedSeconds[{}] elapsedGameHours[{}]",
+                                    effectClassName,
+                                    gfuncs::GetFormName(baseEffect),
+                                    gfuncs::GetFormName(caster),
+                                    gfuncs::GetFormName(target),
+                                    gfuncs::GetFormName(source),
+                                    castingSource, elapsedSeconds, elapsedGameHours
+                                );
+                            }
+                        }
+                    }
+                    else {
+                        logger::trace("EffectFinish: activeEffect is nullptr");
+                    }
+                }
+                else {
+                    logger::trace("EffectFinish: effect is nullptr");
+                }
+            }
+            return func(effect);
+        }
+
+        static void Install() {
+            stl::write_vfunc2<T, 0, EffectFinishHook<T>>();
+        }
+
+        static inline REL::Relocation<void(T*)> func;
+        static inline std::uint32_t idx = 0x15; //RE::ActiveEffect::Finish()
+    };
+
+    void Install() {
+        effectFinishInstallMutex.lock();
+        if (!effectFinishInstalled) {
+            effectFinishInstalled = true;
+            logger::info("");
+
+            //install all sub classes of RE::ActiveEffect
+            EffectFinishHook<RE::BoundItemEffect>::Install();
+            EffectFinishHook<RE::CloakEffect>::Install();
+            EffectFinishHook<RE::CommandEffect>::Install();
+            EffectFinishHook<RE::CommandSummonedEffect>::Install();
+            EffectFinishHook<RE::ConcussionEffect>::Install();
+            EffectFinishHook<RE::CureEffect>::Install();
+            EffectFinishHook<RE::DetectLifeEffect>::Install();
+            EffectFinishHook<RE::DisguiseEffect>::Install();
+            EffectFinishHook<RE::DispelEffect>::Install();
+            EffectFinishHook<RE::EtherealizationEffect>::Install();
+            EffectFinishHook<RE::GuideEffect>::Install();
+            EffectFinishHook<RE::LightEffect>::Install();
+            EffectFinishHook<RE::LockEffect>::Install();
+            EffectFinishHook<RE::OpenEffect>::Install();
+            EffectFinishHook<RE::ScriptEffect>::Install();
+            EffectFinishHook<RE::SoulTrapEffect>::Install();
+            EffectFinishHook<RE::SpawnHazardEffect>::Install();
+            EffectFinishHook<RE::StaggerEffect>::Install();
+            EffectFinishHook<RE::SummonCreatureEffect>::Install();
+            EffectFinishHook<RE::TelekinesisEffect>::Install();
+            EffectFinishHook<RE::ValueModifierEffect>::Install();
+            EffectFinishHook<RE::VampireLordEffect>::Install();
+            EffectFinishHook<RE::WerewolfEffect>::Install();
+            EffectFinishHook<RE::WerewolfFeedEffect>::Install();
+
+            //sub sub classes that include Start() and Finish() overrides =====================================
+
+            //extends ValueModifierEffect
+            EffectFinishHook<RE::AccumulatingValueModifierEffect>::Install();
+
+            //extends DualValueModifierEffect which extends ValueModifierEffect. 
+            EffectFinishHook<RE::EnhanceWeaponEffect>::Install();
+
+            //extends TargetValueModifierEffect which extends ValueModifierEffect. 
+            EffectFinishHook<RE::FrenzyEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectFinishHook<RE::InvisibilityEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectFinishHook<RE::DarknessEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectFinishHook<RE::NightEyeEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectFinishHook<RE::ParalysisEffect>::Install();
+
+            //extends CommandEffect 
+            EffectFinishHook<RE::ReanimateEffect>::Install();
+
+            //extends ScriptEffect
+            EffectFinishHook<RE::SlowTimeEffect>::Install();
+
+            //extends ValueModifierEffect
+            EffectFinishHook<RE::GrabActorEffect>::Install();
+        }
+        effectFinishInstallMutex.unlock();
+    }
+}
+
 struct ObjectInitEventSink : public RE::BSTEventSink<RE::TESInitScriptEvent> {
     bool sinkAdded = false;
 
@@ -2717,7 +3105,7 @@ bool IsItemMenuOpen() {
     return false;
 }
 
-bool IsRefActivatedMenu(RE::BSFixedString& menu) {
+bool IsRefActivatedMenu(RE::BSFixedString menu) {
     return (
         menu == RE::DialogueMenu::MENU_NAME ||
         menu == RE::BarterMenu::MENU_NAME ||
@@ -2772,14 +3160,14 @@ public:
 
 InputEventSink* inputEventSink;
 
-void HandleMenuOpenCloseEvent(bool opening, RE::BSFixedString bsMenuName) {
-    std::string sMenuName = std::string(bsMenuName);
+void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
+    //std::string sMenuName = std::string(bsMenuName);
 
     openedMenusMutex.lock();
     auto openedMenusItr = std::find(openedMenus.begin(), openedMenus.end(), sMenuName);
 
     if (opening) {
-        lastMenuOpened = bsMenuName;
+        lastMenuOpened = sMenuName;
 
         if (openedMenusItr == openedMenus.end()) {
             openedMenus.push_back(sMenuName);
@@ -2803,29 +3191,23 @@ void HandleMenuOpenCloseEvent(bool opening, RE::BSFixedString bsMenuName) {
         /* std::thread tAddToMenusCurrentlyOpen(AddToMenusCurrentlyOpen, event->menuName);
         tAddToMenusCurrentlyOpen.join();*/
 
-        if (IsRefActivatedMenu(bsMenuName)) {
+        if (IsRefActivatedMenu(sMenuName)) {
             menuRef = lastPlayerActivatedRef;
-            logger::trace("Menu[{}] opened. saved menuRef[{}]", bsMenuName, gfuncs::GetFormName(menuRef));
+            logger::trace("Menu[{}] opened. saved menuRef[{}]", sMenuName, gfuncs::GetFormName(menuRef));
         }
-
-        /*if (gfuncs::GetIndexInVector(refActivatedMenus, bsMenuName) > -1) {
-            menuRef = lastPlayerActivatedRef;
-            logger::trace("Menu[{}] opened. saved menuRef[{}]", bsMenuName, gfuncs::GetFormName(menuRef));
-        }*/
 
         if (ui->IsItemMenuOpen()) {
             if (UIEvents::registeredUIEventDatas.size() > 0) {
                 if (!inputEventSink->sinkAdded) {
-                    inputEventSink->sinkAdded = true;
-                    RE::BSInputDeviceManager::GetSingleton()->AddEventSink(inputEventSink);
-                    logger::trace("item menu [{}] opened. Added input event sink", bsMenuName);
+                    auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
+                    if (inputManager) {
+                        inputEventSink->sinkAdded = true;
+                        inputManager->AddEventSink(inputEventSink);
+                    }
+                    logger::trace("item menu [{}] opened. Added input event sink", sMenuName);
                 }
             }
         }
-
-        /*if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
-            numOfItemMenusCurrentOpen += 1;
-        }*/
     }
     else {
         if (!ui->GameIsPaused() && gamePaused) {
@@ -2856,13 +3238,16 @@ void HandleMenuOpenCloseEvent(bool opening, RE::BSFixedString bsMenuName) {
 
         if (!ui->IsItemMenuOpen()) {
             if (inputEventSink->sinkAdded) {
-                inputEventSink->sinkAdded = false;
-                RE::BSInputDeviceManager::GetSingleton()->RemoveEventSink(inputEventSink);
-                logger::trace("item menu [{}] closed. Removed input event sink", bsMenuName);
+                auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
+                if (inputManager) {
+                    inputEventSink->sinkAdded = false;
+                    inputManager->RemoveEventSink(inputEventSink);
+                    logger::trace("item menu [{}] closed. Removed input event sink", sMenuName);
+                }
             }
         }
 
-        /*if (gfuncs::GetIndexInVector(itemMenus, bsMenuName) > -1) {
+        /*if (gfuncs::GetIndexInVector(itemMenus, sMenuName) > -1) {
             numOfItemMenusCurrentOpen -= 1;
 
             if (numOfItemMenusCurrentOpen == 0) {
@@ -2889,10 +3274,11 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         }
 
         //logger::trace("Menu Open Close Event, menu[{}], opened[{}]", event->menuName, event->opening);
+        std::string sMenuName = std::string(event->menuName);
         bool opening = event->opening;
-        RE::BSFixedString bsMenuName = event->menuName;
-        if (bsMenuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
-            std::thread t(HandleMenuOpenCloseEvent, opening, bsMenuName);
+
+        if (sMenuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
+            std::thread t(HandleMenuOpenCloseEvent, opening, sMenuName);
             t.detach();
         }
 
@@ -3247,6 +3633,22 @@ void AddSink(int index) {
             }
         }
         break;
+
+    case EventEnum_OnEffectStart:
+        if (!EffectStartEvent::effectStartRegistered && !eventDataPtrs[EventEnum_OnEffectStart]->isEmpty()) {
+            EffectStartEvent::effectStartRegistered = true;
+            EffectStartEvent::Install();
+            logger::debug("EventEnum_OnEffectStart sink added");
+        }
+        break;
+
+    case EventEnum_OnEffectFinish:
+        if (!EffectFinishEvent::effectFinishRegistered && !eventDataPtrs[EventEnum_OnEffectFinish]->isEmpty()) {
+            EffectFinishEvent::effectFinishRegistered = true;
+            EffectFinishEvent::Install();
+            logger::debug("EventEnum_OnEffectFinish sink added");
+        }
+        break;
     }
 }
 
@@ -3517,6 +3919,20 @@ void RemoveSink(int index) {
             }
         }
         break;
+
+    case EventEnum_OnEffectStart:
+        if (EffectStartEvent::effectStartRegistered && eventDataPtrs[EventEnum_OnEffectStart]->isEmpty()) {
+            EffectStartEvent::effectStartRegistered = false;
+            logger::debug("EventEnum_OnEffectStart sink removed");
+        }
+        break;
+
+    case EventEnum_OnEffectFinish:
+        if (EffectFinishEvent::effectFinishRegistered && eventDataPtrs[EventEnum_OnEffectFinish]->isEmpty()) {
+            EffectFinishEvent::effectFinishRegistered = false;
+            logger::debug("EventEnum_OnEffectFinish sink removed");
+        }
+        break;
     }
 }
 
@@ -3631,7 +4047,7 @@ bool RegisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int p
 
     int iCount = 0;
 
-    list->ForEachForm([&](auto* form) {
+    list->ForEachForm([&](RE::TESForm* form) {
         if (gfuncs::IsFormValid(form)) {
             iCount++;
             RE::BGSListForm* nestedList = form->As<RE::BGSListForm>();
@@ -3639,7 +4055,9 @@ bool RegisterFormListForGlobalEvent(RE::BGSListForm* list, int eventIndex, int p
                 RegisterFormListForGlobalEvent(nestedList, eventIndex, paramFilterIndex, handle);
             }
             else {
-                eventDataPtrs[eventIndex]->AddHandle(handle, form, paramFilterIndex);
+                std::string formName = std::string(gfuncs::GetFormName(form));
+                auto id = form->GetFormID();
+                eventDataPtrs[eventIndex]->AddHandle(handle, form, paramFilterIndex, formName, id);
             }
         }
         return RE::BSContainer::ForEachResult::kContinue;
@@ -3686,12 +4104,14 @@ void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEven
         return;
     }
 
-    logger::trace("adding handle for: {}", gfuncs::GetFormName(eventReceiver));
+    std::string eventReceiverName = std::string(gfuncs::GetFormName(eventReceiver));
+    logger::trace("adding handle for: {}", eventReceiverName);
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
+    RE::FormID eventReveiverId = eventReceiver->GetFormID();
 
     if (handle == NULL) {
-        logger::error("couldn't get handle for form [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver), eventReceiver->GetFormID());
+        logger::error("couldn't get handle for form [{}] ID [{:x}]", eventReceiverName, eventReveiverId);
         return;
     }
 
@@ -3712,7 +4132,7 @@ void RegisterFormForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEven
         }
 
         if (!paramFilterIsFormList) {
-            eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
+            eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex, eventReceiverName, eventReveiverId);
             AddSink(index);
         }
     }
@@ -3729,12 +4149,14 @@ void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEve
         return;
     }
 
-    logger::trace("adding handle for: {}", eventReceiver->aliasName);
+    std::string eventReceiverName = std::string(eventReceiver->aliasName);
+
+    logger::trace("adding handle for: {}", eventReceiverName);
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("couldn't get handle for alias [{}] ID [{:x}]", eventReceiver->aliasName, eventReceiver->GetVMTypeID());
+        logger::error("couldn't get handle for alias [{}] ID [{:x}]", eventReceiverName, eventReceiver->GetVMTypeID());
         return;
     }
 
@@ -3755,7 +4177,7 @@ void RegisterAliasForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixedString asEve
         }
 
         if (!paramFilterIsFormList) {
-            eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
+            eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex, eventReceiverName, eventReceiver->aliasID);
             AddSink(index);
         }
     }
@@ -3772,12 +4194,19 @@ void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixed
         return;
     }
 
-    logger::trace("adding handle for: {} instance", gfuncs::GetFormName(eventReceiver->GetBaseObject()));
+    RE::TESForm* baseForm = eventReceiver->GetBaseObject();
+    std::string eventReceiverName = std::string(gfuncs::GetFormName(baseForm));
+    RE::FormID eventReceiverId; 
+    if (gfuncs::IsFormValid(baseForm)) {
+        eventReceiverId = baseForm->GetFormID();
+    }
+
+    logger::trace("adding handle for: {} instance", eventReceiverName);
 
     RE::VMHandle handle = gfuncs::GetHandle(eventReceiver);
 
     if (handle == NULL) {
-        logger::error("couldn't get handle for effect [{}] ID [{:x}]", gfuncs::GetFormName(eventReceiver->GetBaseObject()), eventReceiver->VMTYPEID);
+        logger::error("couldn't get handle for effect [{}] ID [{:x}]", eventReceiverName, eventReceiver->VMTYPEID);
         return;
     }
 
@@ -3798,7 +4227,7 @@ void RegisterActiveMagicEffectForGlobalEvent(RE::StaticFunctionTag*, RE::BSFixed
         }
 
         if (!paramFilterIsFormList) {
-            eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex);
+            eventDataPtrs[index]->AddHandle(handle, paramFilter, paramFilterIndex, eventReceiverName, eventReceiverId);
             AddSink(index);
         }
     }
@@ -4069,6 +4498,8 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_OnPositionPlayerStart] = new EventData("OnPositionPlayerStartGlobal", EventEnum_OnPositionPlayerStart, 4, 'PPa0');
         eventDataPtrs[EventEnum_OnPositionPlayerFinish] = new EventData("OnPositionPlayerFinishGlobal", EventEnum_OnPositionPlayerFinish, 4, 'PPa1');
         eventDataPtrs[EventEnum_OnPlayerChangeCell] = new EventData("OnPlayerChangeCellGlobal", EventEnum_OnPlayerChangeCell, 2, 'PCC0');
+        eventDataPtrs[EventEnum_OnEffectStart] = new EventData("OnEffectStartGlobal", EventEnum_OnEffectStart, 4, 'OEs0');
+        eventDataPtrs[EventEnum_OnEffectFinish] = new EventData("OnEffectFinishGlobal", EventEnum_OnEffectFinish, 4, 'OEs1');
     }
 
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -4165,17 +4596,6 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("SetDbSkseCppCallbackEventsAttached", "DbSkseCppCallbackEvents", SetDbSkseCppCallbackEventsAttached);
 
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
-
-    vm->RegisterFunction("GetFormHandle", "PapyrusUtilEx", GetFormHandle);
-    vm->RegisterFunction("GetAliasHandle", "PapyrusUtilEx", GetAliasHandle);
-    vm->RegisterFunction("GetActiveEffectHandle", "PapyrusUtilEx", GetActiveEffectHandle);
-    vm->RegisterFunction("ResizeArray", "PapyrusUtilEx", ResizeArrayProperty);
-    vm->RegisterFunction("RemoveFromArray", "PapyrusUtilEx", RemoveFromArray);
-    vm->RegisterFunction("SliceArray", "PapyrusUtilEx", SliceArray);
-    vm->RegisterFunction("SliceArrayOnto", "PapyrusUtilEx", SliceArrayOnto);
-    vm->RegisterFunction("CountInArray", "PapyrusUtilEx", CountInArray);
-    vm->RegisterFunction("MergeArrays", "PapyrusUtilEx", MergeArrays);
-    vm->RegisterFunction("CopyArray", "PapyrusUtilEx", CopyArray);
 
     vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
     vm->RegisterFunction("SetClipBoardText", "DbSkseFunctions", SetClipBoardText);
@@ -4356,6 +4776,25 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     return true;
 }
 
+int GetActiveMagicEffectConditionStatus(RE::ActiveEffect* akEffect) {
+    if (!akEffect) {
+        return -1;
+    }
+
+    if (akEffect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kTrue)) {
+        //logger::trace("conditionStatus is kTrue");
+        return 1;
+    }
+    else if (akEffect->conditionStatus.any(RE::ActiveEffect::ConditionStatus::kFalse)) {
+        //logger::trace("conditionStatus is kFalse");
+        return 0;
+    }
+    else {
+        return -1;
+    }
+}
+
+
 void MessageListener(SKSE::MessagingInterface::Message* message) {
     switch (message->type) {
         // Descriptions are taken from the original skse64 library
@@ -4430,6 +4869,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         papyrusInterface->Register(furniture::BindPapyrusFunctions);
         papyrusInterface->Register(keyword::BindPapyrusFunctions);
         papyrusInterface->Register(magic::BindPapyrusFunctions);
+        papyrusInterface->Register(papyrusUtilEx::BindPapyrusFunctions);
         
         SetSettingsFromIniFile();
         CreateEventSinks();
@@ -4545,23 +4985,10 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     serialization->SetSaveCallback(SaveCallback);
     serialization->SetLoadCallback(LoadCallback);
 
-    //int num = 42;
-    //double pi = 3.14159;
-    //std::string text = "Hello, world!";
-
-    // Using printf
-    //std::printf("Number: %d, Pi: %.2f, Text: %s\n", num, pi, text.c_str());
-
-    // Using std::format
-    //std::cout << std::format("Number: {}, Pi: {:.2f}, Text: {}\n", num, pi, text) << std::endl;
-
-    //printf("address of function SaveCallback() is :%p\n", SaveCallback);
-
-    std::stringstream ss;
-    ss << std::hex << std::uppercase << reinterpret_cast<uintptr_t>(SaveCallback);
-    std::string sFunc = ss.str();
-
-    logger::info("SaveCallback address [{}]", sFunc);
+    //std::stringstream ss;
+    //ss << std::hex << std::uppercase << reinterpret_cast<uintptr_t>(SaveCallback);
+    //std::string sFunc = ss.str();
+    //logger::info("SaveCallback address [{}]", sFunc);
 
     //replaced gfuncs::LogAndMessage with logger:: functions.
     //fs::ReplaceLogAndMessageFuncs();

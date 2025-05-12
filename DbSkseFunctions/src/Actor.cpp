@@ -703,7 +703,7 @@ namespace actor {
             return;
         }
 
-        logger::info("akActor[{}]", gfuncs::GetFormName(akActor));
+        logger::trace("akActor[{}]", gfuncs::GetFormName(akActor));
 
         akActor->Update3DModel();
     }
@@ -714,7 +714,7 @@ namespace actor {
             return;
         }
 
-        logger::info("akActor[{}] warp[{}]", gfuncs::GetFormName(akActor), warp);
+        logger::trace("akActor[{}] warp[{}]", gfuncs::GetFormName(akActor), warp);
 
         akActor->Update3DPosition(warp);
     }

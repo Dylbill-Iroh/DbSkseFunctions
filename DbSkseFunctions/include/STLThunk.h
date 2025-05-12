@@ -19,13 +19,21 @@ namespace stl
 		T::func = vtbl.write_vfunc(idx, T::thunk);
 	}
 
+	//currently used for namespace activeEffectEvents
+	template <class F, size_t offset, class T>
+	void write_vfunc2()
+	{
+		REL::Relocation<std::uintptr_t> vtbl{ F::VTABLE[offset] };
+		T::func = vtbl.write_vfunc(T::idx, T::thunk);
+	}
+
 	template <std::size_t idx, class T>
 	void write_vfunc(REL::VariantID id)
 	{
 		REL::Relocation<std::uintptr_t> vtbl{ id };
 		T::func = vtbl.write_vfunc(idx, T::thunk);
 	}
-	
+
 	template <size_t offset, class T>
 	void write_vfunc()
 	{
