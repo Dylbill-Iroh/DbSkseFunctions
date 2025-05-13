@@ -2,11 +2,13 @@ Scriptname DbSkseEvents hidden
 ;/
 These are global events. The eventreceiver is what receives the event.  
 
+
 Filters:
 You can pass in one form paramFilter to compare with the event. 
 the paramFilterIndex chooses which parameter to compare, from left to right in the event. 0 is the first form param, 1 is the second ect.
 
 example script: 
+===================================================================================================================================================================================================================================================================================
 Scriptname MyQuestScript extends Quest
 
 Weapon Property IronSword Auto
@@ -27,7 +29,24 @@ Event OnHitGlobal(ObjectReference Attacker, ObjectReference Target, Form Source,
 	Debug.MessageBox("Attacker = " + Attacker.getDisplayName() + "\nTarget = " + Target.GetDisplayName() + "\nSource = " + Source.GetName() + "\nAmmo = " + akAmmo.getName() + "\nProjectile = " + akProjectile.getName())
 	
 EndEvent
+===================================================================================================================================================================================================================================================================================
 
+As of version 9.5, event paramFilters now check for baseobjects if the event param you're comparing is an objectreference or actor. 
+Example:
+===================================================================================================================================================================================================================================================================================
+scriptname myQuestScript extends quest
+
+Container Property BarrelFish01 Auto
+
+Event OnInit()
+	DbSkseEvents.registerFormForGlobalEvent("OnActivateGlobal", self, BarrelFish01, 1)
+EndEvent
+
+;this event now triggers when any objectreference / actor in game activates any ref whose base object is BarrelFish01
+Event OnActivateGlobal(ObjectReference ActivatorRef, ObjectReference ActivatedRef)
+	Debug.MessageBox(ActivatorRef.GetDisplayName() + " activated " + ActivatedRef.GetDisplayName())
+EndEvent 
+===================================================================================================================================================================================================================================================================================
 
 Note that scripts attached to ReferenceAlias's or ActiveMagicEffects will receive the event if the reference they're filled with is registered for the event. 
 Example:
