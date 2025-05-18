@@ -16,9 +16,6 @@ namespace UIEvents {
     std::vector<RE::BSFixedString> validSelectUserEventStrings;
     std::vector<RE::BSFixedString> validDropUserEventStrings;
     std::vector<RE::BSFixedString> validFavoriteUserEventStrings;
-    RE::Actor* playerRef;
-    RE::UI* ui;
-    RE::UserEvents* userEvents;
     RE::BSFixedString uiEvent = "OnUiItemMenuEvent";
 
     std::vector<std::string> uiItemMenuNames = { 
@@ -198,7 +195,11 @@ namespace UIEvents {
                                                 }
                                             }
 
-                                            bool selectFromPlayerInventory = (owner == playerRef);
+                                            bool selectFromPlayerInventory = false;
+                                            RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
+                                            if (playerRef) {
+                                                selectFromPlayerInventory = (owner == playerRef);
+                                            }
 
                                             bool isStolen = false;
                                             RE::GFxValue gfxStolen;
@@ -379,6 +380,10 @@ namespace UIEvents {
     }
 
     bool ShouldSkipUIItemEvent() {
+        auto* ui = RE::UI::GetSingleton();
+        if (!ui) {
+            return false;
+        }
         if (ui->closingAllMenus) {
             logger::trace("closingAllMenus = true");
             return true;
@@ -442,13 +447,16 @@ namespace UIEvents {
 
             if (selectedFormData.form) {
                 if (gfuncs::GetIndexInVector(validSelectUserEventStrings, msgData->fixedStr) > -1 || msgData->fixedStr == "À¬") { //"À¬" for unrecognized (enter key)
-                    if (msgData->fixedStr == userEvents->leftEquip || msgData->fixedStr == userEvents->leftAttack) {
-                        if (menuName == "inventorymenu" || menuName == "favoritesmenu" || menuName == "containermenu" || menuName == "magicmenu") {
+                    auto* userEvents = RE::UserEvents::GetSingleton();
+                    if (userEvents) {
+                        if (msgData->fixedStr == userEvents->leftEquip || msgData->fixedStr == userEvents->leftAttack) {
+                            if (menuName == "inventorymenu" || menuName == "favoritesmenu" || menuName == "containermenu" || menuName == "magicmenu") {
+                                SendUISelectionEvents(menuName, selectedFormData, UiEventEnumType_ItemSelected);
+                            }
+                        }
+                        else {
                             SendUISelectionEvents(menuName, selectedFormData, UiEventEnumType_ItemSelected);
                         }
-                    }
-                    else {
-                        SendUISelectionEvents(menuName, selectedFormData, UiEventEnumType_ItemSelected);
                     }
                 }
                 else if (gfuncs::GetIndexInVector(validDropUserEventStrings, msgData->fixedStr) > -1) {
@@ -1311,9 +1319,7 @@ namespace UIEvents {
     }
 
     void Install() {
-        if (!playerRef) { playerRef = RE::TESForm::LookupByID<RE::TESForm>(20)->As<RE::Actor>(); }
-        if (!ui) { ui = RE::UI::GetSingleton(); }
-        if (!userEvents) { userEvents = RE::UserEvents::GetSingleton(); }
+        auto* userEvents = RE::UserEvents::GetSingleton();
 
         if (userEvents && validSelectUserEventStrings.size() == 0) {
             validSelectUserEventStrings.push_back(userEvents->rightEquip);

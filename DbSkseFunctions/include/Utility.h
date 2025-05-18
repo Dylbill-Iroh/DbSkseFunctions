@@ -1,5 +1,6 @@
 #pragma once
 
+extern std::mutex openedMenusMutex;
 extern bool inMenuMode;
 extern std::string lastMenuOpened;
 extern std::chrono::system_clock::time_point lastTimeMenuWasOpened;

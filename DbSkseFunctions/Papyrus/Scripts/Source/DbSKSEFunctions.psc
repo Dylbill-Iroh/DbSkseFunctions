@@ -691,10 +691,10 @@ Form Function GetActiveEffectSource(ActiveMagicEffect akEffect) Global Native
 int Function GetActiveMagicEffectConditionStatus(ActiveMagicEffect akEffect) Global Native
 
 ;Get casting source that the ActiveMagicEffect came from
-;kLeftHand = 0,
-;kRightHand = 1,
-;kOther = 2, (most likely shout) 
-;kInstant = 3
+;LeftHand = 0,
+;RightHand = 1,
+;Other = 2, (most likely shout) 
+;Instant = 3
 int Function GetActiveEffectCastingSource(ActiveMagicEffect akEffect) Global Native
 
 ;get magic effects for akForm, assuming akForm is a magic item such as a spell, potion, shout, enchantment, scroll ect...
@@ -733,6 +733,9 @@ int Function GetDetectionLevel(actor akActor, actor akTarget) Global Native
 
 ;ward states are 0 = none, 1 = absorbing, 2 = break  
 int Function GetActorWardState(actor akActor) Global Native
+
+;Same as the IsPCSleeping condition. Returns true if the player is sleeping
+bool function IsPCSleeping() Global Native
 
 function UpdateActor3DModel(Actor akActor) global native
 function UpdateActor3DPosition(Actor akActor, bool warp = false) global native

@@ -946,7 +946,6 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
 
 std::vector<RE::TESObjectREFR*> GetAllObjectRefsInContainer(RE::StaticFunctionTag*, RE::TESObjectREFR* containerRef) {
     std::vector<RE::TESObjectREFR*> refs;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
     if (!gfuncs::IsFormValid(containerRef)) {
         logger::warn("containerRef doesn't exist");
@@ -966,6 +965,10 @@ std::vector<RE::TESObjectREFR*> GetAllObjectRefsInContainer(RE::StaticFunctionTa
 std::vector<RE::EnchantmentItem*> GetKnownEnchantments(RE::StaticFunctionTag*) {
     std::vector<RE::EnchantmentItem*> returnValues;
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (!dataHandler) {
+        logger::error("dataHandler* not found");
+        return returnValues;
+    }
 
     RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
 
@@ -1000,7 +1003,10 @@ void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akL
     }
 
     RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-
+    if (!dataHandler) {
+        logger::error("dataHandler* not found");
+        return;
+    }
     RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
 
     logger::debug("enchantmentArray size[{}]", enchantmentArray->size());

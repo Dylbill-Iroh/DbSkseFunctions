@@ -404,7 +404,6 @@ namespace actor {
             condition_isPowerAttacking = new RE::TESCondition;
             condition_isPowerAttacking->head = conditionItem;
         }
-
         return condition_isPowerAttacking->IsTrue(akActor, nullptr);
     }
 
@@ -719,6 +718,22 @@ namespace actor {
         akActor->Update3DPosition(warp);
     }
 
+    RE::TESCondition* condition_IsPCSleeping;
+    bool IsPCSleeping(RE::StaticFunctionTag*) {
+        if (!condition_IsPCSleeping) {
+            logger::debug("creating condition_IsPCSleeping condition");
+            auto* conditionItem = new RE::TESConditionItem;
+            conditionItem->data.comparisonValue.f = 1.0f;
+            conditionItem->data.functionData.function = RE::FUNCTION_DATA::FunctionID::kIsPCSleeping;
+            int opCode = static_cast<int>(conditionItem->data.flags.opCode);
+            logger::info("opcode[{}]", opCode);
+
+            condition_IsPCSleeping = new RE::TESCondition;
+            condition_IsPCSleeping->head = conditionItem;
+        }
+        return condition_IsPCSleeping->IsTrue(nullptr, nullptr);;
+    } 
+
     bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("WouldActorBeStealing", "DbSkseFunctions", WouldActorBeStealing);
         vm->RegisterFunction("IsActorAttacking", "DbSkseFunctions", IsActorAttacking);
@@ -739,6 +754,8 @@ namespace actor {
         vm->RegisterFunction("GetDetectionLevel", "DbSkseFunctions", GetDetectionLevel);
         vm->RegisterFunction("UpdateActor3DModel", "DbSkseFunctions", UpdateActor3DModel);
         vm->RegisterFunction("UpdateActor3DPosition", "DbSkseFunctions", UpdateActor3DPosition);
+        vm->RegisterFunction("IsPCSleeping", "DbSkseFunctions", IsPCSleeping);
+
         return true;
     }
 }

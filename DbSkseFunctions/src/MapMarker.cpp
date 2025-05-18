@@ -588,34 +588,35 @@ bool SetCellOrWorldSpaceOriginForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* 
 
     originData->startingWorldOrCell = cellOrWorldSpace;
 
-    if (IsMapMarker(nullptr, ref)) {
-        RE::TESWorldSpace* newOriginWorld = static_cast<RE::TESWorldSpace*>(cellOrWorldSpace);
+    if (player) {
+        if (IsMapMarker(nullptr, ref)) {
+            RE::TESWorldSpace* newOriginWorld = static_cast<RE::TESWorldSpace*>(cellOrWorldSpace);
 
-        if (gfuncs::IsFormValid(newOriginWorld)) {
-            RE::TESWorldSpace* currentWorld = player->GetWorldspace();
-            if (gfuncs::IsFormValid(currentWorld)) {
-                if (newOriginWorld == currentWorld) {
-                    auto* mapMarkers = GetPlayerMapMarkers();
-                    if (mapMarkers) {
-                        //logger::critical("currentMapMarkers size is {}", mapMarkers->size());
+            if (gfuncs::IsFormValid(newOriginWorld)) {
+                RE::TESWorldSpace* currentWorld = player->GetWorldspace();
+                if (gfuncs::IsFormValid(currentWorld)) {
+                    if (newOriginWorld == currentWorld) {
+                        auto* mapMarkers = GetPlayerMapMarkers();
+                        if (mapMarkers) {
+                            //logger::critical("currentMapMarkers size is {}", mapMarkers->size());
 
-                        auto refHandle = ref->GetHandle();
-                        if (!gfuncs::IsObjectInBSTArray(mapMarkers, refHandle)) {
-                            //logger::critical("adding ref to currentMapMarkers");
-                            mapMarkers->push_back(refHandle);
+                            auto refHandle = ref->GetHandle();
+                            if (!gfuncs::IsObjectInBSTArray(mapMarkers, refHandle)) {
+                                //logger::critical("adding ref to currentMapMarkers");
+                                mapMarkers->push_back(refHandle);
+                            }
+                            else {
+                                //logger::critical("ref already in currentMapMarkers");
+                            }
                         }
                         else {
-                            //logger::critical("ref already in currentMapMarkers");
+                            //logger::critical("currentMapMarkers not found");
                         }
-                    }
-                    else {
-                        //logger::critical("currentMapMarkers not found");
                     }
                 }
             }
         }
     }
-
     logger::trace("ref({}) origin set to \n({})", gfuncs::GetFormDataString(ref),
         gfuncs::GetFormDataString(cellOrWorldSpace));
 

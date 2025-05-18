@@ -8,6 +8,7 @@ enum debugLevel { notification, messageBox };
 
 std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
 
+std::mutex openedMenusMutex;
 bool inMenuMode = false;
 std::string lastMenuOpened = "";
 std::chrono::system_clock::time_point lastTimeMenuWasOpened;
@@ -47,10 +48,28 @@ bool IsGamePaused(RE::StaticFunctionTag*) {
 }
 
 bool IsInMenu(RE::StaticFunctionTag*) {
-    return inMenuMode;
+    auto* ui = RE::UI::GetSingleton();
+    if (ui) {
+        //hud menu is always open, unless closed by another mod.
+        if (ui->IsMenuOpen(RE::HUDMenu::MENU_NAME)) {
+            return (ui->menuStack.size() > 1);
+        }
+        else {
+            return (ui->menuStack.size() > 0);
+        }
+    }
+    else {
+        openedMenusMutex.lock();
+        bool result = inMenuMode;
+        openedMenusMutex.unlock();
+        return result;
+    }
 }
 
 std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
+    openedMenusMutex.lock();
+    std::string result = lastMenuOpened;
+    openedMenusMutex.unlock();
     return lastMenuOpened;
 }
 

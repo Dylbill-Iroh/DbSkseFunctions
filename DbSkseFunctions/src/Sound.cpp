@@ -146,12 +146,17 @@ RE::BSSoundHandle PlaySound(RE::TESSound* akSound, RE::TESObjectREFR* akSource, 
     RE::BSSoundHandle soundHandle;
     if (akSound && akSource) {
         auto* audiomanager = RE::BSAudioManager::GetSingleton();
+        if (audiomanager) {
+            audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor);
 
-        audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor);
-
-        soundHandle.SetObjectToFollow(akSource->Get3D());
-        soundHandle.SetVolume(volume);
-        soundHandle.Play();
+            soundHandle.SetObjectToFollow(akSource->Get3D());
+            soundHandle.SetVolume(volume);
+            soundHandle.Play();
+        }
+        else {
+            logger::error("audiomanager* not found, sound[{}] on source[{}] at volume[{}] not played",
+                gfuncs::GetFormDataString(akSound), gfuncs::GetFormDataString(akSource), volume);
+        }
     }
     return soundHandle;
 }
@@ -172,6 +177,12 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
     }
 
     auto* audiomanager = RE::BSAudioManager::GetSingleton();
+    if (!audiomanager) {
+        logger::error("audiomanager* not found, sound[{}] on source[{}] at volume[{}] not played",
+            gfuncs::GetFormDataString(akSound), gfuncs::GetFormDataString(akSource), volume);
+        return -1;
+    }
+
     RE::BSSoundHandle soundHandle;
 
     audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor);
@@ -223,6 +234,11 @@ int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSo
     }
 
     auto* audiomanager = RE::BSAudioManager::GetSingleton();
+    if (!audiomanager) {
+        logger::error("audiomanager* not found, sound[{}] on source[{}] at volume[{}] not played",
+            gfuncs::GetFormDataString(akSoundDescriptor), gfuncs::GetFormDataString(akSource), volume);
+        return -1;
+    }
     RE::BSSoundHandle soundHandle;
 
     audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSoundDescriptor->soundDescriptor);

@@ -33,12 +33,16 @@ struct MenuModeTimer {
 
             if (!cancelled) {
                 auto* svm = RE::SkyrimVM::GetSingleton();
-
-                float elapsedTime = (savedTimeElapsed + gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
-                auto* args = RE::MakeFunctionArguments((int)timerID);
-                svm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
-                delete args;
-                logger::debug("menu mode timer event sent. ID[{}], interval[{}], elapsed time[{}]", timerID, interval, elapsedTime);
+                if (svm) {
+                    float elapsedTime = (savedTimeElapsed + gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
+                    auto* args = RE::MakeFunctionArguments((int)timerID);
+                    svm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
+                    delete args;
+                    logger::debug("menu mode timer event sent. ID[{}], interval[{}], elapsed time[{}]", timerID, interval, elapsedTime);
+                }
+                else {
+                    logger::error("svm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+                }
             }
 
             finished = true;
@@ -361,7 +365,13 @@ struct NoMenuModeTimer {
         savedTimeElapsed = afSavedTimeElapsed;
         handle = akHandle;
         timerID = aitimerID;
-        if (!inMenuMode) {
+
+        bool isInMenuMode = false;
+        openedMenusMutex.lock();
+        isInMenuMode = inMenuMode;
+        openedMenusMutex.unlock();
+
+        if (!isInMenuMode) {
             StartTimer();
         }
         else {
@@ -384,7 +394,12 @@ struct NoMenuModeTimer {
             std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
 
             if (!cancelled) {
-                if (inMenuMode) {
+                bool isInMenuMode = false;
+                openedMenusMutex.lock();
+                isInMenuMode = inMenuMode;
+                openedMenusMutex.unlock();
+
+                if (isInMenuMode) {
                     started = false;
                     float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeMenuWasOpened);
                     currentInterval += timeInMenu;
@@ -395,16 +410,22 @@ struct NoMenuModeTimer {
 
                 if (currentInterval <= 0.0 && !cancelled) {
                     auto* svm = RE::SkyrimVM::GetSingleton();
-                    float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
-                    auto* args = RE::MakeFunctionArguments((int)timerID);
-                    svm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
-                    delete args;
-                    logger::debug("NoMenuModeTimer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
-                        timerID, initInterval, totalTimePaused, elapsedTime);
+                    if (svm) {
+                        float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+                        auto* args = RE::MakeFunctionArguments((int)timerID);
+                        svm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
+                        logger::debug("NoMenuModeTimer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
+                            timerID, initInterval, totalTimePaused, elapsedTime);
 
-                    finished = true;
+                        delete args;
+                        finished = true;
+                    }
+                    else {
+                        logger::error("svm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+                        finished = true;
+                    }
                 }
-                else if (!inMenuMode && !cancelled) {
+                else if (!isInMenuMode && !cancelled) {
                     StartTimer();
                 }
                 else if (!cancelled) {
@@ -742,7 +763,12 @@ struct Timer {
         handle = akHandle;
         timerID = aiTimerID;
         auto* ui = RE::UI::GetSingleton();
-        if (!ui->GameIsPaused()) {
+        bool isPaused = false; 
+        if (ui) {
+            isPaused = ui->GameIsPaused();
+        }
+
+        if (!isPaused) {
             StartTimer();
         }
         else {
@@ -766,25 +792,33 @@ struct Timer {
 
             if (!cancelled) {
                 auto* ui = RE::UI::GetSingleton();
-                if (ui->GameIsPaused()) {
-                    started = false;
-                    float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeGameWasPaused);
-                    currentInterval += timeInMenu;
-                    totalTimePaused += timeInMenu;
-                    lastPausedTimeCheckSet = true;
-                    lastPausedTimeCheck = std::chrono::system_clock::now();
+                if (ui) {
+                    if (ui->GameIsPaused()) {
+                        started = false;
+                        float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeGameWasPaused);
+                        currentInterval += timeInMenu;
+                        totalTimePaused += timeInMenu;
+                        lastPausedTimeCheckSet = true;
+                        lastPausedTimeCheck = std::chrono::system_clock::now();
+                    }
                 }
 
                 if (currentInterval <= 0.0 && !cancelled) {
                     auto* svm = RE::SkyrimVM::GetSingleton();
-                    float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
-                    auto* args = RE::MakeFunctionArguments((int)timerID);
-                    svm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
-                    delete args;
-                    logger::debug("timer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
-                        timerID, initInterval, totalTimePaused, elapsedTime);
+                    if (svm) {
+                        float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+                        auto* args = RE::MakeFunctionArguments((int)timerID);
+                        svm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
+                        delete args;
+                        logger::debug("timer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
+                            timerID, initInterval, totalTimePaused, elapsedTime);
 
-                    finished = true;
+                        finished = true;
+                    }
+                    else {
+                        logger::error("svm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+                        finished = true;
+                    }
                 }
                 else if (!ui->GameIsPaused() && !cancelled) {
                     StartTimer();
@@ -1129,51 +1163,63 @@ struct GameTimeTimer {
             startTime = afStartTime;
             endTime = afEndTime;
         }
-        else {
+        else if (calendar) {
             startTime = calendar->GetHoursPassed();
             endTime = startTime + afInterval;
         }
+        
+        if (calendar) {
+            float secondsInterval = GameHoursToRealTimeSeconds(nullptr, afInterval);
+            int milliTick = (secondsInterval * 1000);
 
-        float secondsInterval = GameHoursToRealTimeSeconds(nullptr, afInterval);
-        int milliTick = (secondsInterval * 1000);
+            if (tick > milliTick) {
+                tick = milliTick;
+            }
 
-        if (tick > milliTick) {
-            tick = milliTick;
+            StartTimer();
         }
-
-        StartTimer();
+        else {
+            logger::error("calendar* not found, timer[{}] for handle[{}] event not started.", timerID, handle);
+            finished = true;
+        }
     }
 
     void StartTimer() {
         std::thread t([=]() {
             auto* calendar = RE::Calendar::GetSingleton();
-            while (calendar->GetHoursPassed() < endTime && !cancelled) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(tick));
+            if (calendar) {
+                while (calendar->GetHoursPassed() < endTime && !cancelled) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(tick));
+                }
+
+                if (!cancelled) {
+                    auto now = std::chrono::system_clock::now();
+                    float endTime = calendar->GetHoursPassed();
+                    float elapsedGameHours = (calendar->GetHoursPassed() - startTime);
+
+                    auto* args = RE::MakeFunctionArguments((int)timerID);
+                    auto* svm = RE::SkyrimVM::GetSingleton();
+
+                    svm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
+                    delete args;
+                    logger::debug("game timer event sent. ID[{}] gameHoursInterval[{}] startTime[{}] endTime[{}] elapsedGameHours[{}]",
+                        timerID, initGameHoursInterval, startTime, endTime, elapsedGameHours);
+
+                    finished = true;
+                }
+
+                if (cancelled || finished) {
+                    //while (erasingGameTimers) { //only 1 thread should call EraseFinishedTimers at a time.
+                    //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                    //}
+
+                    canDelete = true;
+                    EraseFinishedGameTimers();
+                }
             }
-
-            if (!cancelled) {
-                auto now = std::chrono::system_clock::now();
-                float endTime = calendar->GetHoursPassed();
-                float elapsedGameHours = (calendar->GetHoursPassed() - startTime);
-
-                auto* args = RE::MakeFunctionArguments((int)timerID);
-                auto* svm = RE::SkyrimVM::GetSingleton();
-
-                svm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
-                delete args;
-                logger::debug("game timer event sent. ID[{}] gameHoursInterval[{}] startTime[{}] endTime[{}] elapsedGameHours[{}]",
-                    timerID, initGameHoursInterval, startTime, endTime, elapsedGameHours);
-
+            else {
+                logger::error("calendar* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
                 finished = true;
-            }
-
-            if (cancelled || finished) {
-                //while (erasingGameTimers) { //only 1 thread should call EraseFinishedTimers at a time.
-                //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-                //}
-
-                canDelete = true;
-                EraseFinishedGameTimers();
             }
             });
         t.detach();
@@ -1181,12 +1227,24 @@ struct GameTimeTimer {
 
     float GetElapsedTime() {
         auto* calendar = RE::Calendar::GetSingleton();
-        return (calendar->GetHoursPassed() - startTime);
+        if (calendar) {
+            return (calendar->GetHoursPassed() - startTime);
+        }
+        else {
+            logger::error("calendar* not found, timer[{}] for handle[{}]", timerID, handle);
+            return -1.0;
+        }
     }
 
     float GetTimeLeft() {
         auto* calendar = RE::Calendar::GetSingleton();
-        return (endTime - calendar->GetHoursPassed());
+        if (calendar) {
+            return (endTime - calendar->GetHoursPassed());
+        }
+        else {
+            logger::error("calendar* not found, timer[{}] for handle[{}]", timerID, handle);
+            return -1.0;
+        }
     }
 
     void CancelTimer() {

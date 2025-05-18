@@ -74,7 +74,12 @@ void SetupLog(std::string iniFilePath = "", std::string iniSection = "LOG", std:
         }
     }
 
-    auto pluginName = SKSE::PluginDeclaration::GetSingleton()->GetName();
+    std::string_view pluginName = "DbSkseFunctions";
+    auto* pluginDeclaration = SKSE::PluginDeclaration::GetSingleton(); 
+    if (pluginDeclaration) {
+        pluginName = pluginDeclaration->GetName();
+    }
+
     std::string pluginFileName = std::format("{}.log", pluginName);
     logsFolderPath.append(pluginFileName);
 

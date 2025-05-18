@@ -95,10 +95,13 @@ namespace gfx {
 
     void InvokeInt(std::string_view menuPath, std::string target, int arg) {
         auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        auto* args = RE::MakeFunctionArguments((std::string)menuPath, (std::string)target, (int)arg);
-        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> result;
-        result.reset();
-        vm->DispatchStaticCall("UI", "InvokeInt", args, result);
+        if (vm) {
+            auto* args = RE::MakeFunctionArguments((std::string)menuPath, (std::string)target, (int)arg);
+            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> result;
+            result.reset();
+            vm->DispatchStaticCall("UI", "InvokeInt", args, result);
+            delete args;
+        }
     }
 
     void SetItemMenuSelection(std::string_view menuPath, int index) {

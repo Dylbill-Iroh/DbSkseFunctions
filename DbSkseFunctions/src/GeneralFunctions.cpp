@@ -9,11 +9,10 @@
 #include "editorID.hpp"
 
 namespace gfuncs {
-    RE::SkyrimVM* gsvm;
-    RE::Actor* gfuncsPlayerRef;
-    RE::UI* gui;
     const std::string hexDigits = "0123456789abcdef";
     const std::string reverseHexDigits = "fedcba9876543210";
+
+    bool srandSet = false;
 
     enum logLevel { trace, debug, info, warn, error, critical };
     enum debugLevel { notification, messageBox };
@@ -313,12 +312,14 @@ namespace gfuncs {
             return NULL;
         }
 
+        auto* gsvm = RE::SkyrimVM::GetSingleton();
+        if (!gsvm) {
+            logger::error("gsvm* not found");
+            return NULL;
+        }
+
         RE::VMTypeID id = static_cast<RE::VMTypeID>(akForm->GetFormType());
         RE::VMHandle handle = gsvm->handlePolicy.GetHandleForObject(id, akForm);
-
-        /*if (handle == NULL) {
-            return NULL;
-        }*/
 
         return handle;
     }
@@ -329,12 +330,15 @@ namespace gfuncs {
             return NULL;
         }
 
+        auto* gsvm = RE::SkyrimVM::GetSingleton();
+        if (!gsvm) {
+            logger::error("gsvm* not found");
+            return NULL;
+        }
+
         RE::VMTypeID id = akAlias->GetVMTypeID();
         RE::VMHandle handle = gsvm->handlePolicy.GetHandleForObject(id, akAlias);
 
-        if (handle == NULL) {
-            return NULL;
-        }
         return handle;
     }
 
@@ -344,18 +348,27 @@ namespace gfuncs {
             return NULL;
         }
 
-        //RE::VMTypeID id = akEffect->VMTYPEID;
-        RE::VMTypeID id = RE::ActiveEffect::VMTYPEID;
+        auto* gsvm = RE::SkyrimVM::GetSingleton();
+        if (!gsvm) {
+            logger::error("gsvm* not found");
+            return NULL;
+        }
+
+        RE::VMTypeID id = akEffect->VMTYPEID;
+        //RE::VMTypeID id = RE::ActiveEffect::VMTYPEID;
         RE::VMHandle handle = gsvm->handlePolicy.GetHandleForObject(id, akEffect);
 
-        //if (handle == NULL) {
-            //return NULL;
-        //}
         return handle;
     }
 
     RE::ActiveEffect* GetActiveEffectFromHandle(RE::VMHandle handle) {
         RE::ActiveEffect* activeEffect = nullptr;
+        auto* gsvm = RE::SkyrimVM::GetSingleton();
+        if (!gsvm) {
+            logger::error("gsvm* not found");
+            return activeEffect;
+        }
+
         RE::VMTypeID id = RE::ActiveEffect::VMTYPEID;
         auto* obj = gsvm->handlePolicy.GetObjectForHandle(id, handle);
         if (obj) {
@@ -512,6 +525,12 @@ namespace gfuncs {
     }
 
     RE::Actor* GetPlayerDialogueTarget() {
+        RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
+        if (!playerRef) {
+            logger::error("playerRef not found");
+            return nullptr;
+        }
+
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             if (IsFormValid(form)) {
@@ -525,7 +544,7 @@ namespace gfuncs {
                             if (IsFormValid(ref)) {
                                 RE::Actor* dialogueActorRef = ref->As<RE::Actor>();
                                 if (IsFormValid(dialogueActorRef)) {
-                                    if (dialogueActorRef == gfuncsPlayerRef) {
+                                    if (dialogueActorRef == playerRef) {
                                         return actor;
                                     }
                                 }
@@ -539,8 +558,20 @@ namespace gfuncs {
     }
 
     void RefreshItemMenu() {
+        auto* gui = RE::UI::GetSingleton();
+        if (!gui) {
+            logger::error("gui* not found");
+            return;
+        }
+
         if (gui->IsItemMenuOpen()) {
-            RE::SendUIMessage::SendInventoryUpdateMessage(gfuncsPlayerRef, nullptr);
+            RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
+            if (!playerRef) {
+                logger::error("playerRef not found");
+                return;
+            }
+
+            RE::SendUIMessage::SendInventoryUpdateMessage(playerRef, nullptr);
         }
     }
 
@@ -702,7 +733,6 @@ namespace gfuncs {
         return false;
     }
 
-
     void String_ReplaceAll(std::string& s, std::string searchString, std::string replaceString) {
         if (s == "" || searchString == "") {
             return;
@@ -747,11 +777,10 @@ namespace gfuncs {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
-            if (v[i] == element) {
-                return i;
-            }
+        auto it = std::find(v.begin(), v.end(), element);
+
+        if (it != v.end()) {
+            return int(std::distance(v.begin(), it));
         }
 
         return -1;
@@ -766,11 +795,10 @@ namespace gfuncs {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
-            if (v[i] == element) {
-                return i;
-            }
+        auto it = std::find(v.begin(), v.end(), element);
+
+        if (it != v.end()) {
+            return int(std::distance(v.begin(), it));
         }
 
         return -1;
@@ -785,11 +813,10 @@ namespace gfuncs {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
-            if (v[i] == element) {
-                return i;
-            }
+        auto it = std::find(v.begin(), v.end(), element);
+
+        if (it != v.end()) {
+            return int(std::distance(v.begin(), it));
         }
 
         return -1;
@@ -804,8 +831,7 @@ namespace gfuncs {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
+        for (int i = 0; i < v.size(); i++) {
             if (v[i] == element) {
                 return i;
             }
@@ -819,9 +845,9 @@ namespace gfuncs {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
-            if (v[i].soundID == element.soundID) {
+        for (int i = 0; i < v.size(); i++) {
+            RE::BSSoundHandle handle = v[i];
+            if (&handle == &element) {
                 return i;
             }
         }
@@ -838,11 +864,10 @@ namespace gfuncs {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
-            if (v[i] == element) {
-                return i;
-            }
+        auto it = std::find(v.begin(), v.end(), element);
+
+        if (it != v.end()) {
+            return int(std::distance(v.begin(), it));
         }
 
         return -1;
@@ -857,11 +882,10 @@ namespace gfuncs {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
-            if (v[i] == element) {
-                return i;
-            }
+        auto it = std::find(v.begin(), v.end(), element);
+
+        if (it != v.end()) {
+            return int(std::distance(v.begin(), it));
         }
 
         return -1;
@@ -876,11 +900,10 @@ namespace gfuncs {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
-            if (v[i] == element) {
-                return i;
-            }
+        auto it = std::find(v.begin(), v.end(), element);
+
+        if (it != v.end()) {
+            return int(std::distance(v.begin(), it));
         }
 
         return -1;
@@ -895,11 +918,10 @@ namespace gfuncs {
             return -1;
         }
 
-        int m = v.size();
-        for (int i = 0; i < m; i++) {
-            if (v[i] == element) {
-                return i;
-            }
+        auto it = std::find(v.begin(), v.end(), element);
+
+        if (it != v.end()) {
+            return int(std::distance(v.begin(), it));
         }
 
         return -1;
@@ -910,15 +932,8 @@ namespace gfuncs {
             return false;
         }
 
-        for (auto& obj : *v) {
-            if (obj) {
-                if (obj == element) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        auto it = std::find(v->begin(), v->end(), element);
+        return (it != v->end());
     }
 
     RE::NiAVObject* GetNiAVObjectForRef(RE::TESObjectREFR* ref) {
@@ -1351,6 +1366,12 @@ namespace gfuncs {
             return;
         }
 
+        auto* gsvm = RE::SkyrimVM::GetSingleton();
+        if (!gsvm) {
+            logger::error("gsvm* not found");
+            return;
+        }
+
         for (int i = 0; i < max; i++) {
             gsvm->SendAndRelayEvent(handles[i], &sEvent, args, nullptr);
         }
@@ -1373,11 +1394,9 @@ namespace gfuncs {
     }
 
     void Install() {
-        if (!gsvm) {
-            gsvm = RE::SkyrimVM::GetSingleton();
+        if (!srandSet) {
+            srandSet = true;
             std::srand((unsigned)std::time(NULL));
         }
-        if (!gfuncsPlayerRef) { gfuncsPlayerRef = RE::TESForm::LookupByID<RE::TESForm>(20)->As<RE::Actor>(); }
-        if (!gui) {gui = RE::UI::GetSingleton(); }
     }
 }

@@ -9,9 +9,9 @@ project(DbSkseFunctions VERSION 0.0.1 LANGUAGES CXX)
 #
 # Please see the "Project setup" section of README.md
 #
-
+ 
 # If you're not using a mod manager, you probably want the SKSE plugin to go
-# inside of your Skyrim "Data" folder.
+# inside of your Skyrim "Data" folder. 
 #
 # To do this automatically, set the `SKYRIM_FOLDER` environment variable
 # to the path of your Skyrim Special Edition folder
@@ -59,6 +59,7 @@ PUBLIC src/Animation.cpp
 PUBLIC src/ArtObject.cpp
 PUBLIC src/Book.cpp
 PUBLIC src/Cell.cpp
+PUBLIC src/ConditionFunctions.cpp
 PUBLIC src/ConsoleUtil.cpp
 PUBLIC src/CreateForms.cpp
 PUBLIC src/FileSystem.cpp

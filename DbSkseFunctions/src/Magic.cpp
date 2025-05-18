@@ -21,6 +21,10 @@ namespace magic {
         }
 
         auto* player = RE::PlayerCharacter::GetSingleton();
+        if (!player) {
+            logger::error("player* not found. shout[{}] not unlocked", gfuncs::GetFormDataString(akShout));
+            return;
+        }
 
         player->AddShout(akShout);
 

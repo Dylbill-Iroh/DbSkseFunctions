@@ -1,11 +1,15 @@
 Scriptname DbSkseEvents hidden
 ;/
-These are global events. The eventreceiver is what receives the event.  
-
+These are global events. Any script can register for any of these events. 
+The eventreceiver is the the form, alias or activeMagicEffect that's being registered to recieve the event.
+The eventreceiver should have a script attached that contains the event that's being registered.
+Most of the time you'll want to use 'self' for this parameter.
 
 Filters:
 You can pass in one form paramFilter to compare with the event. 
-the paramFilterIndex chooses which parameter to compare, from left to right in the event. 0 is the first form param, 1 is the second ect.
+the paramFilterIndex chooses which parameter to compare, from left to right in the event. 0 is the first form param, 1 is the second ect...
+If the parameter in the event matches the filter, the event is sent to your script. 
+Multiple filters can be registered for each event, or no filters to recieve all events.
 
 example script: 
 ===================================================================================================================================================================================================================================================================================
@@ -16,8 +20,8 @@ Ammo Property IronArrow Auto
 Projectile Property ArrowIronProjectile Auto
 
 Event Oninit()
-	DbSkseEvents.RegisterFormForGlobalEvent("OnHitGlobal", Self, game.GetPlayer(), 0) 	 ;compare player with 'Attacker'. Registers for when the player hits anything
-	DbSkseEvents.RegisterFormForGlobalEvent("OnHitGlobal", Self, game.GetPlayer(), 1) 	 ;compare player with 'Target'. Registers for when the player is hit by anything
+	DbSkseEvents.RegisterFormForGlobalEvent("OnHitGlobal", Self, game.GetPlayer(), 0) 	 ;compare player with 'Attacker'.  Registers for when the player hits anything
+	DbSkseEvents.RegisterFormForGlobalEvent("OnHitGlobal", Self, game.GetPlayer(), 1) 	 ;compare player with 'Target'.    Registers for when the player is hit by anything
 	DbSkseEvents.RegisterFormForGlobalEvent("OnHitGlobal", Self, IronSword, 2) 		  	 ;compare IronSword with 'Source'. Register for when anything is hit with an IronSword.
 	DbSkseEvents.RegisterFormForGlobalEvent("OnHitGlobal", Self, IronArrow, 3) 		  	 ;compare IronArrow with 'akAmmo'. Register for when anything is hit with an IronArrow.
 	DbSkseEvents.RegisterFormForGlobalEvent("OnHitGlobal", Self, ArrowIronProjectile, 4) ;compare ArrowIronProjectile with 'akProjectile'. Register for when anything is hit with an ArrowIronProjectile. (this is unreliable, better to compare akAmmo when possible.)
@@ -31,7 +35,7 @@ Event OnHitGlobal(ObjectReference Attacker, ObjectReference Target, Form Source,
 EndEvent
 ===================================================================================================================================================================================================================================================================================
 
-As of version 9.5, event paramFilters now check for baseobjects if the event param you're comparing is an objectreference or actor. 
+As of version 9.5, event paramFilters now check for baseobjects if the event param you're comparing is an objectreference or an actor. 
 Example:
 ===================================================================================================================================================================================================================================================================================
 scriptname myQuestScript extends quest
@@ -39,10 +43,11 @@ scriptname myQuestScript extends quest
 Container Property BarrelFish01 Auto
 
 Event OnInit()
+	;compare the ActivatedRef's base object with BarrelFish01
 	DbSkseEvents.registerFormForGlobalEvent("OnActivateGlobal", self, BarrelFish01, 1)
 EndEvent
 
-;this event now triggers when any objectreference / actor in game activates any ref whose base object is BarrelFish01
+;this event now fires when any objectReference whose base object is BarrelFish01 is activated by any reference or actor in game.
 Event OnActivateGlobal(ObjectReference ActivatorRef, ObjectReference ActivatedRef)
 	Debug.MessageBox(ActivatorRef.GetDisplayName() + " activated " + ActivatedRef.GetDisplayName())
 EndEvent 
@@ -51,6 +56,7 @@ EndEvent
 Note that scripts attached to ReferenceAlias's or ActiveMagicEffects will receive the event if the reference they're filled with is registered for the event. 
 Example:
 
+===================================================================================================================================================================================================================================================================================
 Scriptname MyRefAliasScript extends ReferenceAlias 
 
 Event OnInit()
@@ -58,8 +64,10 @@ Event OnInit()
     DbSkseEvents.RegisterAliasForGlobalEvent("OnWaitStartGlobal", self)
     DbSkseEvents.RegisterFormForGlobalEvent("OnWaitStartGlobal", self.GetReference())
 EndEvent
+===================================================================================================================================================================================================================================================================================
 
 Same goes for ActiveMagicEffects:
+===================================================================================================================================================================================================================================================================================
 Scriptname MyRefAliasScript extends ReferenceAlias 
 
 Event OnEffectStart(Actor akTarget, Actor akCaster)
@@ -67,6 +75,7 @@ Event OnEffectStart(Actor akTarget, Actor akCaster)
     DbSkseEvents.RegisterAliasForGlobalEvent("OnWaitStartGlobal", self)
     DbSkseEvents.RegisterFormForGlobalEvent("OnWaitStartGlobal", akTarget)
 EndEvent
+===================================================================================================================================================================================================================================================================================
 /;
 
 ;form ==================================================================================================================================================

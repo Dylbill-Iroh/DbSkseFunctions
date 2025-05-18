@@ -15,16 +15,26 @@ namespace input {
     }
 
     void TapKey(int keyCode) {
-        auto inputDevice = GetInputDeviceForKeyCode(keyCode);
         auto bsInputEventQueue = RE::BSInputEventQueue::GetSingleton();
-        static auto kEvent = RE::ButtonEvent::Create(inputDevice, "", keyCode, 1, 0.0f);
-        bsInputEventQueue->PushOntoInputQueue(kEvent);
+        if (bsInputEventQueue) {
+            auto inputDevice = GetInputDeviceForKeyCode(keyCode);
+            static auto kEvent = RE::ButtonEvent::Create(inputDevice, "", keyCode, 1, 0.0f);
+            bsInputEventQueue->PushOntoInputQueue(kEvent);
+        }
+        else {
+            logger::error("bsInputEventQueue not found key[{}] not tapped", keyCode);
+        }
     }
 
     void TapKey(std::string keyString) {
-        auto bsInputEventQueue = RE::BSInputEventQueue::GetSingleton();
-        static auto kEvent = RE::ButtonEvent::Create(RE::INPUT_DEVICE::kKeyboard, keyString, -1, 1, 0.0f);
-        bsInputEventQueue->PushOntoInputQueue(kEvent);
+        if (bsInputEventQueue) {
+            auto bsInputEventQueue = RE::BSInputEventQueue::GetSingleton();
+            static auto kEvent = RE::ButtonEvent::Create(RE::INPUT_DEVICE::kKeyboard, keyString, -1, 1, 0.0f);
+            bsInputEventQueue->PushOntoInputQueue(kEvent);
+        }
+        else {
+            logger::error("bsInputEventQueue not found key[{}] not tapped", keyString);
+        }
     }
 
     void HoldKey(int keyCode, int holdTimeMilliSeconds) {
@@ -39,6 +49,9 @@ namespace input {
                 bsInputEventQueue->PushOntoInputQueue(kEvent1);
                 std::this_thread::sleep_for(std::chrono::milliseconds(holdTimeMilliSeconds));
                 bsInputEventQueue->PushOntoInputQueue(kEvent2);
+            }
+            else {
+                logger::error("bsInputEventQueue not found key[{}] not tapped", keyCode);
             }
             }).detach();
     }
@@ -55,6 +68,9 @@ namespace input {
                 bsInputEventQueue->PushOntoInputQueue(kEvent1);
                 std::this_thread::sleep_for(std::chrono::milliseconds(holdTimeMilliSeconds));
                 bsInputEventQueue->PushOntoInputQueue(kEvent2);
+            }
+            else { 
+                logger::error("bsInputEventQueue not found key[{}] not tapped", keyCode);
             }
             }).detach();
     }
