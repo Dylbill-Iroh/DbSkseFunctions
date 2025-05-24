@@ -18,6 +18,7 @@
 #include "logger.h"
 #include "GeneralFunctions.h"
 #include "Keyword.h"
+#include "KeyInput.h"
 #include "Magic.h"
 #include "Utility.h"
 #include "MapMarker.h"
@@ -35,6 +36,7 @@
 #include "Furniture.h"
 #include "PapyrusUtilEx.h"
 #include "ProjectileFunctions.h"
+#include "RangeEvents.h"
 #include "BipedSlots.h"
 #include "UIEventHooks/Hooks.h"
 #include "editorID.hpp"
@@ -50,8 +52,6 @@ bool bPlayerIsInCombat = false;
 bool bRegisteredForPlayerCombatChange = false;
 //bool inMenuMode = false; //in utility.h
 bool gamePaused = false;
-bool bIsLoadingSerialization = false;
-bool bIsSavingSerialization = false;
 bool DbSkseCppCallbackEventsAttached = false;
 //std::string lastMenuOpened; //in utility.h
 RE::TESObjectREFR* lastPlayerActivatedRef = nullptr;
@@ -121,8 +121,6 @@ std::vector<RE::BSFixedString> itemMenus = {
 bool bActivateEventSinkEnabledByDefault = true; 
 bool bMenuOpenCloseEventSinkEnabled = true;
 int iMaxArrowsSavedPerReference = 0;
-float secondsPassedGameNotPaused = 0.0;
-float lastFrameDelta = 0.1;
 RE::TESForm* nullForm;
 RE::TESForm* xMarker;
 RE::BSScript::IVirtualMachine* gvm;
@@ -149,9 +147,16 @@ void SetSettingsFromIniFile() {
     mINI::INIStructure ini;
     file.read(ini);
 
+    //eventPollingInterval
+
     gameTimerPollingInterval = (mINI::GetIniFloat(ini, "Main", "gameTimerPollingInterval", 1.5) * 1000);
     if (gameTimerPollingInterval < 100) {
         gameTimerPollingInterval = 100;
+    }
+
+    eventPollingInterval = (mINI::GetIniFloat(ini, "Main", "fEventPollingInterval", 0.5) * 1000);
+    if (eventPollingInterval < 50) {
+        eventPollingInterval = 50;
     }
 
     iMaxArrowsSavedPerReference = mINI::GetIniInt(ini, "Main", "iMaxArrowsSavedPerReference", 0);
@@ -162,7 +167,8 @@ void SetSettingsFromIniFile() {
     bActivateEventSinkEnabledByDefault = mINI::GetIniBool(ini, "Main", "bActivateEventSinkEnabledByDefault", true);
     bMenuOpenCloseEventSinkEnabled = mINI::GetIniBool(ini, "Main", "bMenuOpenCloseEventSinkEnabled", true);
 
-    logger::info("gameTimerPollingInterval set to {} ", gameTimerPollingInterval);
+    logger::info("gameTimerPollingInterval set to {} milliseconds", gameTimerPollingInterval);
+    logger::info("eventPollingInterval set to {} milliseconds", eventPollingInterval);
     logger::info("iMaxArrowsSavedPerReference set to {} ", iMaxArrowsSavedPerReference);
     logger::info("bActivateEventSinkEnabledByDefault set to {} ", bActivateEventSinkEnabledByDefault);
     logger::info("bMenuOpenCloseEventSinkEnabled set to {} ", bMenuOpenCloseEventSinkEnabled);
@@ -173,7 +179,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(9.6);
+    return float(9.7);
 }
 
 RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
@@ -307,8 +313,10 @@ enum EventsEnum {
     EventEnum_OnPlayerChangeCell,
     EventEnum_OnEffectStart,
     EventEnum_OnEffectFinish,
+    EventEnum_OnMusicTypeChange,
+    EventEnum_OnWeatherChange,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnEffectFinish
+    EventEnum_Last = EventEnum_OnWeatherChange
 };
 
 struct EventData {
@@ -324,8 +332,7 @@ struct EventData {
     EventData(RE::BSFixedString event, int ceventSinkIndex, int NumberOfParams, std::uint32_t crecord) :
         eventSinkIndex(ceventSinkIndex),
         sEvent(event),
-        record(crecord)
-    {
+        record(crecord) {
         eventParamMaps.resize(NumberOfParams);
     }
 
@@ -524,6 +531,49 @@ struct EventData {
             return (gfuncs::GetIndexInVector(it->second, handle) != -1);
         }
         return false;
+    }
+
+    void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm, int index) {
+        if (index >= eventParamMaps.size()) {
+            return;
+        }
+
+        if (!gfuncs::IsFormValid(akForm)) {
+            return;
+        }
+
+        auto it = eventParamMaps[index].find(akForm);
+
+        if (it != eventParamMaps[index].end()) {
+            logger::trace("events for form: [{}] ID[{:x}] found", gfuncs::GetFormName(akForm), akForm->GetFormID());
+            handles.reserve(handles.size() + it->second.size());
+            handles.insert(handles.end(), it->second.begin(), it->second.end());
+        }
+        else {
+            logger::trace("events for form: [{}] ID[{:x}] not found", gfuncs::GetFormName(akForm), akForm->GetFormID());
+        }
+    }
+
+    std::vector<RE::VMHandle> GetHandles(std::vector<RE::TESForm*> formParams) {
+        std::vector<RE::VMHandle> eventHandles = globalHandles;
+
+        auto size = formParams.size(); 
+        if (size > eventParamMaps.size()) {
+            size = eventParamMaps.size();
+        }
+
+        for (int i = 0; i < size; i++) {
+            CombineEventHandles(eventHandles, formParams[i], i);
+            if (formParams[i]) {
+                auto* ref = skyrim_cast<RE::TESObjectREFR*>(formParams[i]);
+                if (gfuncs::IsFormValid(ref)) {
+                    CombineEventHandles(eventHandles, ref->GetBaseObject(), i);
+                }
+            }
+        }
+
+        gfuncs::RemoveDuplicates(eventHandles);
+        return eventHandles;
     }
 
     bool Load(SKSE::SerializationInterface* a_intfc) {
@@ -840,23 +890,9 @@ void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source,
 
     data.lastImpactEventGameTimeStamp = currentGameTime;
 
-    std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnProjectileImpact]->globalHandles;
-    
-    gfuncs::CombineEventHandles(handles, data.shooter, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[0]);
-    gfuncs::CombineEventHandles(handles, data.target, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[1]);
+    std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnProjectileImpact]->GetHandles({ data.shooter, data.target,
+        source, data.ammo, data.projectileBase });
 
-    if (data.shooter) {
-        gfuncs::CombineEventHandles(handles, data.shooter->GetBaseObject(), eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[0]);
-    }
-    if (data.target) {
-        gfuncs::CombineEventHandles(handles, data.target->GetBaseObject(), eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[1]);
-    }
-
-    gfuncs::CombineEventHandles(handles, source, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[2]);
-    gfuncs::CombineEventHandles(handles, data.ammo, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[3]);
-    gfuncs::CombineEventHandles(handles, data.projectileBase, eventDataPtrs[EventEnum_OnProjectileImpact]->eventParamMaps[3]);
-
-    gfuncs::RemoveDuplicates(handles);
     if (handles.size() > 0) {
 
         auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)data.shooter, (RE::TESObjectREFR*)data.target, (RE::TESForm*)source,
@@ -1094,28 +1130,13 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
         }
 
         if (eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
-            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_HitEvent]->globalHandles;
-
-            if (gfuncs::IsFormValid(ammo)) {
+            if (!gfuncs::IsFormValid(ammo)) {
                 ammo = nullptr;
             }
-            gfuncs::CombineEventHandles(handles, attacker, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[0]);
-            gfuncs::CombineEventHandles(handles, target, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[1]);
 
-            if (attacker) {
-                gfuncs::CombineEventHandles(handles, attacker->GetBaseObject(), eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[0]);
-            }
-            if (target) {
-                gfuncs::CombineEventHandles(handles, target->GetBaseObject(), eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[1]);
-            }
+            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_HitEvent]->GetHandles({ attacker, target, source, ammo, projectileForm });
 
-            gfuncs::CombineEventHandles(handles, source, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[2]);
-            gfuncs::CombineEventHandles(handles, ammo, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[3]);
-            gfuncs::CombineEventHandles(handles, projectileForm, eventDataPtrs[EventEnum_HitEvent]->eventParamMaps[4]);
-
-            gfuncs::RemoveDuplicates(handles);
             if (handles.size() > 0) {
-
                 logger::trace("HitEvent: attacker[{}]  target[{}]  source[{}]  ammo[{}]  projectile[{}]", gfuncs::GetFormName(attacker), gfuncs::GetFormName(target), gfuncs::GetFormName(source), gfuncs::GetFormName(ammo), gfuncs::GetFormName(projectileForm));
                 logger::trace("HitEvent: powerAttack[{}]  SneakAttack[{}]  BashAttack[{}]  HitBlocked[{}]", powerAttack, SneakAttack, bBashAttack, HitBlocked);
 
@@ -1165,18 +1186,8 @@ void CheckForPlayerCombatStatusChange() {
 
         logger::debug("target[{}]", gfuncs::GetFormName(target));
 
-        // RE::TESForm* Target = .attackedMember.get().get();
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->GetHandles({ playerRef, target, });
 
-
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->globalHandles; //
-        gfuncs::CombineEventHandles(handles, playerRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
-
-        if (target) {
-            gfuncs::CombineEventHandles(handles, target->GetBaseObject(), eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
-        }
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
             auto* args = RE::MakeFunctionArguments((RE::Actor*)playerRef, (RE::Actor*)target, (int)combatState);
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnCombatStateChanged]->sEvent, args);
@@ -1220,18 +1231,9 @@ struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
         //RE::Actor* actorRef = actorObjRef->As<RE::Actor>();
         //logger::trace("Actor {} changed to combat state to {} with", gfuncs::GetFormName(actorObjRef), combatState);
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->globalHandles;
-        gfuncs::CombineEventHandles(handles, actorObjRef, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->GetHandles(
+            { actorObjRef, target });
 
-        if (actorObjRef) {
-            gfuncs::CombineEventHandles(handles, actorObjRef->GetBaseObject(), eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[0]);
-        }
-        if (target) {
-            gfuncs::CombineEventHandles(handles, target->GetBaseObject(), eventDataPtrs[EventEnum_OnCombatStateChanged]->eventParamMaps[1]);
-        }
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
 
             auto* args = RE::MakeFunctionArguments((RE::Actor*)actorObjRef, (RE::Actor*)target, (int)combatState);
@@ -1299,20 +1301,11 @@ struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
             sEvent = eventDataPtrs[eventIndex]->sEvent;
             break;
         }
+        
+        std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->GetHandles(
+            { actorObjRef, furnitureRef });
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
-        gfuncs::CombineEventHandles(handles, actorObjRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, furnitureRef, eventDataPtrs[eventIndex]->eventParamMaps[1]);
-        if (actorObjRef) {
-            gfuncs::CombineEventHandles(handles, actorObjRef->GetBaseObject(), eventDataPtrs[eventIndex]->eventParamMaps[0]);
-        }
-        if (furnitureRef) {
-            gfuncs::CombineEventHandles(handles, furnitureRef->GetBaseObject(), eventDataPtrs[eventIndex]->eventParamMaps[1]);
-        }
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
-
             auto* args = RE::MakeFunctionArguments((RE::Actor*)actorRef, (RE::TESObjectREFR*)furnitureRef);
             gfuncs::SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
         }
@@ -1368,20 +1361,8 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
         }
 
         if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded) {
-            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActivate]->globalHandles;
-
-            gfuncs::CombineEventHandles(handles, activatorRef, eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[0]);
-            gfuncs::CombineEventHandles(handles, activatedRef, eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[1]);
-            if (activatorRef) {
-                gfuncs::CombineEventHandles(handles, activatorRef->GetBaseObject(), eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[0]);
-            }
-            if (activatedRef) {
-                gfuncs::CombineEventHandles(handles, activatedRef->GetBaseObject(), eventDataPtrs[EventEnum_OnActivate]->eventParamMaps[1]);
-            }
-
-            gfuncs::RemoveDuplicates(handles);
+            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActivate]->GetHandles({ activatorRef, activatedRef });
             if (handles.size() > 0) {
-
                 auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatorRef, (RE::TESObjectREFR*)activatedRef);
                 gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnActivate]->sEvent, args);
             }
@@ -1465,18 +1446,9 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
             sEvent = eventDataPtrs[eventIndex]->sEvent;
         }
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
-        gfuncs::CombineEventHandles(handles, victim, eventDataPtrs[eventIndex]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, killer, eventDataPtrs[eventIndex]->eventParamMaps[1]);
+        std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->GetHandles(
+            { victim, killer });
 
-        if (victim) {
-            gfuncs::CombineEventHandles(handles, victim->GetBaseObject(), eventDataPtrs[eventIndex]->eventParamMaps[0]);
-        }
-        if (killer) {
-            gfuncs::CombineEventHandles(handles, killer->GetBaseObject(), eventDataPtrs[eventIndex]->eventParamMaps[1]);
-        }
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
 
             auto* args = RE::MakeFunctionArguments((RE::Actor*)victim, (RE::Actor*)killer);
@@ -1684,17 +1656,9 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
 
             logger::trace("Equip Event: Actor[{}], BaseObject[{}], Ref[{}] Equipped[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), gfuncs::GetFormName(ref), equipped);
 
-            std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
+            std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->GetHandles(
+                { akActorRef, baseObject, ref });
 
-            gfuncs::CombineEventHandles(handles, akActorRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
-            gfuncs::CombineEventHandles(handles, baseObject, eventDataPtrs[eventIndex]->eventParamMaps[1]);
-            gfuncs::CombineEventHandles(handles, ref, eventDataPtrs[eventIndex]->eventParamMaps[2]);
-
-            if (akActorRef) {
-                gfuncs::CombineEventHandles(handles, akActorRef->GetBaseObject(), eventDataPtrs[eventIndex]->eventParamMaps[0]);
-            } 
-            
-            gfuncs::RemoveDuplicates(handles);
             if (handles.size() > 0) {
 
                 auto* args = RE::MakeFunctionArguments((RE::Actor*)akActorRef, (RE::TESForm*)baseObject, (RE::TESObjectREFR*)ref);
@@ -1804,21 +1768,10 @@ struct MagicEffectApplyEventSink : public RE::BSTEventSink<RE::TESMagicEffectApp
                 magicEffect = nullptr;
             }
         }
-
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnMagicEffectApply]->globalHandles;
-
-        gfuncs::CombineEventHandles(handles, caster, eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[1]);
-        gfuncs::CombineEventHandles(handles, magicEffect, eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[2]);
         
-        if (caster) {
-            gfuncs::CombineEventHandles(handles, caster->GetBaseObject(), eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[0]);
-        }
-        if (target) {
-            gfuncs::CombineEventHandles(handles, target->GetBaseObject(), eventDataPtrs[EventEnum_OnMagicEffectApply]->eventParamMaps[1]);
-        }
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnMagicEffectApply]->GetHandles(
+            { caster, target, magicEffect });
 
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
 
             auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)caster, (RE::TESObjectREFR*)target, (RE::EffectSetting*)magicEffect);
@@ -1856,16 +1809,10 @@ struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
 
         bool Locked = lockedObject->IsLocked();
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_LockChanged]->globalHandles;
-        gfuncs::CombineEventHandles(handles, lockedObject, eventDataPtrs[EventEnum_LockChanged]->eventParamMaps[0]);
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_LockChanged]->GetHandles(
+            { lockedObject});
 
-        if (lockedObject) {
-            gfuncs::CombineEventHandles(handles, lockedObject->GetBaseObject(), eventDataPtrs[EventEnum_LockChanged]->eventParamMaps[0]);
-        }
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
-
             auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)lockedObject, (bool)Locked);
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_LockChanged]->sEvent, args);
         }
@@ -1914,20 +1861,10 @@ struct OpenCloseEventSink : public RE::BSTEventSink<RE::TESOpenCloseEvent> {
         else {
             eventIndex = EventEnum_OnClose;
         }
+        
+        std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->GetHandles(
+            { activatorRef, akActionRef });
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
-
-        gfuncs::CombineEventHandles(handles, activatorRef, eventDataPtrs[eventIndex]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, akActionRef, eventDataPtrs[eventIndex]->eventParamMaps[1]);
-
-        if (activatorRef) {
-            gfuncs::CombineEventHandles(handles, activatorRef->GetBaseObject(), eventDataPtrs[eventIndex]->eventParamMaps[0]);
-        }
-        if (akActionRef) {
-            gfuncs::CombineEventHandles(handles, akActionRef->GetBaseObject(), eventDataPtrs[eventIndex]->eventParamMaps[1]);
-        }
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
 
             auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatorRef, (RE::TESObjectREFR*)akActionRef);
@@ -1971,15 +1908,10 @@ struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
         }
 
         //logger::trace("spell cast: [{}] obj [{}]", gfuncs::GetFormName(spell), gfuncs::GetFormName(caster));
+        
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnSpellCast]->GetHandles(
+            { caster, spell });
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnSpellCast]->globalHandles;
-
-        gfuncs::CombineEventHandles(handles, caster, eventDataPtrs[EventEnum_OnSpellCast]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, spell, eventDataPtrs[EventEnum_OnSpellCast]->eventParamMaps[1]);
-        if (caster) {
-            gfuncs::CombineEventHandles(handles, caster->GetBaseObject(), eventDataPtrs[EventEnum_OnSpellCast]->eventParamMaps[0]);
-        }
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
 
             auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)caster, (RE::TESForm*)spell);
@@ -2054,24 +1986,10 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
         int itemCount = event->itemCount;
 
         //logger::debug("newContainer[{}] oldContainer[{}] itemReference[{}] baseObj[{}] itemCount[{}]", gfuncs::GetFormName(newContainer), gfuncs::GetFormName(oldContainer), gfuncs::GetFormName(itemReference), gfuncs::GetFormName(baseObj), itemCount);
-
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnContainerChanged]->globalHandles;
-
-        gfuncs::CombineEventHandles(handles, newContainer, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, oldContainer, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[1]);
-        gfuncs::CombineEventHandles(handles, itemReference, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[2]);
-        gfuncs::CombineEventHandles(handles, baseObj, eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[3]);
         
-        if (newContainer) {
-            gfuncs::CombineEventHandles(handles, newContainer->GetBaseObject(), eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[0]);
-        }
-        if (oldContainer) {
-            gfuncs::CombineEventHandles(handles, oldContainer->GetBaseObject(), eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[1]);
-        }
-        if (itemReference) {
-            gfuncs::CombineEventHandles(handles, itemReference->GetBaseObject(), eventDataPtrs[EventEnum_OnContainerChanged]->eventParamMaps[2]);
-        }
-        gfuncs::RemoveDuplicates(handles);
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnContainerChanged]->GetHandles(
+            { newContainer, oldContainer, itemReference, baseObj });
+
         if (handles.size() > 0) {
 
             auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)newContainer, (RE::TESObjectREFR*)oldContainer, (RE::TESObjectREFR*)itemReference, (RE::TESForm*)baseObj, (int)itemCount);
@@ -2184,15 +2102,10 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
         }
 
         if (akActor) {
-            std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
+            std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->GetHandles(
+                { akActor, akSource });
 
-            gfuncs::CombineEventHandles(handles, akActor, eventDataPtrs[eventIndex]->eventParamMaps[0]);
-            gfuncs::CombineEventHandles(handles, akSource, eventDataPtrs[eventIndex]->eventParamMaps[1]);
-            gfuncs::CombineEventHandles(handles, akActor->GetBaseObject(), eventDataPtrs[eventIndex]->eventParamMaps[0]);
-
-            gfuncs::RemoveDuplicates(handles);
             if (handles.size() > 0) {
-
                 auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESForm*)akSource, (int)slot);
                 gfuncs::SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
 
@@ -2206,15 +2119,9 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
             RE::TESForm* leftHandSource = akActor->GetEquippedObject(true);
             if (gfuncs::IsFormValid(leftHandSource)) {
                 if (leftHandSource != akSource) {
-                    std::vector<RE::VMHandle> handlesB = eventDataPtrs[eventIndex]->globalHandles;
+                    std::vector<RE::VMHandle> handlesB = eventDataPtrs[eventIndex]->GetHandles(
+                        { akActor, leftHandSource });
 
-                    gfuncs::CombineEventHandles(handlesB, akActor, eventDataPtrs[eventIndex]->eventParamMaps[0]);
-                    gfuncs::CombineEventHandles(handlesB, leftHandSource, eventDataPtrs[eventIndex]->eventParamMaps[1]);
-                    if (akActor) {
-                        gfuncs::CombineEventHandles(handlesB, akActor->GetBaseObject(), eventDataPtrs[eventIndex]->eventParamMaps[0]);
-                    }
-
-                    gfuncs::RemoveDuplicates(handlesB);
                     if (handlesB.size() > 0) {
                         auto* argsB = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESForm*)leftHandSource, (int)0);
                         gfuncs::SendEvents(handlesB, eventDataPtrs[eventIndex]->sEvent, argsB);
@@ -2295,17 +2202,11 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
                 return RE::BSEventNotifyControl::kContinue;
             }
         }
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnItemCrafted]->globalHandles;
+        
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnItemCrafted]->GetHandles(
+            { craftedItem, workbenchRef });
 
-        gfuncs::CombineEventHandles(handles, craftedItem, eventDataPtrs[EventEnum_OnItemCrafted]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, workbenchRef, eventDataPtrs[EventEnum_OnItemCrafted]->eventParamMaps[1]);
-        if (workbenchRef) {
-            gfuncs::CombineEventHandles(handles, workbenchRef->GetBaseObject(), eventDataPtrs[EventEnum_OnItemCrafted]->eventParamMaps[1]);
-        }
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
-
             if (benchType == 1) { //CreateObject
                 count = UIEvents::uiLastSelectedFormData.count;
             }
@@ -2356,15 +2257,10 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
                 return RE::BSEventNotifyControl::kContinue;
             }
         }
+        
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnItemsPickpocketed]->GetHandles(
+            { target, akForm });
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnItemsPickpocketed]->globalHandles;
-        gfuncs::CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnItemsPickpocketed]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, akForm, eventDataPtrs[EventEnum_OnItemsPickpocketed]->eventParamMaps[1]);
-        if (target) {
-            gfuncs::CombineEventHandles(handles, target->GetBaseObject(), eventDataPtrs[EventEnum_OnItemsPickpocketed]->eventParamMaps[0]);
-        }
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
 
             auto* args = RE::MakeFunctionArguments((RE::Actor*)target, (RE::TESForm*)akForm, (int)event->numItems);
@@ -2412,22 +2308,16 @@ struct LocationClearedEventSink : public RE::BSTEventSink<RE::LocationCleared::E
                 }
             }
         }
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnLocationCleared]->globalHandles;
-
-        if (gfuncs::IsFormValid(location)) {
-            gfuncs::CombineEventHandles(handles, location, eventDataPtrs[EventEnum_OnLocationCleared]->eventParamMaps[0]);
-        }
-        else {
+        if (!gfuncs::IsFormValid(location)) {
             location = nullptr;
         }
+        
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnLocationCleared]->GetHandles(
+            { location });
 
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
-
             auto* args = RE::MakeFunctionArguments((RE::BGSLocation*)location);
-
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnLocationCleared]->sEvent, args);
-
             logger::trace("location cleared event: location[{}]", gfuncs::GetFormName(location));
         }
         return RE::BSEventNotifyControl::kContinue;
@@ -2462,19 +2352,12 @@ struct EnterBleedoutEventSink : public RE::BSTEventSink<RE::TESEnterBleedoutEven
             }
         }
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEnterBleedout]->globalHandles;
-        gfuncs::CombineEventHandles(handles, akActor, eventDataPtrs[EventEnum_OnEnterBleedout]->eventParamMaps[0]);
-        if (akActor) {
-            gfuncs::CombineEventHandles(handles, akActor->GetBaseObject(), eventDataPtrs[EventEnum_OnEnterBleedout]->eventParamMaps[0]);
-        }
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEnterBleedout]->GetHandles(
+            { akActor });
 
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
-
             auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor);
-
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnEnterBleedout]->sEvent, args);
-
             logger::trace("Enter Bleedout Event: akActor[{}]", gfuncs::GetFormName(akActor));
         }
         return RE::BSEventNotifyControl::kContinue;
@@ -2528,20 +2411,12 @@ struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCo
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnSwitchRaceComplete]->globalHandles;
-        gfuncs::CombineEventHandles(handles, akActor, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->eventParamMaps[0]);
-        gfuncs::CombineEventHandles(handles, akOldRace, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->eventParamMaps[1]);
-        gfuncs::CombineEventHandles(handles, akNewRace, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->eventParamMaps[2]);
-        if (akActor) {
-            gfuncs::CombineEventHandles(handles, akActor->GetBaseObject(), eventDataPtrs[EventEnum_OnSwitchRaceComplete]->eventParamMaps[0]);
-        }
-        gfuncs::RemoveDuplicates(handles);
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnSwitchRaceComplete]->GetHandles(
+            { akActor, akOldRace, akNewRace });
+
         if (handles.size() > 0) {
-
             auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESRace*)akOldRace, (RE::TESRace*)akNewRace);
-
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->sEvent, args);
-
             logger::trace("SwitchRaceCompleteEvent: Actor[{}] akOldRace[{}] akNewRace[{}]",
                 gfuncs::GetFormName(akActor), gfuncs::GetFormName(akOldRace), gfuncs::GetFormName(akNewRace));
         }
@@ -2583,20 +2458,13 @@ struct FootstepEventSink : public RE::BSTEventSink<RE::BGSFootstepEvent> {
                 }
             }
         }
+        
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActorFootStep]->GetHandles(
+            { akActor });
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActorFootStep]->globalHandles;
-        gfuncs::CombineEventHandles(handles, akActor, eventDataPtrs[EventEnum_OnActorFootStep]->eventParamMaps[0]);
-        if (akActor) {
-            gfuncs::CombineEventHandles(handles, akActor->GetBaseObject(), eventDataPtrs[EventEnum_OnActorFootStep]->eventParamMaps[0]);
-        }
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
-
             auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor, (std::string)event->tag);
-
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnActorFootStep]->sEvent, args);
-
             logger::trace("FootstepEvent: Actor[{}] tag[{}]",
                 gfuncs::GetFormName(akActor), event->tag);
         }
@@ -2647,11 +2515,10 @@ struct QuestObjectiveEventSink : public RE::BSTEventSink<RE::ObjectiveState::Eve
         else {
             return RE::BSEventNotifyControl::kContinue;
         }
+        
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->GetHandles(
+            { akQuest });
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->globalHandles;
-        gfuncs::CombineEventHandles(handles, akQuest, eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->eventParamMaps[0]);
-
-        gfuncs::RemoveDuplicates(handles);
         if (handles.size() > 0) {
 
             auto* args = RE::MakeFunctionArguments((RE::TESQuest*)akQuest, (std::string)displayText, (int)oldState, (int)newState,
@@ -2762,18 +2629,10 @@ struct PositionPlayerEventSink : public RE::BSTEventSink<RE::PositionPlayerEvent
             else {
                 logger::warn("OnPositionPlayerStart: type[{}] loc not found", type);
             }
-            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPositionPlayerStart]->globalHandles;
-            gfuncs::CombineEventHandles(handles, fastTravelMarker, eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[0]);
-            gfuncs::CombineEventHandles(handles, moveToRef, eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[1]);
-            gfuncs::CombineEventHandles(handles, akWorldSpace, eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[2]);
-            gfuncs::CombineEventHandles(handles, interiorCell, eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[3]);
-            if (fastTravelMarker) {
-                gfuncs::CombineEventHandles(handles, fastTravelMarker->GetBaseObject(), eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[0]);
-            }
-            if (moveToRef) {
-                gfuncs::CombineEventHandles(handles, moveToRef->GetBaseObject(), eventDataPtrs[EventEnum_OnPositionPlayerStart]->eventParamMaps[1]);
-            }
-            gfuncs::RemoveDuplicates(handles);
+
+            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPositionPlayerStart]->GetHandles(
+                { fastTravelMarker, moveToRef, akWorldSpace, interiorCell });
+
             if (handles.size() > 0) {
 
                 auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)fastTravelMarker, (RE::TESObjectREFR*)moveToRef,
@@ -2783,20 +2642,10 @@ struct PositionPlayerEventSink : public RE::BSTEventSink<RE::PositionPlayerEvent
             }
         }
         else if (type == 4) { //post load
-            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPositionPlayerFinish]->globalHandles;
-            gfuncs::CombineEventHandles(handles, fastTravelMarker, eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[0]);
-            gfuncs::CombineEventHandles(handles, moveToRef, eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[1]);
-            gfuncs::CombineEventHandles(handles, akWorldSpace, eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[2]);
-            gfuncs::CombineEventHandles(handles, interiorCell, eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[3]);
-            if (fastTravelMarker) {
-                gfuncs::CombineEventHandles(handles, fastTravelMarker->GetBaseObject(), eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[0]);
-            }
-            if (moveToRef) {
-                gfuncs::CombineEventHandles(handles, moveToRef->GetBaseObject(), eventDataPtrs[EventEnum_OnPositionPlayerFinish]->eventParamMaps[1]);
-            }
-            gfuncs::RemoveDuplicates(handles);
-            if (handles.size() > 0) {
+            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPositionPlayerFinish]->GetHandles(
+                { fastTravelMarker, moveToRef, akWorldSpace, interiorCell });
 
+            if (handles.size() > 0) {
                 auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)fastTravelMarker, (RE::TESObjectREFR*)moveToRef,
                     (RE::TESWorldSpace*)akWorldSpace, (RE::TESObjectCELL*)interiorCell);
 
@@ -2853,14 +2702,9 @@ struct ActorCellEventSink : public RE::BSTEventSink<RE::BGSActorCellEvent> {
             previousCellId = newCell->GetFormID();
 
             if (newCell != akPreviousCell) {
-                logger::trace("PlayerChangedCellEvent: newCell({}) \n previousCell({})",
-                    gfuncs::GetFormDataString(newCell), gfuncs::GetFormDataString(akPreviousCell));
+                std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPlayerChangeCell]->GetHandles(
+                    { newCell, akPreviousCell });
 
-                std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPlayerChangeCell]->globalHandles;
-                gfuncs::CombineEventHandles(handles, newCell, eventDataPtrs[EventEnum_OnPlayerChangeCell]->eventParamMaps[0]);
-                gfuncs::CombineEventHandles(handles, akPreviousCell, eventDataPtrs[EventEnum_OnPlayerChangeCell]->eventParamMaps[1]);
-
-                gfuncs::RemoveDuplicates(handles);
                 if (handles.size() > 0) {
 
                     auto* args = RE::MakeFunctionArguments((RE::TESObjectCELL*)newCell, (RE::TESObjectCELL*)akPreviousCell);
@@ -2876,6 +2720,273 @@ struct ActorCellEventSink : public RE::BSTEventSink<RE::BGSActorCellEvent> {
 
 ActorCellEventSink* actorCellEventSink;
 
+struct MusicChangeEventSink {
+    bool AddEventSink() {
+        mutex.lock();
+        if (!sinkAdded) {
+            logger::debug("");
+            sinkAdded = true;
+            mutex.unlock();
+            ListenForMusicChangeStart();
+            return true;
+        }
+        else {
+            mutex.unlock();
+            return false;
+        }
+    }
+
+    bool RemoveEventSink() {
+        mutex.lock();
+        if (sinkAdded) {
+            sinkAdded = false; 
+            mutex.unlock();
+            return true;
+        }
+        else {
+            mutex.unlock();
+            return false;
+        }
+    }
+
+    bool IsSinkAdded() {
+        bool added;
+        mutex.lock();
+        added = sinkAdded;
+        mutex.unlock();
+        return added;
+    }
+
+    void SetCurrentMusic(RE::BGSMusicType* musicType) {
+        mutex.lock();
+        currentMusicType = musicType;
+        mutex.unlock();
+    }
+
+    RE::BGSMusicType* GetCurrentMusic() {
+        RE::BGSMusicType* musicType = nullptr;
+        mutex.lock();
+        musicType = currentMusicType;
+        mutex.unlock();
+        return musicType;
+    }
+
+private:
+    void ListenForMusicChangeStart() {
+        ListenForMusicChange();
+    }
+
+    void ListenForMusicChange() {
+        std::thread t([=]() {
+            auto* musicManager = RE::BSMusicManager::GetSingleton();
+            mutex.lock();
+
+            if (!musicManager) {
+                sinkAdded = false;
+                isPolling = false;
+                mutex.unlock();
+                logger::critical("musicManager* not found. OnMusicChangeGlobal event disabled.");
+            }
+            else if (isPolling){
+                logger::trace("already polling");
+                mutex.unlock();
+            }
+            else {
+                isPolling = true;
+                mutex.unlock();
+
+                logger::trace("musicManager* found. listening for music change");
+                RE::BGSMusicType* bsgMusicType = GetCurrentMusicType(nullptr);
+                //RE::BSIMusicType* bsiMusicType = musicManager->current;
+                RE::BSIMusicType* bsiMusicType = bsgMusicType;
+                SetCurrentMusic(bsgMusicType);
+
+                //using mutex lock with SetCurrentMusicBsi because it could be changed when loading a save.
+                while (bsiMusicType == musicManager->current) {
+                    //logger::info("while loop");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(eventPollingInterval));
+                    bsiMusicType = GetCurrentMusic();
+                }
+
+                if (sinkAdded) {
+                    HandleMusicChangeEvent(GetCurrentMusicType(nullptr), GetCurrentMusic());
+                    mutex.lock();
+                    isPolling = false;
+                    mutex.unlock();
+                    ListenForMusicChangeStart();
+                }
+                else {
+                    mutex.lock();
+                    isPolling = false;
+                    mutex.unlock();
+                }
+            }
+        });
+        t.detach();
+    }
+
+    void HandleMusicChangeEvent(RE::BGSMusicType* newMusicType, RE::BGSMusicType* oldMusicType) {
+        if (newMusicType == oldMusicType) {
+            logger::debug("newMusicType == oldMusicType, likely because of loading a save. Aborting sending event.");
+            return;
+        }
+
+        logger::trace("oldMusicType[{}] newMusicType[{}]", 
+            gfuncs::GetFormDataString(oldMusicType), gfuncs::GetFormDataString(newMusicType));
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnMusicTypeChange]->GetHandles(
+            { newMusicType, oldMusicType });
+
+        if (handles.size() > 0) {
+            auto* args = RE::MakeFunctionArguments((RE::BGSMusicType*)newMusicType, (RE::BGSMusicType*)oldMusicType);
+            gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnMusicTypeChange]->sEvent, args);
+        }
+    }
+
+    std::mutex mutex;
+    bool sinkAdded = false;
+    bool isPolling = false;
+    RE::BGSMusicType* currentMusicType = nullptr;
+};
+
+MusicChangeEventSink* musicChangeEventSink;
+
+struct WeatherChangeEventSink {
+    bool AddEventSink() {
+        mutex.lock();
+        if (!sinkAdded) {
+            logger::debug("");
+            sinkAdded = true;
+            mutex.unlock();
+            ListenForWeatherChangeStart();
+            return true;
+        }
+        else {
+            mutex.unlock();
+            return false;
+        }
+    }
+
+    bool RemoveEventSink() {
+        mutex.lock();
+        if (sinkAdded) {
+            sinkAdded = false;
+            mutex.unlock();
+            return true;
+        }
+        else {
+            mutex.unlock();
+            return false;
+        }
+    }
+
+    bool IsSinkAdded() {
+        bool added;
+        mutex.lock();
+        added = sinkAdded;
+        mutex.unlock();
+        return added;
+    }
+
+    void SetCurrentWeather(RE::TESWeather* weather) {
+        mutex.lock();
+        currentWeather = weather;
+        mutex.unlock();
+    }
+
+    RE::TESWeather* GetCurrentWeather() {
+        RE::TESWeather* weather = nullptr; 
+        mutex.lock();
+        weather = currentWeather;
+        mutex.unlock();
+        return weather;
+    }
+
+private:
+    void ListenForWeatherChangeStart() {
+        ListenForWeatherChange();
+    }
+
+    void ListenForWeatherChange() {
+        std::thread t([=]() {
+            auto* sky = RE::Sky::GetSingleton();
+            mutex.lock();
+
+            if (!sky) {
+                sinkAdded = false;
+                isPolling = false;
+                mutex.unlock();
+                logger::critical("sky* not found. OnWeatherChangeGlobal event disabled.");
+            }
+            else if (isPolling) {
+                logger::trace("already polling");
+                mutex.unlock();
+            }
+            else {
+                isPolling = true;
+                mutex.unlock();
+
+                logger::trace("sky* found. listening for weather change");
+                
+                SetCurrentWeather(sky->currentWeather);
+
+                //using mutex lock to GetCurrentWeather. Loading a save may change the current weather.
+                while (GetCurrentWeather() == sky->currentWeather) {
+                    //logger::info("while loop");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(eventPollingInterval));
+                }
+
+                if (sinkAdded) {
+                    HandleWeatherChangeEvent(sky->currentWeather, GetCurrentWeather());
+                    mutex.lock();
+                    isPolling = false;
+                    mutex.unlock();
+                    ListenForWeatherChangeStart();
+                }
+                else {
+                    mutex.lock();
+                    isPolling = false;
+                    mutex.unlock();
+                }
+            }
+            });
+        t.detach();
+    }
+
+    void HandleWeatherChangeEvent(RE::TESWeather* newWeather, RE::TESWeather* oldWeather) {
+        if (!gfuncs::IsFormValid(newWeather)) {
+            logger::warn("newWeather doesn't exist");
+            return;
+        }
+
+        if (newWeather == oldWeather) {
+            logger::debug("newWeather == oldWeather, likely because of loading a save. Aborting sending event.");
+            return;
+        }
+
+        logger::trace("oldWeather[{}] newWeather[{}]",
+            gfuncs::GetFormDataString(oldWeather), gfuncs::GetFormDataString(newWeather));
+
+        if (!gfuncs::IsFormValid(oldWeather)) {
+            oldWeather = nullptr;
+        }
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWeatherChange]->GetHandles(
+            { newWeather, oldWeather });
+
+        if (handles.size() > 0) {
+            auto* args = RE::MakeFunctionArguments((RE::TESWeather*)newWeather, (RE::TESWeather*)oldWeather);
+            gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnWeatherChange]->sEvent, args);
+        }
+    }
+
+    std::mutex mutex;
+    bool sinkAdded = false;
+    bool isPolling = false;
+    RE::TESWeather* currentWeather = nullptr;
+};
+
+WeatherChangeEventSink* weatherChangeEventSink;
 
 namespace ActiveEffectEvents {
     std::unordered_map<RE::ActiveEffect*, std::pair<std::chrono::system_clock::time_point, float>> activeEffectStartTimeMap;
@@ -2942,18 +3053,8 @@ namespace ActiveEffectEvents {
                                         source = nullptr;
                                     }
 
-                                    std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEffectStart]->globalHandles;
-                                    gfuncs::CombineEventHandles(handles, caster, eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[0]);
-                                    gfuncs::CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[1]);
-                                    gfuncs::CombineEventHandles(handles, baseEffect, eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[2]);
-                                    gfuncs::CombineEventHandles(handles, source, eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[3]);
-                                    if (caster) {
-                                        gfuncs::CombineEventHandles(handles, caster->GetBaseObject(), eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[0]);
-                                    }
-                                    if (target) {
-                                        gfuncs::CombineEventHandles(handles, target->GetBaseObject(), eventDataPtrs[EventEnum_OnEffectStart]->eventParamMaps[1]);
-                                    }
-                                    gfuncs::RemoveDuplicates(handles);
+                                    std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEffectStart]->GetHandles(
+                                        { caster, target, baseEffect, source });
 
                                     if (handles.size() > 0) {
                                         int castingSource = static_cast<int>(activeEffect->castingSource);
@@ -3149,18 +3250,8 @@ namespace ActiveEffectEvents {
                                     //this only applies to abilities, and is the elapsedSeconds since the ability spell was added, not since it was last started.
                                     //float elapsedSeconds = activeEffect->elapsedSeconds; 
 
-                                    std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEffectFinish]->globalHandles;
-                                    gfuncs::CombineEventHandles(handles, caster, eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[0]);
-                                    gfuncs::CombineEventHandles(handles, target, eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[1]);
-                                    gfuncs::CombineEventHandles(handles, baseEffect, eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[2]);
-                                    gfuncs::CombineEventHandles(handles, source, eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[3]);
-                                    if (caster) {
-                                        gfuncs::CombineEventHandles(handles, caster->GetBaseObject(), eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[0]);
-                                    }
-                                    if (target) {
-                                        gfuncs::CombineEventHandles(handles, target->GetBaseObject(), eventDataPtrs[EventEnum_OnEffectFinish]->eventParamMaps[1]);
-                                    }
-                                    gfuncs::RemoveDuplicates(handles);
+                                    std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnEffectFinish]->GetHandles(
+                                        { caster, target, baseEffect, source });
 
                                     if (handles.size() > 0) {
                                         float elapsedSeconds = 0.0;
@@ -3687,7 +3778,7 @@ void AddSink(int index) {
     if (eventData) {
         eventName = std::string(eventData->sEvent);
     }
-    logger::debug("Adding sink Index[{}] Event[{}].", index, eventName);
+    logger::trace("Adding sink Index[{}] Event[{}].", index, eventName);
 
     switch (index) {
     case EventEnum_OnCombatStateChanged:
@@ -4091,6 +4182,22 @@ void AddSink(int index) {
             logger::debug("EventEnum_OnEffectFinish sink added");
         }
         break;
+
+    case EventEnum_OnMusicTypeChange:
+        if (!eventDataPtrs[EventEnum_OnMusicTypeChange]->isEmpty()) {
+            if (musicChangeEventSink->AddEventSink()) {
+                logger::debug("EventEnum_OnMusicTypeChange sink added");
+            }
+        }
+        break;
+
+    case EventEnum_OnWeatherChange:
+        if (!eventDataPtrs[EventEnum_OnWeatherChange]->isEmpty()) {
+            if (weatherChangeEventSink->AddEventSink()) {
+                logger::debug("EventEnum_OnWeatherChange sink added");
+            }
+        }
+        break;
     }
 }
 
@@ -4101,7 +4208,7 @@ void RemoveSink(int index) {
     if (eventData) {
         eventName = std::string(eventData->sEvent);
     }
-    logger::debug("Removing sink Index[{}] Event[{}].", index, eventName);
+    logger::trace("Removing sink Index[{}] Event[{}].", index, eventName);
 
     switch (index) {
     case EventEnum_OnCombatStateChanged:
@@ -4494,6 +4601,22 @@ void RemoveSink(int index) {
         if (ActiveEffectEvents::effectFinishRegistered && eventDataPtrs[EventEnum_OnEffectFinish]->isEmpty()) {
             ActiveEffectEvents::effectFinishRegistered = false;
             logger::debug("EventEnum_OnEffectFinish sink removed");
+        }
+        break;
+
+    case EventEnum_OnMusicTypeChange:
+        if (eventDataPtrs[EventEnum_OnMusicTypeChange]->isEmpty()) {
+            if (musicChangeEventSink->RemoveEventSink()) {
+                logger::debug("EventEnum_OnMusicTypeChange sink removed");
+            }
+        }
+        break;
+
+    case EventEnum_OnWeatherChange:
+        if (eventDataPtrs[EventEnum_OnWeatherChange]->isEmpty()) {
+            if (weatherChangeEventSink->RemoveEventSink()) {
+                logger::debug("EventEnum_OnWeatherChange sink removed");
+            }
         }
         break;
     }
@@ -5061,8 +5184,10 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_OnPlayerChangeCell] = new EventData("OnPlayerChangeCellGlobal", EventEnum_OnPlayerChangeCell, 2, 'PCC0');
         eventDataPtrs[EventEnum_OnEffectStart] = new EventData("OnEffectStartGlobal", EventEnum_OnEffectStart, 4, 'OEs0');
         eventDataPtrs[EventEnum_OnEffectFinish] = new EventData("OnEffectFinishGlobal", EventEnum_OnEffectFinish, 4, 'OEs1');
+        eventDataPtrs[EventEnum_OnMusicTypeChange] = new EventData("OnMusicTypeChangeGlobal", EventEnum_OnMusicTypeChange, 2, 'MTc0');
+        eventDataPtrs[EventEnum_OnWeatherChange] = new EventData("OnWeatherChangeGlobal", EventEnum_OnWeatherChange, 2, 'OWC0');
     }
-
+    
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
     if (!furnitureEventSink) { furnitureEventSink = new FurnitureEventSink(); }
     if (!activateEventSink) { activateEventSink = new ActivateEventSink(); }
@@ -5090,6 +5215,11 @@ void CreateEventSinks() {
     if (!inputEventSink) { inputEventSink = new InputEventSink(); }
     if (!positionPlayerEventSink) { positionPlayerEventSink = new PositionPlayerEventSink(); }
     if (!actorCellEventSink) { actorCellEventSink = new ActorCellEventSink(); }
+    if (!musicChangeEventSink) { musicChangeEventSink = new MusicChangeEventSink(); }
+    if (!weatherChangeEventSink) { weatherChangeEventSink = new WeatherChangeEventSink(); }
+
+    //logger::info("adding musicChangeEventSink");
+    //musicChangeEventSink->AddEventSink();
 
     auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
 
@@ -5351,7 +5481,6 @@ int GetActiveMagicEffectConditionStatus(RE::ActiveEffect* akEffect) {
     }
 }
 
-
 void MessageListener(SKSE::MessagingInterface::Message* message) {
     switch (message->type) {
         // Descriptions are taken from the original skse64 library
@@ -5361,12 +5490,15 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             //    logger::info("kPostLoad: sent to registered plugins once all plugins have been loaded");
             //    break;
 
-        //case SKSE::MessagingInterface::kPostPostLoad:
-            //    logger::info(
-            //        "kPostPostLoad: sent right after kPostLoad to facilitate the correct dispatching/registering of "
-            //        "messages/listeners");
-            //    break;
+        //case SKSE::MessagingInterface::kPostPostLoad: {
+        //    logger::info(
+        //        "kPostPostLoad: sent right after kPostLoad to facilitate the correct dispatching/registering of "
+        //        "messages/listeners");
 
+        //    
+        //    break; //
+        //}
+        // 
         //case SKSE::MessagingInterface::kPreLoadGame:
             //    // message->dataLen: length of file path, data: char* file path of .ess savegame file
             //    logger::info("kPreLoadGame: sent immediately before savegame is read");
@@ -5387,19 +5519,21 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 
             break;
         }
-            //case SKSE::MessagingInterface::kSaveGame:
-                //    logger::info("kSaveGame");
-                //    break;
 
-            //case SKSE::MessagingInterface::kDeleteGame:
-                //    // message->dataLen: length of file path, data: char* file path of .ess savegame file
-                //    logger::info("kDeleteGame: sent right before deleting the .skse cosave and the .ess save");
-                //    break;
+        //case SKSE::MessagingInterface::kSaveGame:
+            //    logger::info("kSaveGame");
+            //    break;
 
-        //case SKSE::MessagingInterface::kInputLoaded:
-            //logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
+        //case SKSE::MessagingInterface::kDeleteGame:
+            //    // message->dataLen: length of file path, data: char* file path of .ess savegame file
+            //    logger::info("kDeleteGame: sent right before deleting the .skse cosave and the .ess save");
+            //    break;
 
-            //break;
+        //case SKSE::MessagingInterface::kInputLoaded: {
+        //    logger::info("kInputLoaded: sent right after game input is loaded, right before the main menu initializes");
+        //    //
+        //    break;
+        //}
 
         case SKSE::MessagingInterface::kNewGame: {
             //logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
@@ -5430,7 +5564,8 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             papyrusInterface->Register(magic::BindPapyrusFunctions);
             papyrusInterface->Register(papyrusUtilEx::BindPapyrusFunctions);
             papyrusInterface->Register(conditions::BindPapyrusFunctions);
-
+            papyrusInterface->Register(rangeEvents::BindPapyrusFunctions);
+            
             SetSettingsFromIniFile();
             CreateEventSinks();
             SaveSkillBooks();
@@ -5441,24 +5576,51 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
     }
 }
 
-void LoadCallback(SKSE::SerializationInterface* a_intfc) {
+void LoadCallback(SKSE::SerializationInterface* ssi) {
+    //gfuncs::lastTimeGameWasLoaded = std::chrono::system_clock::now();
+
     logger::trace("LoadCallback started");
 
     int max = EventEnum_Last + 1;
     std::uint32_t type, version, length;
 
-    if (a_intfc) {
-        if (!bIsLoadingSerialization && !bIsSavingSerialization) {
-            bIsLoadingSerialization = true;
-            while (a_intfc->GetNextRecordInfo(type, version, length)) {
-                if (timers::IsTimerType(type)) {
-                    timers::LoadTimers(type, a_intfc);
+    if (ssi) {
+        if (serialize::SetSerializing(true)) {
+            while (ssi->GetNextRecordInfo(type, version, length)) {
+                logger::trace("type[{}]", gfuncs::uint32_to_string(type));
+
+                if (type == eventDataPtrs[EventEnum_OnWeatherChange]->record) {
+                    if (weatherChangeEventSink) {
+                        if (weatherChangeEventSink->IsSinkAdded()) {
+                            RE::TESWeather* currentWeather = serialize::LoadForm<RE::TESWeather>(ssi);
+                            weatherChangeEventSink->SetCurrentWeather(currentWeather);
+                            logger::trace("weatherChangeEventSink currentWeather set to[{}]", gfuncs::GetFormNameAndId(currentWeather));
+                        }
+                    }
+                    else {
+                        logger::warn("weatherChangeEventSink is nullptr");
+                    }
+                } 
+                else if (type == eventDataPtrs[EventEnum_OnMusicTypeChange]->record) {
+                    if (musicChangeEventSink) {
+                        if (musicChangeEventSink->IsSinkAdded()) {
+                            RE::BGSMusicType* currentmusic = serialize::LoadForm<RE::BGSMusicType>(ssi);
+                            musicChangeEventSink->SetCurrentMusic(currentmusic);
+                            logger::trace("musicChangeEventSink currentmusic set to[{}]", gfuncs::GetFormNameAndId(currentmusic));
+                        }
+                    }
+                    else {
+                        logger::warn("weatherChangeEventSink is nullptr");
+                    }
+                }
+                else if (timers::IsTimerType(type)) {
+                    timers::LoadTimers(type, ssi);
                 }
                 else {
                     //this is causing ctd on Skyrim AE when fast traveling too many times too quickly.
                     /*for (int i = EventEnum_First; i < max; i++) {
                         if (type == eventDataPtrs[i]->record) {
-                            eventDataPtrs[i]->Load(a_intfc);
+                            eventDataPtrs[i]->Load(ssi);
                             break;
                         }
                     }*/
@@ -5471,9 +5633,9 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             }
 
             //EventEnum_OnLoadGame doesn't have an event sink, hence EventEnum_First + 1
-            for (int i = EventEnum_First + 1; i < max; i++) {
+            /*for (int i = EventEnum_First + 1; i < max; i++) {
                 AddSink(i);
-            }
+            }*/
 
             //now sending to all scripts with the OnLoadGameGlobal Event
             //gfuncs::RemoveDuplicates(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles);
@@ -5486,47 +5648,62 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
                 delete args;
             }
 
-            bIsLoadingSerialization = false;
-            logger::trace("LoadCallback complete");
-
-            //gfuncs::DelayedFunction(&DbSkseCppCallbackLoad, 1200);
-            DbSkseCppCallbackLoad();
             RegisterActorsForBowDrawAnimEvents();
             SaveActorRaces();
+            serialize::SetSerializing(false);
+            logger::trace("LoadCallback complete");
         }
         else {
-            logger::debug("already loading or saving. loading = {} saving = {}, aborting load.", bIsLoadingSerialization, bIsSavingSerialization);
+            logger::debug("already loading or saving");
         }
-
     }
     else {
-        logger::error("a_intfc doesn't exist, aborting load.");
+        logger::error("ssi doesn't exist, aborting load.");
     }
 }
 
-void SaveCallback(SKSE::SerializationInterface* a_intfc) {
+void SaveCallback(SKSE::SerializationInterface* ssi) {
     logger::trace("SaveCallback started");
 
-    if (a_intfc) {
-        if (!bIsLoadingSerialization && !bIsSavingSerialization) {
-            bIsSavingSerialization = true;
+    if (ssi) {
+        if (serialize::SetSerializing(true)) {
             //this is causing ctd on Skyrim AE when fast traveling too many times too quickly.
             /*int max = EventEnum_Last + 1;
             for (int i = EventEnum_First; i < max; i++) {
-                eventDataPtrs[i]->Save(a_intfc);
+                eventDataPtrs[i]->Save(ssi);
             }*/
 
-            timers::SaveTimers(a_intfc);
+            timers::SaveTimers(ssi);
 
-            bIsSavingSerialization = false;
+            if (weatherChangeEventSink) {
+                if (weatherChangeEventSink->IsSinkAdded()) {
+                    auto* currentWeather = weatherChangeEventSink->GetCurrentWeather();
+                    serialize::SaveForm(currentWeather, eventDataPtrs[EventEnum_OnWeatherChange]->record, ssi);
+                }
+            }
+            else {
+                logger::warn("weatherChangeEventSink is nullptr");
+            }
+
+            if (musicChangeEventSink) {
+                if (musicChangeEventSink->IsSinkAdded()) {
+                    auto* currentmusic = musicChangeEventSink->GetCurrentMusic();
+                    serialize::SaveForm(currentmusic, eventDataPtrs[EventEnum_OnMusicTypeChange]->record, ssi);
+                }
+            }
+            else {
+                logger::warn("musicChangeEventSink is nullptr");
+            }
+
+            serialize::SetSerializing(false);
             logger::trace("SaveCallback complete");
         }
         else {
-            logger::debug("already loading or saving. loading = {} saving = {}, aborting load.", bIsLoadingSerialization, bIsSavingSerialization);
+            logger::debug("already loading or saving");
         }
     }
     else {
-        logger::error("a_intfc doesn't exist, aborting load.");
+        logger::error("ssi doesn't exist, aborting save.");
     }
 }
 

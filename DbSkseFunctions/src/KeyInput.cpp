@@ -14,6 +14,18 @@ namespace input {
         }
     }
 
+    void TapKeyPapyrus(int keyCode) {
+        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (vm) {
+            std::string testDebug = " messageBox from c++";
+            auto* args = RE::MakeFunctionArguments((int)keyCode);
+            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> result;
+            result.reset();
+            //callBack.get()->SetObject()
+            vm->DispatchStaticCall("Input", "TapKey", args, result);
+        }
+    }
+
     void TapKey(int keyCode) {
         auto bsInputEventQueue = RE::BSInputEventQueue::GetSingleton();
         if (bsInputEventQueue) {
@@ -27,6 +39,7 @@ namespace input {
     }
 
     void TapKey(std::string keyString) {
+        auto bsInputEventQueue = RE::BSInputEventQueue::GetSingleton();
         if (bsInputEventQueue) {
             auto bsInputEventQueue = RE::BSInputEventQueue::GetSingleton();
             static auto kEvent = RE::ButtonEvent::Create(RE::INPUT_DEVICE::kKeyboard, keyString, -1, 1, 0.0f);
@@ -70,7 +83,7 @@ namespace input {
                 bsInputEventQueue->PushOntoInputQueue(kEvent2);
             }
             else { 
-                logger::error("bsInputEventQueue not found key[{}] not tapped", keyCode);
+                logger::error("bsInputEventQueue not found key[{}] not tapped", keyString);
             }
             }).detach();
     }

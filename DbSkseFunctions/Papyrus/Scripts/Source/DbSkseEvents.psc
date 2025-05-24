@@ -339,6 +339,15 @@ EndEvent
 Event OnPlayerChangeCellGlobal(Cell akNewCell, Cell akPreviousCell)
 EndEvent
 
+;Uses polling to detect change. Polling interval determined by the fEventPollingInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
+Event OnMusicTypeChangeGlobal(MusicType newMusicType, MusicType oldMusicType)
+EndEvent
+
+;Be aware that weather changes when going in and out of the map menu.
+;Uses polling to detect change. Polling interval determined by the fEventPollingInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
+Event OnWeatherChangeGlobal(weather newWeather, weather oldWeather)
+EndEvent
+
 ;UI Item Menu Events ========================================================================================================================
 
 ;register the eventReceiver to receive the OnUiItemMenuEvent from UI item menus.
@@ -468,3 +477,111 @@ EndEvent
 ;selectedEntry.type
 ;selectedEntry.description
 ;selectedEntry.stats
+
+
+;/ Range Events =============================================================================================================================================
+Events for when an objectReference moves in range or out of range of another objectReference.
+
+IsRegistered, Register and Unregister functions are unique to the akTarget, akCenterRef and distance. 
+So if you do this: 
+DbSkseEvents.RegisterFormForRangeEvents(self, RefA, RefB, 500.0)
+DbSkseEvents.RegisterFormForRangeEvents(self, RefA, RefB, 1000.0)
+Your script will receive events for when RefA moves in or out of range of 500.0 units AND 1000.0 units from refB, so keep track of the distances you are registering. 
+Can use eg UnregisterFormForRangeEvents_All(self) to unregister your script for all range events.
+
+Registers aren't saved to the save file, so use the OnLoadGameGlobal to re-register if necessary.
+
+===================================================================================================================================================================================================================================================================================
+-----------------------------------------------------!!! IMPORTANT !!!----------------------------------------------------------------------------------------------------------------------------------------------------
+===================================================================================================================================================================================================================================================================================
+The akTarget and akCenterRef MUST be persistent refs.
+If they aren't persistent, it will cause ctds if they are unloaded by the game, 
+usually when their parent cell is unloaded when the player moves to a different space.
+You can make any objectReference persistent by simply saving it to a property in the global scope (outside of any events or functions)
+
+Example script:
+===================================================================================================================================================================================================================================================================================
+Scriptname MyQuestScript extends Quest
+
+ObjectReference consoleRef 
+
+function someFunction() 
+	if DbSkseEvents.IsFormRegisteredForRangeEvents(self, game.GetPlayer(), consoleRef, 1000.0)
+		;current saved consoleRef is already registered. 
+		;Unregister first as changing the property value will potentially make it non persistent.
+		DbSkseEvents.UnRegisterFormForRangeEvents(self, game.GetPlayer(), consoleRef, 1000.0)
+	endif
+
+	consoleRef = consoleUtil.GetSelectedReference() 
+	;this is fine to do as the consoleRef is now persistent, there is no danger of it ctds;
+	DbSkseEvents.RegisterFormForRangeEvents(self, game.GetPlayer(), consoleRef, 1000.0) 
+
+	ObjectReference ref = consoleUtil.GetSelectedReference()
+	;this is NOT fine as the ref is defined in a function, which means it's not necessarily persistent and will likely cause ctds.
+	DbSkseEvents.RegisterFormForRangeEvents(self, game.GetPlayer(), ref, 1000.0) 
+EndFunction
+
+;Event triggered when the player gets closer than 1000.0 units to the consoleRef.
+Event OnEnterRange(ObjectReference akTarget, ObjectReference akCenterRef, float distance)
+	float currentDistance = akTarget.GetDistance(akCenterRef)
+	Utility.wait(Utility.randomFloat(0.1, 1.1))
+	debug.MessageBox(\
+	"OnEnterRange" + "\n" +\
+	"Target = " + akTarget.GetDisplayName() + "\n" + \
+	"akCenterRef = " + akCenterRef.GetDisplayName() + "\n" + \
+	"registered distance = " + distance + "\n" + \
+	"current distance = " + currentDistance + "\n" \
+	)
+Endevent 
+
+;Event triggered when the player gets farther away than 1000.0 units from the consoleRef.
+Event OnLeaveRange(ObjectReference akTarget, ObjectReference akCenterRef, float distance)
+	float currentDistance = akTarget.GetDistance(akCenterRef)
+	Utility.wait(Utility.randomFloat(0.1, 1.1))
+	debug.MessageBox(\
+	"OnLeaveRange" + "\n" +\
+	"Target = " + akTarget.GetDisplayName() + "\n" + \
+	"akCenterRef = " + akCenterRef.GetDisplayName() + "\n" + \
+	"registered distance = " + distance + "\n" + \
+	"current distance = " + currentDistance + "\n" \
+	)
+Endevent
+===================================================================================================================================================================================================================================================================================
+ /;
+
+;form ===================================================================================================================================================================================================================================================================================
+int function GetNumRangeEventsRegisteredOnForm(Form eventReceiver) Global Native 
+bool function IsFormRegisteredForRangeEvents(Form eventReceiver, ObjectReference akTarget, ObjectReference akCenterRef, float distance) Global Native 
+bool function RegisterFormForRangeEvents(Form eventReceiver, ObjectReference akTarget, ObjectReference akCenterRef, float distance) Global Native 
+bool function UnregisterFormForRangeEvents(Form eventReceiver, ObjectReference akTarget, ObjectReference akCenterRef, float distance) Global Native 
+int function UnregisterFormForRangeEvents_All(Form eventReceiver) Global Native 
+
+;Alias ===================================================================================================================================================================================================================================================================================
+int function GetNumRangeEventsRegisteredOnAlias(Alias eventReceiver) Global Native 
+bool function IsAliasRegisteredForRangeEvents(Alias eventReceiver, ObjectReference akTarget, ObjectReference akCenterRef, float distance) Global Native 
+bool function RegisterAliasForRangeEvents(Alias eventReceiver, ObjectReference akTarget, ObjectReference akCenterRef, float distance) Global Native 
+bool function UnregisterAliasForRangeEvents(Alias eventReceiver, ObjectReference akTarget, ObjectReference akCenterRef, float distance) Global Native 
+int function UnregisterAliasForRangeEvents_All(Alias eventReceiver) Global Native 
+
+;ActiveMagicEffect ===================================================================================================================================================================================================================================================================================
+int function GetNumRangeEventsRegisteredOnActiveMagicEffect(ActiveMagicEffect eventReceiver) Global Native 
+bool function IsActiveMagicEffectRegisteredForRangeEvents(ActiveMagicEffect eventReceiver, ObjectReference akTarget, ObjectReference akCenterRef, float distance) Global Native 
+bool function RegisterActiveMagicEffectForRangeEvents(ActiveMagicEffect eventReceiver, ObjectReference akTarget, ObjectReference akCenterRef, float distance) Global Native 
+bool function UnregisterActiveMagicEffectForRangeEvents(ActiveMagicEffect eventReceiver, ObjectReference akTarget, ObjectReference akCenterRef, float distance) Global Native 
+int function UnregisterActiveMagicEffectForRangeEvents_All(ActiveMagicEffect eventReceiver) Global Native 
+
+;Triggered when the akTarget enters the previously registered distance range of akCenterRef.
+;Distance is the distance that was registered, not the current distance from akTarget to akCenterRef. 
+;Use akTarget.GetDistance(akCenterRef) for current distance.
+;This is because this event uses polling and not triggered immediately when the target enters the range.
+;Polling interval determined by the fEventPollingInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
+Event OnEnterRange(ObjectReference akTarget, ObjectReference akCenterRef, float distance)
+Endevent 
+
+;Triggered when the akTarget leaves previously registered distance range of akCenterRef.
+;Distance is the distance that was registered, not the current distance from akTarget to akCenterRef. 
+;Use akTarget.GetDistance(akCenterRef) for current distance.
+;This is because this event uses polling and not triggered immediatly when the target enters the range.
+;Polling interval determined by the fEventPollingInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
+Event OnLeaveRange(ObjectReference akTarget, ObjectReference akCenterRef, float distance)
+Endevent

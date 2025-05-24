@@ -9,6 +9,8 @@
 #include "editorID.hpp"
 
 namespace gfuncs {
+    std::chrono::system_clock::time_point lastTimeGameWasLoaded;
+
     const std::string hexDigits = "0123456789abcdef";
     const std::string reverseHexDigits = "fedcba9876543210";
 
@@ -201,6 +203,18 @@ namespace gfuncs {
         return true;
     }
 
+    //forms and formParamNames should be the same size
+    bool AllFormsValid(std::vector<RE::TESForm*> forms, std::vector<std::string> formParamNames, std::string callingFunctionName, bool checkDeleted) {
+        for (size_t i; i < forms.size(); i++) {
+            auto* form = forms[i];
+            if (!IsFormValid(form)) {
+                logger::warn("[{}] [{}] doesn't exist", callingFunctionName, formParamNames[i]);
+                return false;
+            }
+        }
+        return true;
+    }
+
     std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString) {
         if (!IsFormValid(akForm)) {
             return nullFormString;
@@ -210,6 +224,19 @@ namespace gfuncs {
             if (editorId == "") {
                 editorId = clib_util::editorID::get_editorID(akForm);
             }
+            if (editorId == "") {
+                RE::TESObjectREFR* ref = akForm->As<RE::TESObjectREFR>();
+                if (IsFormValid(ref)) {
+                    RE::TESForm* baseForm = ref->GetBaseObject(); 
+                    if (IsFormValid(baseForm)) {
+                        editorId = baseForm->GetFormEditorID();
+                        if (editorId == "") {
+                            editorId = clib_util::editorID::get_editorID(baseForm);
+                        }
+                    }
+                }
+            }
+
             return editorId;
         }
     }
@@ -251,6 +278,17 @@ namespace gfuncs {
             }
         }
         return name;
+    }
+
+    std::string GetFormNameAndId(RE::TESForm* akForm, std::string nullString, std::string noNameString) {
+        if (!IsFormValid(akForm)) {
+            return nullString;
+        }
+
+        std::string name = std::string(GetFormName(akForm, nullString, noNameString, false));
+        std::string id = std::format("{:x}", akForm->GetFormID());
+        std::string s = "(name[" + name + "] id[" + id + "])";
+        return s;
     }
 
     std::string GetFormDataString(RE::TESForm* akForm, std::string nullString, std::string noNameString) {

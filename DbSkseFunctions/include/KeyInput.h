@@ -3,6 +3,8 @@
 namespace input {
 RE::INPUT_DEVICE GetInputDeviceForKeyCode(int keyCode);
 
+void TapKeyPapyrus(int keyCode);
+
 void TapKey(int keyCode);
 
 void TapKey(std::string keyString);

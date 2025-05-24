@@ -9,7 +9,7 @@ project(DbSkseFunctions VERSION 0.0.1 LANGUAGES CXX)
 #
 # Please see the "Project setup" section of README.md
 #
- 
+
 # If you're not using a mod manager, you probably want the SKSE plugin to go
 # inside of your Skyrim "Data" folder. 
 #
@@ -66,6 +66,7 @@ PUBLIC src/FileSystem.cpp
 PUBLIC src/FormVectorGetters.cpp
 PUBLIC src/Furniture.cpp
 PUBLIC src/GeneralFunctions.cpp
+PUBLIC src/KeyInput.cpp
 PUBLIC src/Keyword.cpp
 PUBLIC src/Magic.cpp
 PUBLIC src/MapMarker.cpp
@@ -73,6 +74,7 @@ PUBLIC src/mINIHelper.cpp
 PUBLIC src/ObjectReference.cpp
 PUBLIC src/PapyrusUtilEx.cpp
 PUBLIC src/ProjectileFunctions.cpp
+PUBLIC src/RangeEvents.cpp
 PUBLIC src/BipedSlots.cpp
 PUBLIC src/Serialization.cpp
 PUBLIC src/Sound.cpp

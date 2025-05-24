@@ -1,6 +1,8 @@
 #pragma once
 
 namespace gfuncs {
+    extern std::chrono::system_clock::time_point lastTimeGameWasLoaded;
+
     void LogAndMessage(std::string message, int logLevel = 0, int debugLevel = 0);
 
     void ConvertToLowerCase(std::string& s);
@@ -28,11 +30,15 @@ namespace gfuncs {
 
     bool IsFormValid(RE::TESForm* form, bool checkDeleted = false);
 
+    bool AllFormsValid(std::vector<RE::TESForm*> forms, std::vector<std::string> formParamNames, std::string callingFunctionName, bool checkDeleted = false);
+
     std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString);
 
     void SetFormName(RE::TESForm* baseForm, RE::BSFixedString nuName);
 
     RE::BSFixedString GetFormName(RE::TESForm* akForm, RE::BSFixedString nullString = "null", RE::BSFixedString noNameString = "", bool returnIdIfNull = true);
+    
+    std::string GetFormNameAndId(RE::TESForm* akForm, std::string nullString = "null", std::string noNameString = "");
 
     std::string GetFormDataString(RE::TESForm* akForm, std::string nullString = "null", std::string noNameString = "No Name");
 
@@ -151,6 +157,8 @@ namespace gfuncs {
     void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& formHandles);
 
     void SendEvents(std::vector<RE::VMHandle> handles, RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args);
+    
+    void SendEvents(std::vector<RE::VMHandle> handles, const RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args);
     
     RE::TESForm* FindNullForm();
 
