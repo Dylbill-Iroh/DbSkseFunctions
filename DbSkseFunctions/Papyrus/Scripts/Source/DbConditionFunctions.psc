@@ -75,7 +75,7 @@ Event OnInit()
 	bool FRC = IsFactionRankEqualTo(PlayerRef, TM_Faction, 1) ;true
 	bool FRD = IsFactionRankEqualTo(PlayerRef, TM_Faction, 2) ;false
 	Debug.MessageBox("Faction rank bools = " + FRA + " " + FRB + " " + FRC + " " + FRD)
-EndFunction
+EndEvent
 
 ;must recreate the condition on load game
 Event OnLoadGameGlobal()
@@ -124,6 +124,111 @@ bool Function IsMagicEquipped(actor akActor)
 EndFunction
 ===================================================================================================================================================================================================================================================================================
 /;
+
+;/Condition events: 
+Allows to create events for when a condition created with this script changes from true to false or vice versa on an optional akTarget.
+===================================================================================================================================================================================================================================================================================
+-----------------------------------------------------!!! IMPORTANT !!!----------------------------------------------------------------------------------------------------------------------------------------------------
+===================================================================================================================================================================================================================================================================================
+If you set parameters for the condition used in a condition event, they must be persistent!
+If the parameters aren't persistent, it will cause ctds.
+To make any form or variable persistent, simply save it to a script property that's defined in the global scope (outside of any functions or events). 
+See the Range Events portion in DbSkseEvents.psc for more info on this.
+
+The event name for these will be "On" + conditionId + "Changed". 
+example: if you create a condition with the conditionId "MyMod_Condition", the event will be: 
+
+Event OnMyMod_ConditionChanged(ObjectReference akTarget, bool isTrue)
+EndEvent 
+
+These events use polling to detect the change. 
+Polling interval determined by the fEventPollingInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
+Events are unique to the conditionId and Target. 
+So doing: 
+CreateConditionEvent("MyMod_IsMovingCondition", Game.GetPlayer())
+CreateConditionEvent("MyMod_IsMovingCondition", sven)
+Will create 2 events with same event name: Event OnMyMod_IsMovingConditionChanged
+
+Note these events don't have to be registered for, they are sent to all scripts that contain the event with the event name. 
+See the Condition Event Example script below for more info.
+/;
+
+;Does the condition event for the condition with the conditionId and target exist?
+bool function ConditionEventExists(String conditionId, ObjectReference target = none) Global Native
+
+;Create a condition event for the condition with the conditionId on the optional target.
+;Returns false if the event already exists or the condition with the conditionId wasn't found.
+Bool function CreateConditionEvent(String conditionId, ObjectReference target = none) Global Native
+
+;Destroy the condition event previously created for the condition with the conditionId on the optional target.
+;Returns true if the event exists and was destroyed.
+bool function DestroyConditionEvent(String conditionId, ObjectReference target = none) Global Native
+
+;Destroy all condition events created with the CreateConditionEvent function for the condition with the conditionId and return the number destroyed.
+;Note that using DestroyCondition(string conditionId) will DestroyAllConditionEvents for the conditionId as well.
+int function DestroyAllConditionEvents(String conditionId) Global Native
+
+;Count how many condition events were created with the CreateConditionEvent function for the condition with the conditionId. 
+int function CountConditionEvents(String conditionId) Global Native
+
+;/Condition Event Example script:
+===================================================================================================================================================================================================================================================================================
+; Actor Property PlayerRef Auto
+
+Event OnInit()
+	CreatePlayerMoveConditionEvent()
+	RegisterForKey(39) ;semi colon
+EndEvent 
+
+;Must recreate the condition and event on load game.
+Event OnLoadGameGlobal()
+	CreatePlayerMoveConditionEvent()
+EndEvent
+
+function CreatePlayerMoveConditionEvent()
+	; kIsMoving = 25,
+	if !DbConditionFunctions.ConditionExists("MyMod_IsMovingCondition")
+		DbConditionFunctions.CreateCondition("MyMod_IsMovingCondition", 25, 0, 1.0) ;0 = "=="
+	Endif
+	
+	if !DbConditionFunctions.ConditionEventExists("MyMod_IsMovingCondition", PlayerRef)
+		;create event for when the player starts or stops moving
+		DbConditionFunctions.CreateConditionEvent("MyMod_IsMovingCondition", PlayerRef)
+	Endif
+EndFunction
+
+Event OnMyMod_IsMovingConditionChanged(ObjectReference target, bool isTrue)
+	if (isTrue)
+		Debug.Notification(target.GetDisplayName() + " started moving")
+	Else 
+		Debug.Notification(target.GetDisplayName() + " stopped moving")
+	Endif
+EndEvent 
+
+Event OnKeyDown(int aiKeyCode)
+	objectReference ref = consoleUtil.GetSelectedReference()
+	if ref 
+		string s
+		if !DbConditionFunctions.ConditionEventExists("MyMod_IsMovingCondition", ref)
+			s = "created"
+			DbConditionFunctions.CreateConditionEvent("MyMod_IsMovingCondition", ref)
+		else 
+			s = "destroyed"
+			DbConditionFunctions.DestroyConditionEvent("MyMod_IsMovingCondition", ref)
+		Endif 
+
+		int i = DbConditionFunctions.CountConditionEvents("MyMod_IsMovingCondition")
+		Debug.notification("Is moving event " + s + " for " + ref.GetDisplayName() + " total events = " + i)
+
+		if i >= 4
+			i = DbConditionFunctions.DestroyAllConditionEvents("MyMod_IsMovingCondition")
+			Debug.notification("Destroyed all " + i + " is moving events")
+		Endif 
+	Endif
+EndEvent
+===================================================================================================================================================================================================================================================================================
+/;
+
 
 ;/ valid functions for the int conditionFunction parameter
 kGetWantBlocking = 0,

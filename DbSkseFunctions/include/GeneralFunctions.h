@@ -44,6 +44,10 @@ namespace gfuncs {
 
     RE::TESFile* GetFileForForm(RE::TESForm* akForm);
 
+    RE::TESFile* GetFileForRawFormId(RE::FormID rawFormID, RE::TESFile* file);
+
+    std::string GetModName(RE::TESForm* form);
+
     void logFormMap(auto& map);
 
     void DelayedFunction(auto function, int delay) {
@@ -75,6 +79,8 @@ namespace gfuncs {
     bool IsScriptAttachedToForm(RE::TESForm* akForm, RE::BSFixedString sScriptName);
 
     RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedString& sScriptName);
+
+    RE::TESObjectREFR* GetDialogueTarget(RE::Actor* actor);
 
     RE::Actor* GetPlayerDialogueTarget();
 

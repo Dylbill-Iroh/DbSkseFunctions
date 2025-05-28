@@ -328,6 +328,56 @@ namespace gfuncs {
         return nullptr;
     }
 
+    RE::TESFile* GetFileForRawFormId(RE::FormID rawFormID, RE::TESFile* file) {
+        if (!file || file->compileIndex == 0xFF) {
+            return nullptr;
+        }
+
+        auto rawIndex = (rawFormID & 0xFF000000) >> 24;
+        if (REL::Module::IsVR() && !RE::TESDataHandler::GetSingleton()->VRcompiledFileCollection) {
+            if (rawIndex >= file->masterCount) {
+                return file;
+            }
+            return file->masterPtrs[rawIndex];
+        }
+        else {
+            bool isLight = rawIndex == 0xFE;
+            if (isLight) {
+                rawIndex = (rawFormID & 0x00FFF000) >> 12;
+            }
+
+            std::uint32_t index = 0;
+            for (std::uint32_t i = 0; i < file->masterCount; ++i) {
+                auto* master = file->masterPtrs[i];
+                if ((master->compileIndex == 0xFE) != isLight)
+                { // is isLight = true execute it if master is smth different than light
+                    // is isLight = false execute it if master is smth different than full
+                    continue;
+                }
+                if (index++ == rawIndex) {
+                    return master;
+                }
+            }
+            return file;
+        }
+    }
+
+    std::string GetModName(RE::TESForm* form) {
+        if (!IsFormValid(form)) {
+            return "";
+        }
+
+        const auto array = form->sourceFiles.array;
+        if (!array || array->empty()) {
+            return "";
+        }
+
+        const auto file = array->front();
+        std::string_view filename = file ? file->GetFilename() : "";
+
+        return (filename.data());
+    }
+
     void logFormMap(auto& map) {
         logger::trace("logging form map");
         for (auto const& x : map)
@@ -562,6 +612,17 @@ namespace gfuncs {
         return nullptr;
     }
 
+    RE::TESObjectREFR* GetDialogueTarget(RE::Actor* actor) {
+        RE::TESObjectREFR* ref = nullptr;
+        if (gfuncs::IsFormValid(actor)) {
+            ref = GetRefFromObjectRefHandle(actor->GetActorRuntimeData().dialogueItemTarget);
+            if (!gfuncs::IsFormValid(ref)) {
+                ref = nullptr;
+            }
+        }
+        return ref;
+    }
+
     RE::Actor* GetPlayerDialogueTarget() {
         RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
         if (!playerRef) {
@@ -572,20 +633,14 @@ namespace gfuncs {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
         for (auto& [id, form] : *allForms) {
             if (IsFormValid(form)) {
-                RE::Actor* actor = form->As<RE::Actor>();
+                RE::Actor* actor = skyrim_cast<RE::Actor*>(form);
                 if (IsFormValid(actor)) {
-                    RE::ObjectRefHandle dialogueTargetHandle = actor->GetActorRuntimeData().dialogueItemTarget;
-                    if (dialogueTargetHandle) {
-                        auto ptr = dialogueTargetHandle.get();
-                        if (ptr) {
-                            auto* ref = ptr.get();
-                            if (IsFormValid(ref)) {
-                                RE::Actor* dialogueActorRef = ref->As<RE::Actor>();
-                                if (IsFormValid(dialogueActorRef)) {
-                                    if (dialogueActorRef == playerRef) {
-                                        return actor;
-                                    }
-                                }
+                    RE::TESObjectREFR* ref = GetRefFromObjectRefHandle(actor->GetActorRuntimeData().dialogueItemTarget);
+                    if (IsFormValid(ref)) {
+                        RE::Actor* dialogueActorRef = skyrim_cast<RE::Actor*>(ref);
+                        if (IsFormValid(dialogueActorRef)) {
+                            if (dialogueActorRef == playerRef) {
+                                return actor;
                             }
                         }
                     }

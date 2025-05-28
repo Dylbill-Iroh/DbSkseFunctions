@@ -41,6 +41,11 @@ namespace stl
 		T::func = vtbl.write_vfunc(T::idx, T::thunk);
 	}
 
+	template <class F, class T>
+	void write_vfunc() {
+		write_vfunc<F, 0, T>();
+	}
+
 	template <class T>
 	void write_thunk_jump(std::uintptr_t a_src)
 	{

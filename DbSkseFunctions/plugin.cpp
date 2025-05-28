@@ -14,6 +14,7 @@
 #include <future>
 #include <typeinfo>
 #include <any>
+#include <xbyak/xbyak.h>
 #include "mini/ini.h"
 #include "logger.h"
 #include "GeneralFunctions.h"
@@ -32,6 +33,7 @@
 #include "ConditionFunctions.h"
 #include "ConsoleUtil.h"
 #include "CreateForms.h"
+#include "EventDefs.h"
 #include "FormVectorGetters.h"
 #include "Furniture.h"
 #include "PapyrusUtilEx.h"
@@ -179,7 +181,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(9.7);
+    return float(9.8);
 }
 
 RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
@@ -315,8 +317,18 @@ enum EventsEnum {
     EventEnum_OnEffectFinish,
     EventEnum_OnMusicTypeChange,
     EventEnum_OnWeatherChange,
+    EventEnum_OnPerkEntryRun,
+    EventEnum_OnTriggerEnter,
+    EventEnum_OnTriggerLeave,
+    EventEnum_OnPackageStart,
+    EventEnum_OnPackageChange,
+    EventEnum_OnPackageEnd,
+    EventEnum_OnDestructionStageChanged,
+    EventEnum_OnTranslationFailed,
+    EventEnum_OnTranslationAlmostComplete,
+    EventEnum_OnTranslationComplete,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnWeatherChange
+    EventEnum_Last = EventEnum_OnTranslationComplete
 };
 
 struct EventData {
@@ -329,11 +341,11 @@ struct EventData {
     std::vector< std::map<RE::TESForm*, std::vector<RE::VMHandle>> > eventParamMaps; //event param form comparisons
 
     //constructor
-    EventData(RE::BSFixedString event, int ceventSinkIndex, int NumberOfParams, std::uint32_t crecord) :
+    EventData(RE::BSFixedString event, int ceventSinkIndex, int NumberOfFormParams, std::uint32_t crecord) :
         eventSinkIndex(ceventSinkIndex),
         sEvent(event),
         record(crecord) {
-        eventParamMaps.resize(NumberOfParams);
+        eventParamMaps.resize(NumberOfFormParams);
     }
 
     bool PlayerIsRegistered() {
@@ -644,12 +656,12 @@ struct AnimationEventSink : public RE::BSTEventSink<RE::BSAnimationGraphEvent> {
         }
 
         if (!event) {
-            logger::error("AnimationEventSink event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("AnimationEventSink IsBadReadPtr");
+            logger::error("IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -902,14 +914,14 @@ void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source,
 
         gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnProjectileImpact]->sEvent, args);
 
-        logger::trace("projectile impact: shooter[{}] target[{}] source[{}] ammo[{}] projectile[{}]",
+        logger::trace("shooter[{}] target[{}] source[{}] ammo[{}] projectile[{}]",
             gfuncs::GetFormName(data.shooter), gfuncs::GetFormName(data.target), gfuncs::GetFormName(source),
             gfuncs::GetFormName(data.ammo), gfuncs::GetFormName(data.projectileBase));
 
-        logger::trace("projectile impact: sneak[{}] blocked[{}] impactResult[{}] collidedLayer[{}] distanceTraveled[{}] hitPartNodeName[{}]",
+        logger::trace("sneak[{}] blocked[{}] impactResult[{}] collidedLayer[{}] distanceTraveled[{}] hitPartNodeName[{}]",
             SneakAttack, HitBlocked, data.impactResult, data.collidedLayer, data.distanceTraveled, data.hitPartNodeName);
 
-        logger::trace("projectile impact: hitTranslation posX[{}] posY[{}] posZ[{}] directionX[{}] directionY[{}] directionZ[{}]",
+        logger::trace("hitTranslation posX[{}] posY[{}] posZ[{}] directionX[{}] directionY[{}] directionZ[{}]",
             hitTranslation[0], hitTranslation[1], hitTranslation[2], hitTranslation[3], hitTranslation[4], hitTranslation[5]);
     }
 }
@@ -944,12 +956,12 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
         //logger::trace("hit event");
 
         if (!event) {
-            logger::trace("hit event doesn't exist");
+            logger::trace("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("hit event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -975,7 +987,7 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
         if (event->target) {
             target = event->target.get();
             if (!gfuncs::IsFormValid(target)) {
-                logger::trace("hit event: no target");
+                logger::trace("no target");
                 return RE::BSEventNotifyControl::kContinue;
             }
         }
@@ -1055,7 +1067,7 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
                             if (it->second) {
                                 float hitTimeDiff = gfuncs::timePointDiffToFloat(hitTime, it->second->lastHitTime);
                                 it->second->lastHitTime = hitTime;
-                                logger::trace("hit event: found ammo tracking data for [{}] hitTimeDiff = [{}]", gfuncs::GetFormName(attacker), hitTimeDiff);
+                                logger::trace("found ammo tracking data for [{}] hitTimeDiff = [{}]", gfuncs::GetFormName(attacker), hitTimeDiff);
 
                                 bool bSetAmmoToLastHitAmmo = false;
                                 if (hitTimeDiff <= 0.1 && target == it->second->lastHitTarget) { //assume this is the same hit event run again (for enchantments ect) ) {
@@ -1083,12 +1095,12 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
                                                 for (int i = 0; i < it->second->forceChangedAmmos.size() && !ammoFound; i++) { //cycle through force unequipped ammos due to shooting last arrow of type. 
                                                     for (int ii = recentHitIt->second.size() - 1; ii >= 0 && !ammoFound; --ii) { //cycle through projectiles that recently hit the target to find matching ammo
                                                         float timeDiff = GameHoursToRealTimeSeconds(nullptr, (gameHoursPassed - recentHitIt->second[ii].gameTimeStamp));
-                                                        //logger::trace("hit event: recentHitProjectile[{}] timeDiff = [{}]", gfuncs::GetFormName(recentHitIt->second[ii].projectile), timeDiff);
+                                                        //logger::trace("recentHitProjectile[{}] timeDiff = [{}]", gfuncs::GetFormName(recentHitIt->second[ii].projectile), timeDiff);
                                                         if (timeDiff < 0.1) {
                                                             if (DidProjectileHitRefWithAmmoFromShooter(attacker, target, it->second->forceChangedAmmos[i].ammo, recentHitIt->second[ii])) {
                                                                 auto trackedProjectileData = recentHitIt->second[ii];
 
-                                                                logger::trace("hit event: attacker[{}] target[{}] ammo changed from [{}] to [{}]. Recent projectile found[{}]. TimeDiff = [{}]",
+                                                                logger::trace("attacker[{}] target[{}] ammo changed from [{}] to [{}]. Recent projectile found[{}]. TimeDiff = [{}]",
                                                                     gfuncs::GetFormName(attacker), gfuncs::GetFormName(target), gfuncs::GetFormName(ammo), gfuncs::GetFormName(it->second->forceChangedAmmos[i].ammo), gfuncs::GetFormName(trackedProjectileData.projectileBase), timeDiff);
 
                                                                 ammo = it->second->forceChangedAmmos[i].ammo;
@@ -1137,8 +1149,8 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
             std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_HitEvent]->GetHandles({ attacker, target, source, ammo, projectileForm });
 
             if (handles.size() > 0) {
-                logger::trace("HitEvent: attacker[{}]  target[{}]  source[{}]  ammo[{}]  projectile[{}]", gfuncs::GetFormName(attacker), gfuncs::GetFormName(target), gfuncs::GetFormName(source), gfuncs::GetFormName(ammo), gfuncs::GetFormName(projectileForm));
-                logger::trace("HitEvent: powerAttack[{}]  SneakAttack[{}]  BashAttack[{}]  HitBlocked[{}]", powerAttack, SneakAttack, bBashAttack, HitBlocked);
+                logger::trace("attacker[{}]  target[{}]  source[{}]  ammo[{}]  projectile[{}]", gfuncs::GetFormName(attacker), gfuncs::GetFormName(target), gfuncs::GetFormName(source), gfuncs::GetFormName(ammo), gfuncs::GetFormName(projectileForm));
+                logger::trace("powerAttack[{}]  SneakAttack[{}]  BashAttack[{}]  HitBlocked[{}]", powerAttack, SneakAttack, bBashAttack, HitBlocked);
 
                 auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)attacker, (RE::TESObjectREFR*)target, (RE::TESForm*)source,
                     (RE::TESAmmo*)ammo, (RE::BGSProjectile*)projectileForm, (bool)powerAttack, (bool)SneakAttack, (bool)bBashAttack, (bool)HitBlocked);
@@ -1201,12 +1213,12 @@ struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent* event, RE::BSTEventSource<RE::TESCombatEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("combat change event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("combat change event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -1253,12 +1265,12 @@ struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESFurnitureEvent* event, RE::BSTEventSource<RE::TESFurnitureEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("furniture event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("furniture event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -1319,12 +1331,12 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESActivateEvent* event, RE::BSTEventSource<RE::TESActivateEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("activate event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("activate event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -1378,16 +1390,14 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* event, RE::BSTEventSource<RE::TESDeathEvent>* source) {
 
         if (!event) {
-            logger::warn("death / dying event doesn't exist");
+            logger::warn("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("death / dying event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
-
-        logger::trace("Death Event");
 
         RE::TESObjectREFR* victimRef = nullptr;
         if (event->actorDying) {
@@ -1409,13 +1419,13 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
         if (gfuncs::IsFormValid(victimRef)) {
             victim = static_cast<RE::Actor*>(victimRef);
             if (!gfuncs::IsFormValid(victim)) {
-                logger::warn("death event: victim doesn't exist or isn't valid");
+                logger::warn("victim doesn't exist or isn't valid");
                 return RE::BSEventNotifyControl::kContinue;
             }
-            logger::trace("death event: valid victimRef pointer");
+            logger::trace("valid victimRef pointer");
         }
         else {
-            logger::warn("death event: 0 victimRef doesn't exist or isn't valid");
+            logger::warn("0 victimRef doesn't exist or isn't valid");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -1426,13 +1436,13 @@ struct DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
                 killer = nullptr;
             }
             else {
-                logger::trace("death event: valid killerRef pointer");
+                logger::trace("valid killerRef pointer");
             }
         }
 
         bool dead = event->dead;
 
-        logger::trace("Death Event: victim[{}], Killer[{}], Dead[{}]", gfuncs::GetFormName(victim), gfuncs::GetFormName(killer), dead);
+        logger::trace("victim[{}], Killer[{}], Dead[{}]", gfuncs::GetFormName(victim), gfuncs::GetFormName(killer), dead);
 
         RE::BSFixedString sEvent;
         int eventIndex;
@@ -1548,12 +1558,12 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
 
     RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* event, RE::BSTEventSource<RE::TESEquipEvent>*/*source*/) {
         if (!event) {
-            logger::error("equip event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("equip event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -1592,7 +1602,7 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
             //skip the event if time and other variables match last equip event
             if (fTime == lastEquipEvent.gameTimeStamp) {
                 if (lastEquipEvent.akActorRef == akActorRef && lastEquipEvent.baseObject == baseObject && lastEquipEvent.equipped == equipped) {
-                    logger::debug("Skipping Equip Event: Actor[{}], BaseObject[{}], Equipped[{}] gameTimeStamp[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), equipped, fTime);
+                    logger::debug("Skipping Event: Actor[{}], BaseObject[{}], Equipped[{}] gameTimeStamp[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), equipped, fTime);
                     return RE::BSEventNotifyControl::kContinue;
                 }
             }
@@ -1611,10 +1621,10 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
                         auto it = animationEventActorsMap.find(akActorRef);
                         if (it != animationEventActorsMap.end()) {
                             float timeDiff = GameHoursToRealTimeSeconds(nullptr, (fTime - it->second->lastReleaseGameTime));
-                            logger::trace("equip event: actor[{}] unequipped ammo[{}]. Time since last bow release is [{}]", gfuncs::GetFormName(akActor), gfuncs::GetFormName(akAmmo), timeDiff);
+                            logger::trace("actor[{}] unequipped ammo[{}]. Time since last bow release is [{}]", gfuncs::GetFormName(akActor), gfuncs::GetFormName(akAmmo), timeDiff);
 
                             if (timeDiff < 0.2) { //actor released their bow less than 0.2 seconds ago.
-                                logger::debug("unequip event: saved force unequipped ammo[{}] for actor[{}]", gfuncs::GetFormName(akAmmo), gfuncs::GetFormName(akActor));
+                                logger::debug("saved force unequipped ammo[{}] for actor[{}]", gfuncs::GetFormName(akAmmo), gfuncs::GetFormName(akActor));
                                 TrackedActorAmmoData data;
                                 data.ammo = akAmmo;
                                 data.gameTimeStamp = fTime;
@@ -1624,7 +1634,7 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
                     }
                 }
                 if (gfuncs::formIsBowOrCrossbow(baseObject)) {
-                    logger::trace("equip event Unregistering actor[{}] for animation events", gfuncs::GetFormName(akActorRef));
+                    logger::trace("Unregistering actor[{}] for animation events", gfuncs::GetFormName(akActorRef));
                     UnRegisterActorForBowDrawAnimEvent(akActorRef);
                 }
             }
@@ -1636,7 +1646,7 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
         else {
             if (gfuncs::formIsBowOrCrossbow(baseObject)) {
                 if (eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded || eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
-                    logger::trace("equip event registering actor [{}] for animation events", gfuncs::GetFormName(akActorRef));
+                    logger::trace("registering actor [{}] for animation events", gfuncs::GetFormName(akActorRef));
                     RegisterActorForBowDrawAnimEvent(akActorRef);
                 }
             }
@@ -1646,7 +1656,7 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
             }
         }
 
-        //logger::trace("Equip Event: Actor[{}], BaseObject[{}], Equipped[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), equipped);
+        //logger::trace("Actor[{}], BaseObject[{}], Equipped[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), equipped);
 
         if (eventIndex != -1) {
             RE::TESForm* ref = RE::TESForm::LookupByID(event->originalRefr);
@@ -1654,7 +1664,7 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
                 ref = nullptr;
             }
 
-            logger::trace("Equip Event: Actor[{}], BaseObject[{}], Ref[{}] Equipped[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), gfuncs::GetFormName(ref), equipped);
+            logger::trace("Actor[{}], BaseObject[{}], Ref[{}] Equipped[{}]", gfuncs::GetFormName(akActorRef), gfuncs::GetFormName(baseObject), gfuncs::GetFormName(ref), equipped);
 
             std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->GetHandles(
                 { akActorRef, baseObject, ref });
@@ -1676,16 +1686,16 @@ struct WaitStartEventSink : public RE::BSTEventSink<RE::TESWaitStartEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESWaitStartEvent* event, RE::BSTEventSource<RE::TESWaitStartEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("wait start event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("wait start event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::trace("Wait Start Event");
+        logger::trace("");
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStart]->globalHandles;
 
@@ -1705,16 +1715,16 @@ struct WaitStopEventSink : public RE::BSTEventSink<RE::TESWaitStopEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESWaitStopEvent* event, RE::BSTEventSource<RE::TESWaitStopEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("wait stop event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("wait stop event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::trace("Wait Stop Event");
+        logger::trace("");
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWaitStop]->globalHandles;
 
@@ -1734,16 +1744,16 @@ struct MagicEffectApplyEventSink : public RE::BSTEventSink<RE::TESMagicEffectApp
     RE::BSEventNotifyControl ProcessEvent(const RE::TESMagicEffectApplyEvent* event, RE::BSTEventSource<RE::TESMagicEffectApplyEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("MagicEffectApply event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("MagicEffectApply event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::trace("MagicEffectApply Event");
+        logger::trace("");
 
         RE::TESObjectREFR* caster = nullptr;
         if (event->caster) {
@@ -1787,16 +1797,16 @@ struct LockChangedEventSink : public RE::BSTEventSink<RE::TESLockChangedEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESLockChangedEvent* event, RE::BSTEventSource<RE::TESLockChangedEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("Lock Changed event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("Lock Changed event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::trace("Lock Changed Event");
+        logger::trace("");
 
         RE::TESObjectREFR* lockedObject = nullptr;
         if (event->lockedObject) {
@@ -1826,12 +1836,12 @@ struct OpenCloseEventSink : public RE::BSTEventSink<RE::TESOpenCloseEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESOpenCloseEvent* event, RE::BSTEventSource<RE::TESOpenCloseEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("OpenClose event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("OpenClose event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -1880,16 +1890,16 @@ struct SpellCastEventSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
     RE::BSEventNotifyControl ProcessEvent(const RE::TESSpellCastEvent* event, RE::BSTEventSource<RE::TESSpellCastEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("spell cast event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("spell cast event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::trace("spell cast Event");
+        logger::trace("");
 
         RE::TESObjectREFR* caster = nullptr;
         if (event->object) {
@@ -1927,16 +1937,16 @@ struct ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChang
     RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* event, RE::BSTEventSource<RE::TESContainerChangedEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("Container Change event doesn't exist");
+            logger::error("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("Container Change event IsBadReadPtr");
+            logger::error("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        //logger::debug("Container Change Event");
+        //logger::debug("Event");
 
         RE::TESForm* baseObj = nullptr;
         if (event->baseObj) {
@@ -2019,16 +2029,16 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
     RE::BSEventNotifyControl ProcessEvent(const SKSE::ActionEvent* event, RE::BSTEventSource<SKSE::ActionEvent>*/*source*/) {
 
         if (!event) {
-            logger::error("Action Event event is nullptr");
+            logger::error("Event event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("Action Event event IsBadReadPtr");
+            logger::error("Event event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        logger::trace("Action Event");
+        logger::trace("Event");
 
         RE::Actor* akActor = event->actor;
         if (!gfuncs::IsFormValid(akActor)) {
@@ -2094,7 +2104,7 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
             break;
         }
 
-        logger::trace("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", gfuncs::GetFormName(akActor), gfuncs::GetFormName(akSource),
+        logger::trace("event, Actor[{}] Source[{}]  type[{}] slot[{}]", gfuncs::GetFormName(akActor), gfuncs::GetFormName(akSource),
             actionTypeStrings[type], actionSlotStrings[slot]);
 
         if (eventIndex == -1) {
@@ -2126,7 +2136,7 @@ struct ActorActionEventSink : public RE::BSTEventSink<SKSE::ActionEvent> {
                         auto* argsB = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESForm*)leftHandSource, (int)0);
                         gfuncs::SendEvents(handlesB, eventDataPtrs[eventIndex]->sEvent, argsB);
 
-                        logger::trace("action event, Actor[{}] Source[{}]  type[{}] slot[{}]", gfuncs::GetFormName(akActor), gfuncs::GetFormName(leftHandSource),
+                        logger::trace("event, Actor[{}] Source[{}]  type[{}] slot[{}]", gfuncs::GetFormName(akActor), gfuncs::GetFormName(leftHandSource),
                             actionTypeStrings[type], actionSlotStrings[0]);
                     }
                 }
@@ -2142,12 +2152,12 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
     RE::BSEventNotifyControl ProcessEvent(const RE::ItemCrafted::Event* event, RE::BSTEventSource<RE::ItemCrafted::Event>*/*source*/) {
 
         if (!event) {
-            logger::error("Item Crafted Event is nullptr");
+            logger::error("Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("Item Crafted Event IsBadReadPtr");
+            logger::error("Event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -2165,7 +2175,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
                     if (aiProcess->middleHigh->occupiedFurniture) {
                         auto refPtr = aiProcess->middleHigh->occupiedFurniture.get();
                         if (refPtr) {
-                            //logger::trace("Item Crafted Event: occupiedFurniture found");
+                            //logger::trace("Event: occupiedFurniture found");
                             workbenchRef = refPtr.get();
                         }
                     }
@@ -2178,7 +2188,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
         if (!gfuncs::IsFormValid(workbenchRef)) {
             if (gfuncs::IsFormValid(menuRef, true)) {
                 workbenchRef = menuRef;
-                //logger::trace("Item Crafted Event: occupiedFurniture not valid, setting to menuRef");
+                //logger::trace("Event: occupiedFurniture not valid, setting to menuRef");
             }
             else {
                 workbenchRef = nullptr;
@@ -2216,7 +2226,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
 
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnItemCrafted]->sEvent, args);
 
-            logger::trace("Item Crafted Event: workbenchRef[{}] craftedItem[{}] benchType[{}] skill[{}]",
+            logger::trace("Event: workbenchRef[{}] craftedItem[{}] benchType[{}] skill[{}]",
                 gfuncs::GetFormName(craftedItem), gfuncs::GetFormName(workbenchRef), benchType, skill);
         }
         openedMenusMutex.unlock();
@@ -2232,12 +2242,12 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
 
     RE::BSEventNotifyControl ProcessEvent(const RE::ItemsPickpocketed::Event* event, RE::BSTEventSource<RE::ItemsPickpocketed::Event>*/*source*/) {
         if (!event) {
-            logger::error("Item Pickpocketed Event is nullptr");
+            logger::error("Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("Item Pickpocketed Event IsBadReadPtr");
+            logger::error("Event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -2267,7 +2277,7 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
 
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnItemsPickpocketed]->sEvent, args);
 
-            logger::trace("pickpocket event: numItems[{}] form[{}]", event->numItems, gfuncs::GetFormName(akForm));
+            logger::trace("numItems[{}] form[{}]", event->numItems, gfuncs::GetFormName(akForm));
         }
 
         openedMenusMutex.unlock();
@@ -2282,12 +2292,12 @@ struct LocationClearedEventSink : public RE::BSTEventSink<RE::LocationCleared::E
 
     RE::BSEventNotifyControl ProcessEvent(const RE::LocationCleared::Event* event, RE::BSTEventSource<RE::LocationCleared::Event>*/*source*/) {
         if (!event) {
-            logger::error("Location Cleared Event is nullptr");
+            logger::error("Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("Location Cleared Event IsBadReadPtr");
+            logger::error("Event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -2318,7 +2328,7 @@ struct LocationClearedEventSink : public RE::BSTEventSink<RE::LocationCleared::E
         if (handles.size() > 0) {
             auto* args = RE::MakeFunctionArguments((RE::BGSLocation*)location);
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnLocationCleared]->sEvent, args);
-            logger::trace("location cleared event: location[{}]", gfuncs::GetFormName(location));
+            logger::trace("event: location[{}]", gfuncs::GetFormName(location));
         }
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -2331,12 +2341,12 @@ struct EnterBleedoutEventSink : public RE::BSTEventSink<RE::TESEnterBleedoutEven
 
     RE::BSEventNotifyControl ProcessEvent(const RE::TESEnterBleedoutEvent* event, RE::BSTEventSource<RE::TESEnterBleedoutEvent>*/*source*/) {
         if (!event) {
-            logger::error("Enter Bleedout Event is nullptr");
+            logger::error("Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("Enter Bleedout Event IsBadReadPtr");
+            logger::error("Event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -2358,7 +2368,7 @@ struct EnterBleedoutEventSink : public RE::BSTEventSink<RE::TESEnterBleedoutEven
         if (handles.size() > 0) {
             auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor);
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnEnterBleedout]->sEvent, args);
-            logger::trace("Enter Bleedout Event: akActor[{}]", gfuncs::GetFormName(akActor));
+            logger::trace("Event: akActor[{}]", gfuncs::GetFormName(akActor));
         }
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -2373,12 +2383,12 @@ struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCo
         //logger::trace("SwitchRaceCompleteEvent");
 
         if (!event) {
-            logger::error("Switch Race Complete Event is nullptr");
+            logger::error("Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("Switch Race Complete Event IsBadReadPtr");
+            logger::error("Event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -2417,7 +2427,7 @@ struct SwitchRaceCompleteEventSink : public RE::BSTEventSink<RE::TESSwitchRaceCo
         if (handles.size() > 0) {
             auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor, (RE::TESRace*)akOldRace, (RE::TESRace*)akNewRace);
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnSwitchRaceComplete]->sEvent, args);
-            logger::trace("SwitchRaceCompleteEvent: Actor[{}] akOldRace[{}] akNewRace[{}]",
+            logger::trace("Actor[{}] akOldRace[{}] akNewRace[{}]",
                 gfuncs::GetFormName(akActor), gfuncs::GetFormName(akOldRace), gfuncs::GetFormName(akNewRace));
         }
         //EventEnum_OnSwitchRaceComplete
@@ -2432,12 +2442,12 @@ struct FootstepEventSink : public RE::BSTEventSink<RE::BGSFootstepEvent> {
 
     RE::BSEventNotifyControl ProcessEvent(const RE::BGSFootstepEvent* event, RE::BSTEventSource<RE::BGSFootstepEvent>*/*source*/) {
         if (!event) {
-            logger::error("footstep Event is nullptr");
+            logger::error("Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("footstep Event IsBadReadPtr");
+            logger::error("Event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -2465,7 +2475,7 @@ struct FootstepEventSink : public RE::BSTEventSink<RE::BGSFootstepEvent> {
         if (handles.size() > 0) {
             auto* args = RE::MakeFunctionArguments((RE::Actor*)akActor, (std::string)event->tag);
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnActorFootStep]->sEvent, args);
-            logger::trace("FootstepEvent: Actor[{}] tag[{}]",
+            logger::trace("Actor[{}] tag[{}]",
                 gfuncs::GetFormName(akActor), event->tag);
         }
         return RE::BSEventNotifyControl::kContinue;
@@ -2479,17 +2489,17 @@ struct QuestObjectiveEventSink : public RE::BSTEventSink<RE::ObjectiveState::Eve
 
     RE::BSEventNotifyControl ProcessEvent(const RE::ObjectiveState::Event* event, RE::BSTEventSource<RE::ObjectiveState::Event>*/*source*/) {
         if (!event) {
-            logger::error("QuestObjective Event is nullptr");
+            logger::error("Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("QuestObjective Event IsBadReadPtr");
+            logger::error("Event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (!event->objective) {
-            logger::error("QuestObjective Event->objective is nullptr");
+            logger::error("Event->objective is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -2526,7 +2536,7 @@ struct QuestObjectiveEventSink : public RE::BSTEventSink<RE::ObjectiveState::Eve
 
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnQuestObjectiveStateChanged]->sEvent, args);
 
-            logger::trace("QuestObjective Event: quest[{}] displayText[{}] objectiveIndex[{}] oldState[{}] newState[{}] targets[{}]",
+            logger::trace("Event: quest[{}] displayText[{}] objectiveIndex[{}] oldState[{}] newState[{}] targets[{}]",
                 gfuncs::GetFormName(akQuest), displayText, objectiveIndex, oldState, newState, event->objective->numTargets);
         }
         return RE::BSEventNotifyControl::kContinue;
@@ -2566,12 +2576,12 @@ struct PositionPlayerEventSink : public RE::BSTEventSink<RE::PositionPlayerEvent
 
     RE::BSEventNotifyControl ProcessEvent(const RE::PositionPlayerEvent* event, RE::BSTEventSource<RE::PositionPlayerEvent>*/*source*/) {
         if (!event) {
-            logger::error("PositionPlayer Event is nullptr");
+            logger::error("Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::error("PositionPlayer Event IsBadReadPtr");
+            logger::error("Event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -2719,6 +2729,314 @@ struct ActorCellEventSink : public RE::BSTEventSink<RE::BGSActorCellEvent> {
 };
 
 ActorCellEventSink* actorCellEventSink;
+
+//new events =============================================================================================================================================
+
+struct PerkEntryRunEventSink : public RE::BSTEventSink<RE::TESPerkEntryRunEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESPerkEntryRunEvent* event, RE::BSTEventSource<RE::TESPerkEntryRunEvent>*/*source*/) {
+        if (!event) {
+            logger::warn("event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        auto perkId = event->perkId;
+        auto owner = event->owner;
+        auto target = event->target;
+        auto flag = event->flag;
+
+        RE::BGSPerk* perk = RE::TESForm::LookupByID< RE::BGSPerk>(perkId);
+        if (!gfuncs::IsFormValid(perk)) {
+            logger::warn("perk doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::TESObjectREFR* ownerRef = nullptr;
+        if (owner) {
+            ownerRef = owner.get();
+            if (!gfuncs::IsFormValid(ownerRef)) {
+                logger::warn("owner doesn't exist");
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        }
+
+        RE::TESObjectREFR* targetRef = nullptr;
+        if (target) {
+            targetRef = target.get();
+            if (!gfuncs::IsFormValid(targetRef)) {
+                targetRef = nullptr;
+            }
+        }
+
+        logger::trace("perk[{}] target[{}] owner[{}] flag[{}]",
+            gfuncs::GetFormNameAndId(perk), gfuncs::GetFormNameAndId(targetRef), gfuncs::GetFormNameAndId(ownerRef), flag);
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnPerkEntryRun]->GetHandles({ perk, targetRef, ownerRef });
+        if (handles.size() > 0) {
+            auto* args = RE::MakeFunctionArguments((RE::BGSPerk*)perk, (RE::TESObjectREFR*)targetRef, (RE::TESObjectREFR*)ownerRef, int(flag));
+            gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnPerkEntryRun]->sEvent, args);
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+PerkEntryRunEventSink* perkEntryRunEventSink;
+
+struct TriggerEnterEventSink : public RE::BSTEventSink<RE::TESTriggerEnterEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESTriggerEnterEvent* event, RE::BSTEventSource<RE::TESTriggerEnterEvent>*/*source*/) {
+        if (!event) {
+            logger::error("event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::TESObjectREFR* target = nullptr;
+        if (event->target) {
+            target = event->target.get();
+            if (!gfuncs::IsFormValid(target)) {
+                logger::warn("target doesn't exist");
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        }
+
+        RE::TESObjectREFR* caster = nullptr;
+        if (event->caster) {
+            caster = event->caster.get();
+            if (!gfuncs::IsFormValid(caster)) {
+                logger::warn("caster doesn't exist");
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        }
+
+        logger::trace("caster[{}] target[{}]",
+            gfuncs::GetFormNameAndId(caster), gfuncs::GetFormNameAndId(target));
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnTriggerEnter]->GetHandles({ caster, target });
+        if (handles.size() > 0) {
+            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)caster, (RE::TESObjectREFR*)target);
+            gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnTriggerEnter]->sEvent, args);
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+TriggerEnterEventSink* triggerEnterEventSink;
+
+struct TriggerLeaveEventSink : public RE::BSTEventSink<RE::TESTriggerLeaveEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESTriggerLeaveEvent* event, RE::BSTEventSource<RE::TESTriggerLeaveEvent>*/*source*/) {
+        if (!event) {
+            logger::error("event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::TESObjectREFR* target = nullptr;
+        if (event->target) {
+            target = event->target.get();
+            if (!gfuncs::IsFormValid(target)) {
+                logger::warn("target doesn't exist");
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        }
+
+        RE::TESObjectREFR* caster = nullptr;
+        if (event->caster) {
+            caster = event->caster.get();
+            if (!gfuncs::IsFormValid(caster)) {
+                logger::warn("caster doesn't exist");
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        }
+
+        logger::trace("caster[{}] target[{}]",
+            gfuncs::GetFormNameAndId(caster), gfuncs::GetFormNameAndId(target));
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnTriggerLeave]->GetHandles({ caster, target });
+        if (handles.size() > 0) {
+            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)caster, (RE::TESObjectREFR*)target);
+            gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnTriggerLeave]->sEvent, args);
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+TriggerLeaveEventSink* triggerLeaveEventSink;
+
+struct PackageEventSink : public RE::BSTEventSink<RE::TESPackageEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESPackageEvent* event, RE::BSTEventSource<RE::TESPackageEvent>*/*source*/) {
+        if (!event) {
+            logger::error("event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::Actor* actor = nullptr;
+        if (event->actor) {
+            RE::TESObjectREFR* actorRef = event->actor.get();
+            if (gfuncs::IsFormValid(actorRef)) {
+                actor = skyrim_cast<RE::Actor*>(actorRef);
+                if (!gfuncs::IsFormValid(actor)) {
+                    logger::warn("actor doesn't exist");
+                    return RE::BSEventNotifyControl::kContinue;
+                }
+            }
+        }
+
+        RE::TESPackage* package = RE::TESForm::LookupByID<RE::TESPackage>(event->package);
+        if (!gfuncs::IsFormValid(package)) {
+            logger::warn("package doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        int eventIndex = -1;
+        RE::BSFixedString sEvent;
+
+        switch (event->type) {
+        case RE::TESPackageEvent::EventType::kStart:
+            eventIndex = EventEnum_OnPackageStart;
+            sEvent = eventDataPtrs[eventIndex]->sEvent;
+            break;
+        case RE::TESPackageEvent::EventType::kChange:
+            eventIndex = EventEnum_OnPackageChange;
+            sEvent = eventDataPtrs[eventIndex]->sEvent;
+            break;
+        case RE::TESPackageEvent::EventType::kEnd:
+            eventIndex = EventEnum_OnPackageEnd;
+            sEvent = eventDataPtrs[eventIndex]->sEvent;
+            break;
+        }
+
+        logger::trace("actor[{}] package[{}] type[{}] event[{}]",
+            gfuncs::GetFormNameAndId(actor), gfuncs::GetFormNameAndId(package), static_cast<int>(event->type), sEvent);
+
+        if (eventIndex != -1) {
+            std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->GetHandles({ actor, package });
+            if (handles.size() > 0) {
+                auto* args = RE::MakeFunctionArguments((RE::Actor*)actor, (RE::TESPackage*)package);
+                gfuncs::SendEvents(handles, sEvent, args);
+            }
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+PackageEventSink* packageEventSink;
+
+struct DestructionStageChangedEventSink : public RE::BSTEventSink<RE::TESDestructionStageChangedEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESDestructionStageChangedEvent* event, RE::BSTEventSource<RE::TESDestructionStageChangedEvent>*/*source*/) {
+        if (!event) {
+            logger::error("event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::TESObjectREFR* target = nullptr;
+        if (event->target) {
+            target = event->target.get();
+            if (!gfuncs::IsFormValid(target)) {
+                target = nullptr;
+            }
+        }
+
+        logger::trace("target[{}] oldStage[{}] newStage[{}]",
+            gfuncs::GetFormNameAndId(target), event->oldStage, event->newStage);
+
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnDestructionStageChanged]->GetHandles({ target });
+        if (handles.size() > 0) {
+            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)target, (uint32_t)event->oldStage, (uint32_t)event->newStage);
+            gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnDestructionStageChanged]->sEvent, args);
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+DestructionStageChangedEventSink* destructionStageChangedEventSink;
+
+struct ObjectREFRTranslationEventSink : public RE::BSTEventSink<RE::TESObjectREFRTranslationEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectREFRTranslationEvent* event, RE::BSTEventSource<RE::TESObjectREFRTranslationEvent>*/*source*/) {
+        if (!event) {
+            logger::error("event doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            logger::error("event IsBadReadPtr");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::TESObjectREFR* refr = nullptr;
+        if (event->refr) {
+            refr = event->refr.get();
+            if (!gfuncs::IsFormValid(refr)) {
+                logger::warn("ref doesn't exist");
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        }
+
+        int eventIndex = -1;
+        RE::BSFixedString sEvent;
+
+        switch (event->type) {
+        case RE::TESObjectREFRTranslationEvent::EventType::kFailed:
+            eventIndex = EventEnum_OnTranslationFailed;
+            sEvent = eventDataPtrs[eventIndex]->sEvent;
+            break;
+        case RE::TESObjectREFRTranslationEvent::EventType::kCompleted:
+            eventIndex = EventEnum_OnTranslationComplete;
+            sEvent = eventDataPtrs[eventIndex]->sEvent;
+            break;
+        case RE::TESObjectREFRTranslationEvent::EventType::kAlmostCompleted:
+            eventIndex = EventEnum_OnTranslationAlmostComplete;
+            sEvent = eventDataPtrs[eventIndex]->sEvent;
+            break;
+        }
+
+        logger::trace("refr[{}] type[{}] event[{}]",
+            gfuncs::GetFormNameAndId(refr), static_cast<int>(event->type), sEvent);
+           
+
+        if (eventIndex != -1) {
+            std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->GetHandles({ refr });
+            if (handles.size() > 0) {
+                auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)refr);
+                gfuncs::SendEvents(handles, sEvent, args);
+            }
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+ObjectREFRTranslationEventSink* objectREFRTranslationEventSink;
+
+//====================================================================================================================================
 
 struct MusicChangeEventSink {
     bool AddEventSink() {
@@ -3175,8 +3493,6 @@ namespace ActiveEffectEvents {
 
                 //extends ValueModifierEffect
                 EffectStartHook<RE::TargetValueModifierEffect>::Install();
-
-
             }
             effectStartInstallMutex.unlock();
         }
@@ -3430,7 +3746,7 @@ struct ObjectLoadedEventSink : public RE::BSTEventSink<RE::TESObjectLoadedEvent>
 
                 RE::Actor* akActor = akForm->As<RE::Actor>();
                 if (gfuncs::IsFormValid(akActor)) {
-                    logger::trace("ObjectLoadedEvent: Actor[{}] loaded", gfuncs::GetFormName(akActor));
+                    logger::trace("Actor[{}] loaded", gfuncs::GetFormName(akActor));
                     return RE::BSEventNotifyControl::kContinue;
                 }
             }
@@ -3515,7 +3831,7 @@ public:
                     if (buttonEvent->GetIDCode() == 28) { //enter key pressed
                         if (ui->IsItemMenuOpen()) {
                             UIEvents::ProcessUiItemSelectEvent();
-                            logger::trace("input Event: button[{}] pressed. ProcessUiItemSelectEvent", buttonEvent->GetIDCode());
+                            logger::trace("button[{}] pressed. ProcessUiItemSelectEvent", buttonEvent->GetIDCode());
                         }
                     }
                 }
@@ -3645,12 +3961,12 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         }
 
         if (!event) {
-            logger::warn("MenuOpenClose Event doesn't exist");
+            logger::warn("event doesn't exist");
             return RE::BSEventNotifyControl::kContinue;
         }
 
         if (IsBadReadPtr(event, sizeof(event))) {
-            logger::warn("MenuOpenCloseEventSink IsBadReadPtr");
+            logger::warn("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -3702,7 +4018,7 @@ bool AddEquipEventSink() {
                 equipEventSink->sinkAdded = true;
                 eventSourceholder->AddEventSink(equipEventSink);
                 RegisterActorsForBowDrawAnimEvents();
-                logger::debug("Equip Event Sink Added");
+                logger::debug("Sink Added");
                 return true;
             }
         }
@@ -3722,7 +4038,7 @@ bool RemoveEquipEventSink() {
             if (equipEventSink->sinkAdded) {
                 equipEventSink->sinkAdded = false;
                 eventSourceholder->RemoveEventSink(equipEventSink); //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
-                logger::debug("Equip Event Sink Removed");
+                logger::debug("Sink Removed");
                 return true;
             }
         }
@@ -3778,7 +4094,7 @@ void AddSink(int index) {
     if (eventData) {
         eventName = std::string(eventData->sEvent);
     }
-    logger::trace("Adding sink Index[{}] Event[{}].", index, eventName);
+    logger::trace("Index[{}] Event[{}].", index, eventName);
 
     switch (index) {
     case EventEnum_OnCombatStateChanged:
@@ -3926,7 +4242,7 @@ void AddSink(int index) {
         }
         break;
 
-    case EventEnum_OnSpellCast:
+    case EventEnum_OnSpellCast: //13
         if (!spellCastEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnSpellCast]->isEmpty()) {
             if (!eventSourceholder) {
                 logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
@@ -3936,19 +4252,6 @@ void AddSink(int index) {
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = true;
             eventSourceholder->AddEventSink(spellCastEventSink);
             logger::debug("EventEnum_OnSpellCast sink added");
-        }
-        break;
-
-    case EventEnum_OnContainerChanged:
-        if (!containerChangedEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
-                return;
-            }
-            containerChangedEventSink->sinkAdded = true;
-            eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = true;
-            eventSourceholder->AddEventSink(containerChangedEventSink);
-            logger::debug("EventEnum_OnContainerChanged sink added");
         }
         break;
 
@@ -4005,6 +4308,20 @@ void AddSink(int index) {
             actionEventSource->AddEventSink(actorActionEventSink);
         }
         break;
+
+    case EventEnum_OnContainerChanged:
+        if (!containerChangedEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+                return;
+            }
+            containerChangedEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = true;
+            eventSourceholder->AddEventSink(containerChangedEventSink);
+            logger::debug("EventEnum_OnContainerChanged sink added");
+        }
+        break;
+
 
     case EventEnum_OnProjectileImpact:
         if (AddHitEventSink()) {
@@ -4198,6 +4515,88 @@ void AddSink(int index) {
             }
         }
         break;
+
+    case EventEnum_OnPerkEntryRun:
+        if (!perkEntryRunEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnPerkEntryRun]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+                return;
+            }
+            perkEntryRunEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnPerkEntryRun]->sinkAdded = true;
+            eventSourceholder->AddEventSink(perkEntryRunEventSink);
+            logger::debug("EventEnum_OnPerkEntryRun sink added");
+        }
+        break;
+
+    case EventEnum_OnTriggerEnter:
+        if (!triggerEnterEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnTriggerEnter]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+                return;
+            }
+            triggerEnterEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnTriggerEnter]->sinkAdded = true;
+            eventSourceholder->AddEventSink(triggerEnterEventSink);
+            logger::debug("EventEnum_OnTriggerEnter sink added");
+        }
+        break;
+
+    case EventEnum_OnTriggerLeave:
+        if (!triggerLeaveEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnTriggerLeave]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+                return;
+            }
+            triggerLeaveEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnTriggerLeave]->sinkAdded = true;
+            eventSourceholder->AddEventSink(triggerLeaveEventSink);
+            logger::debug("EventEnum_OnTriggerLeave sink added");
+        }
+        break;
+
+    case EventEnum_OnPackageStart:
+    case EventEnum_OnPackageChange:
+    case EventEnum_OnPackageEnd:
+        if (!packageEventSink->sinkAdded && !eventDataPtrs[index]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+                return;
+            }
+            packageEventSink->sinkAdded = true;
+            eventDataPtrs[index]->sinkAdded = true;
+            eventSourceholder->AddEventSink(packageEventSink);
+            logger::debug("EventEnum_OnPackage{} sink added", eventName);
+        }
+        break;
+
+    case EventEnum_OnDestructionStageChanged:
+        if (!destructionStageChangedEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnDestructionStageChanged]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+                return;
+            }
+            destructionStageChangedEventSink->sinkAdded = true;
+            eventDataPtrs[EventEnum_OnDestructionStageChanged]->sinkAdded = true;
+            eventSourceholder->AddEventSink(destructionStageChangedEventSink);
+            logger::debug("EventEnum_OnDestructionStageChanged sink added");
+        }
+        break;
+
+    case EventEnum_OnTranslationFailed:
+    case EventEnum_OnTranslationAlmostComplete:
+    case EventEnum_OnTranslationComplete:
+        if (!objectREFRTranslationEventSink->sinkAdded && !eventDataPtrs[index]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+                return;
+            }
+            objectREFRTranslationEventSink->sinkAdded = true;
+            eventDataPtrs[index]->sinkAdded = true;
+            eventSourceholder->AddEventSink(objectREFRTranslationEventSink);
+            logger::debug("EventEnum_OnTranslation{} sink added", eventName);
+        }
+        break;
     }
 }
 
@@ -4208,7 +4607,7 @@ void RemoveSink(int index) {
     if (eventData) {
         eventName = std::string(eventData->sEvent);
     }
-    logger::trace("Removing sink Index[{}] Event[{}].", index, eventName);
+    logger::trace("Index[{}] Event[{}].", index, eventName);
 
     switch (index) {
     case EventEnum_OnCombatStateChanged:
@@ -4372,19 +4771,6 @@ void RemoveSink(int index) {
         }
         break;
 
-    case EventEnum_OnContainerChanged:
-        if (containerChangedEventSink->sinkAdded && eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
-                return;
-            }
-            containerChangedEventSink->sinkAdded = false;
-            eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(containerChangedEventSink);
-            logger::debug("EventEnum_OnContainerChanged sink removed");
-        }
-        break;
-
     case EventEnum_LockChanged:
         if (lockChangedEventSink->sinkAdded && eventDataPtrs[EventEnum_LockChanged]->isEmpty()) {
             if (!eventSourceholder) {
@@ -4438,6 +4824,20 @@ void RemoveSink(int index) {
             logger::debug("actorActionEventSink sink removed");
         }
         break;
+
+    case EventEnum_OnContainerChanged:
+        if (containerChangedEventSink->sinkAdded && eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+                return;
+            }
+            containerChangedEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(containerChangedEventSink);
+            logger::debug("EventEnum_OnContainerChanged sink removed");
+        }
+        break;
+
 
     case EventEnum_OnProjectileImpact:
         if (RemoveHitEventSink()) {
@@ -4617,6 +5017,97 @@ void RemoveSink(int index) {
             if (weatherChangeEventSink->RemoveEventSink()) {
                 logger::debug("EventEnum_OnWeatherChange sink removed");
             }
+        }
+        break;
+
+    //New Events ===================================================================================================================
+    case EventEnum_OnPerkEntryRun:
+        if (perkEntryRunEventSink->sinkAdded && eventDataPtrs[EventEnum_OnPerkEntryRun]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+                return;
+            }
+            perkEntryRunEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnPerkEntryRun]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(perkEntryRunEventSink);
+            logger::debug("EventEnum_OnPerkEntryRun sink removed");
+        }
+        break;
+
+    case EventEnum_OnTriggerEnter:
+        if (triggerEnterEventSink->sinkAdded && eventDataPtrs[EventEnum_OnTriggerEnter]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+                return;
+            }
+            triggerEnterEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnTriggerEnter]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(triggerEnterEventSink);
+            logger::debug("EventEnum_OnTriggerEnter sink removed");
+        }
+        break;
+
+    case EventEnum_OnTriggerLeave:
+        if (triggerLeaveEventSink->sinkAdded && eventDataPtrs[EventEnum_OnTriggerLeave]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+                return;
+            }
+            triggerLeaveEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnTriggerLeave]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(triggerLeaveEventSink);
+            logger::debug("EventEnum_OnTriggerLeave sink removed");
+        }
+        break;
+
+    case EventEnum_OnPackageStart:
+    case EventEnum_OnPackageChange:
+    case EventEnum_OnPackageEnd:
+        if (packageEventSink->sinkAdded && 
+            eventDataPtrs[EventEnum_OnPackageStart]->isEmpty() && 
+            eventDataPtrs[EventEnum_OnPackageChange]->isEmpty() &&
+            eventDataPtrs[EventEnum_OnPackageEnd]->isEmpty()) {
+
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+                return;
+            }
+            packageEventSink->sinkAdded = false;
+            eventDataPtrs[index]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(packageEventSink);
+            logger::debug("EventEnum_OnPackage{} sink removed", eventName);
+        }
+        break;
+
+    case EventEnum_OnDestructionStageChanged:
+        if (destructionStageChangedEventSink->sinkAdded && eventDataPtrs[EventEnum_OnDestructionStageChanged]->isEmpty()) {
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+                return;
+            }
+            destructionStageChangedEventSink->sinkAdded = false;
+            eventDataPtrs[EventEnum_OnDestructionStageChanged]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(destructionStageChangedEventSink);
+            logger::debug("EventEnum_OnDestructionStageChanged sink removed");
+        }
+        break;
+
+    case EventEnum_OnTranslationFailed:
+    case EventEnum_OnTranslationAlmostComplete:
+    case EventEnum_OnTranslationComplete:
+        if (objectREFRTranslationEventSink->sinkAdded &&
+            eventDataPtrs[EventEnum_OnTranslationFailed]->isEmpty() &&
+            eventDataPtrs[EventEnum_OnTranslationAlmostComplete]->isEmpty() &&
+            eventDataPtrs[EventEnum_OnTranslationComplete]->isEmpty()) {
+
+            if (!eventSourceholder) {
+                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+                return;
+            }
+            objectREFRTranslationEventSink->sinkAdded = false;
+            eventDataPtrs[index]->sinkAdded = false;
+            eventSourceholder->RemoveEventSink(objectREFRTranslationEventSink);
+            logger::debug("EventEnum_OnTranslation{} sink removed", eventName);
         }
         break;
     }
@@ -5128,8 +5619,6 @@ void UnregisterActiveMagicEffectForGlobalEvent_All(RE::StaticFunctionTag*, RE::B
     }
 }
 
-// plugin load / maintenance==================================================================================================================================================
-
 void CreateEventSinks() {
     if (!xMarker) { xMarker = RE::TESForm::LookupByID(59); }
 
@@ -5186,6 +5675,16 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_OnEffectFinish] = new EventData("OnEffectFinishGlobal", EventEnum_OnEffectFinish, 4, 'OEs1');
         eventDataPtrs[EventEnum_OnMusicTypeChange] = new EventData("OnMusicTypeChangeGlobal", EventEnum_OnMusicTypeChange, 2, 'MTc0');
         eventDataPtrs[EventEnum_OnWeatherChange] = new EventData("OnWeatherChangeGlobal", EventEnum_OnWeatherChange, 2, 'OWC0');
+        eventDataPtrs[EventEnum_OnPerkEntryRun] = new EventData("OnPerkEntryRunGlobal", EventEnum_OnPerkEntryRun, 3, 'PEr0');
+        eventDataPtrs[EventEnum_OnTriggerEnter] = new EventData("OnTriggerEnterGlobal", EventEnum_OnTriggerEnter, 2, 'TrE0');
+        eventDataPtrs[EventEnum_OnTriggerLeave] = new EventData("OnTriggerLeaveGlobal", EventEnum_OnTriggerLeave, 2, 'TrL0');
+        eventDataPtrs[EventEnum_OnPackageStart] = new EventData("OnPackageStartGlobal", EventEnum_OnPackageStart, 2, 'PaS0');
+        eventDataPtrs[EventEnum_OnPackageChange] = new EventData("OnPackageChangeGlobal", EventEnum_OnPackageChange, 2, 'PaC0');
+        eventDataPtrs[EventEnum_OnPackageEnd] = new EventData("OnPackageEndGlobal", EventEnum_OnPackageEnd, 2, 'PaE0');
+        eventDataPtrs[EventEnum_OnDestructionStageChanged] = new EventData("OnDestructionStageChangedGlobal", EventEnum_OnDestructionStageChanged, 1, 'DSC0');
+        eventDataPtrs[EventEnum_OnTranslationFailed] = new EventData("OnTranslationFailedGlobal", EventEnum_OnTranslationFailed, 1, 'OTr0');
+        eventDataPtrs[EventEnum_OnTranslationAlmostComplete] = new EventData("OnTranslationAlmostCompleteGlobal", EventEnum_OnTranslationAlmostComplete, 1, 'OTr1');
+        eventDataPtrs[EventEnum_OnTranslationComplete] = new EventData("OnTranslationCompleteGlobal", EventEnum_OnTranslationComplete, 1, 'OTr2');
     }
     
     if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
@@ -5217,9 +5716,12 @@ void CreateEventSinks() {
     if (!actorCellEventSink) { actorCellEventSink = new ActorCellEventSink(); }
     if (!musicChangeEventSink) { musicChangeEventSink = new MusicChangeEventSink(); }
     if (!weatherChangeEventSink) { weatherChangeEventSink = new WeatherChangeEventSink(); }
-
-    //logger::info("adding musicChangeEventSink");
-    //musicChangeEventSink->AddEventSink();
+    if (!perkEntryRunEventSink) { perkEntryRunEventSink = new PerkEntryRunEventSink(); }
+    if (!triggerEnterEventSink) { triggerEnterEventSink = new TriggerEnterEventSink(); }
+    if (!triggerLeaveEventSink) { triggerLeaveEventSink = new TriggerLeaveEventSink(); }
+    if (!packageEventSink) { packageEventSink = new PackageEventSink(); }
+    if (!destructionStageChangedEventSink) { destructionStageChangedEventSink = new DestructionStageChangedEventSink(); }
+    if (!objectREFRTranslationEventSink) { objectREFRTranslationEventSink = new ObjectREFRTranslationEventSink(); }
 
     auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
 
@@ -5233,8 +5735,6 @@ void CreateEventSinks() {
             logger::error("eventSourceHolder not found. activateEventSink not added");
         }
     }
-
-    //eventSourceholder->AddEventSink(objectLoadedEventSink);
 
     if (!menuOpenCloseEventSink->sinkAdded && bMenuOpenCloseEventSinkEnabled) {
         auto* ui = RE::UI::GetSingleton();
@@ -5269,6 +5769,7 @@ void CreateEventSinks() {
 
     logger::trace("Event Sinks Created");
 }
+
 
 bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     // vm->RegisterFunction("MyNativeFunction", "DbSkseFunctions", MyNativeFunction);

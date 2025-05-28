@@ -339,6 +339,38 @@ EndEvent
 Event OnPlayerChangeCellGlobal(Cell akNewCell, Cell akPreviousCell)
 EndEvent
 
+;This triggers the same as adding a script fragment to a perk entry point in the creation kit.
+;Not sure what the flag is for, but it's in the TESPerkEntryRunEvent so I included it here.
+Event OnPerkEntryRunGlobal(perk akPerk, ObjectReference akTarget, ObjectReference owner, Int flag)
+EndEvent
+
+Event OnTriggerEnterGlobal(ObjectReference akTriggerBox, ObjectReference akTarget)
+EndEvent
+
+Event OnTriggerLeaveGlobal(ObjectReference akTriggerBox, ObjectReference akTarget)
+EndEvent
+
+Event OnPackageStartGlobal(Actor akActor, Package akPackage)
+EndEvent
+
+Event OnPackageChangeGlobal(Actor akActor, Package akPackage)
+EndEvent
+
+Event OnPackageEndGlobal(Actor akActor, Package akPackage)
+EndEvent
+
+Event OnDestructionStageChangedGlobal(ObjectReference ref, Int oldStage, Int newStage)
+EndEvent
+
+Event OnTranslationFailedGlobal(ObjectReference ref)
+EndEvent
+
+Event OnTranslationAlmostCompleteGlobal(ObjectReference ref)
+EndEvent
+
+Event OnTranslationCompleteGlobal(ObjectReference ref)
+EndEvent
+
 ;Uses polling to detect change. Polling interval determined by the fEventPollingInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
 Event OnMusicTypeChangeGlobal(MusicType newMusicType, MusicType oldMusicType)
 EndEvent

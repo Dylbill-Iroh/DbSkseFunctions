@@ -2,10 +2,12 @@
 #include <typeinfo>
 #include "ConditionFunctions.h"
 #include "GeneralFunctions.h"
+#include "RangeEvents.h"
 
 namespace conditions {
     std::recursive_mutex mutex;
 	std::unordered_map<std::string, RE::TESCondition*> conditionsMap;
+
     std::list<void*> createdConditionParams;
 
     std::string ConditionComparisonToString(int comparison) {
@@ -30,6 +32,271 @@ namespace conditions {
             }
         }
     } 
+    
+    struct ConditionChangedEvent;
+    void DeleteConditionEvent(ConditionChangedEvent* conditionEvent);
+
+    struct ConditionChangedEvent {
+        ConditionChangedEvent(std::string asConditionId, RE::TESCondition* akCondition, RE::TESObjectREFR* akTarget) {
+            std::lock_guard<std::recursive_mutex> lock(mutex);
+            if (!akCondition) {
+                deleted = true;
+            }
+            else {
+                condition = akCondition;
+                target = akTarget;
+                conditionId = asConditionId;
+                sEvent = "On" + conditionId + "Changed";
+                ListenForConditionEventChangeStart();
+            }
+        }
+
+        bool ParamsMatch(std::string asConditionId, RE::TESCondition* akCondition, RE::TESObjectREFR* akTarget) {
+            std::lock_guard<std::recursive_mutex> lock(mutex);
+            return (asConditionId == conditionId && akCondition == condition && akTarget == target);
+        }
+
+        int GetConditionStatus() {
+            std::lock_guard<std::recursive_mutex> lock(mutex);
+            if (condition && !deleted) {
+                return int(condition->IsTrue(target, nullptr));
+            }
+            return -1;
+        }
+
+        bool MarkForDelete() {
+            std::lock_guard<std::recursive_mutex> lock(mutex);
+            bool result = false;
+            if (!deleted) {
+                condition = nullptr;
+                target = nullptr;
+                deleted = true;
+                result = true;
+            }
+            return result;
+        }
+
+        bool IsDeleted() {
+            std::lock_guard<std::recursive_mutex> lock(mutex);
+            return deleted;
+        }
+
+        std::string GetConditionId() {
+            std::lock_guard<std::recursive_mutex> lock(mutex);
+            return conditionId;
+        }
+
+        //can only set if isPolling is the opposite of set
+        bool SetPolling(bool set) {
+            std::lock_guard<std::recursive_mutex> lock(mutex);
+            if (set) {
+                if (!isPolling) {
+                    isPolling = true;
+                    return true;
+                }
+                else {
+                    return false;
+                }
+            }
+            else {
+                if (isPolling) {
+                    isPolling = false;
+                    return true;
+                }
+                else {
+                    return false;
+                }
+            }
+        }
+
+    private:
+        void ListenForConditionEventChangeStart() {
+            ListenForConditionEventChange();
+        }
+
+        void ListenForConditionEventChange() {
+            std::thread t([=]() {
+                if (!SetPolling(true)) {
+                    logger::trace("already polling");
+                }
+                else { //succussfully set polling
+
+                    int startStatus = GetConditionStatus();
+                    int status = startStatus;
+
+                    if (status != -1) {
+                        while (startStatus == status) {
+                            //logger::info("while loop");
+                            std::this_thread::sleep_for(std::chrono::milliseconds(eventPollingInterval));
+                            status = GetConditionStatus();
+                        }
+                    }
+
+                    if (status != -1) {
+                        HandleConditionChangeEvent(bool(status));
+                        SetPolling(false);
+                        ListenForConditionEventChangeStart();
+                    }
+                    else {
+                        DeleteConditionEvent(this);
+                    }
+                }
+            });
+            t.detach();
+        }
+
+        void HandleConditionChangeEvent(bool isTrue) {
+            auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+            if (vm) {
+                auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)target, (bool)isTrue);
+                vm->SendEventAll(sEvent, args);
+                delete args;
+            }
+        }
+
+        bool deleted = false;
+        bool isPolling = false;
+        RE::TESObjectREFR* target = nullptr;
+        RE::TESCondition* condition = nullptr;
+        RE::BSFixedString sEvent = nullptr;
+        std::string conditionId = "";
+    };
+
+    std::vector<ConditionChangedEvent*> conditionEvents;
+
+    void DeleteConditionEvent(ConditionChangedEvent* conditionEvent) {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        if (conditionEvent) {
+            conditionEvent->MarkForDelete(); //ensure condition and target are set to nullptr
+            auto it = std::find(conditionEvents.begin(), conditionEvents.end(), conditionEvent);
+
+            if (it != conditionEvents.end()) {
+                conditionEvents.erase(it);
+            }
+            delete conditionEvent;
+        }
+    }
+
+    ConditionChangedEvent* GetConditionEvent(std::string asConditionId, RE::TESObjectREFR* akTarget) {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        auto it = conditionsMap.find(asConditionId);
+        if (it != conditionsMap.end()) {
+            auto* condition = it->second;
+            if (condition) {
+                for (ConditionChangedEvent* conditionEvent : conditionEvents) {
+                    if (conditionEvent) {
+                        if (conditionEvent->ParamsMatch(asConditionId, condition, akTarget)) {
+                            return conditionEvent;
+                        }
+                    }
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    bool ConditionEventExists(RE::StaticFunctionTag*, std::string conditionId, RE::TESObjectREFR* akTarget) {
+        return GetConditionEvent(conditionId, akTarget) != nullptr;
+    }
+
+    bool CreateConditionEvent(RE::StaticFunctionTag*, std::string conditionId, RE::TESObjectREFR* akTarget) {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        ConditionChangedEvent* conditionEvent = GetConditionEvent(conditionId, akTarget);
+        if (!conditionEvent) {
+            auto it = conditionsMap.find(conditionId);
+            if (it != conditionsMap.end()) {
+                auto* condition = it->second;
+                if (condition) {
+                    ConditionChangedEvent* newConditionEvent = new ConditionChangedEvent(conditionId, condition, akTarget);
+                    if (!newConditionEvent->IsDeleted()) {
+                        conditionEvents.push_back(newConditionEvent);
+                    }
+                    else {
+                        logger::error("condition for conditionId[{}] is nullptr", conditionId);
+                        delete newConditionEvent;
+                    }
+                    logger::debug("condition event for conditionId[{}] and target[{}] created",
+                        conditionId, gfuncs::GetFormNameAndId(akTarget));
+                    return true;
+                }
+                else {
+                    logger::error("condition for conditionId[{}] is nullptr", conditionId);
+                }
+            }
+            else {
+                logger::error("condition for conditionId[{}] not found", conditionId);
+            }
+        }
+        else {
+            logger::debug("condition event for conditionId[{}] and target[{}] already exists", 
+                conditionId, gfuncs::GetFormNameAndId(akTarget));
+
+            return false;
+        }
+    }
+
+    bool DestroyConditionEvent(RE::StaticFunctionTag*, std::string conditionId, RE::TESObjectREFR* akTarget) {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        auto it = conditionsMap.find(conditionId);
+        if (it != conditionsMap.end()) {
+            auto* condition = it->second;
+            if (condition) {
+                for (ConditionChangedEvent* conditionEvent : conditionEvents) {
+                    if (conditionEvent) {
+                        if (conditionEvent->ParamsMatch(conditionId, condition, akTarget)) {
+                            return conditionEvent->MarkForDelete();
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+    
+    int DestroyAllConditionEvents(RE::StaticFunctionTag*, std::string conditionId) {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        int count = 0;
+        auto it = conditionsMap.find(conditionId);
+        if (it != conditionsMap.end()) {
+            auto* condition = it->second;
+            if (condition) {
+                for (ConditionChangedEvent* conditionEvent : conditionEvents) {
+                    if (conditionEvent) {
+                        if (conditionEvent->GetConditionId() == conditionId) {
+                            if (conditionEvent->MarkForDelete()) {
+                                count++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return count;
+    }
+
+    int CountConditionEvents(RE::StaticFunctionTag*, std::string conditionId) {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        int count = 0;
+        auto it = conditionsMap.find(conditionId);
+        if (it != conditionsMap.end()) {
+            auto* condition = it->second;
+            if (condition) {
+                for (ConditionChangedEvent* conditionEvent : conditionEvents) {
+                    if (conditionEvent) {
+                        if (conditionEvent->GetConditionId() == conditionId) {
+                            if (!conditionEvent->IsDeleted()) {
+                                count++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return count;
+    }
 
     void DestroyConditionParameter(RE::TESConditionItem* item, int paramIndex) {
         std::lock_guard<std::recursive_mutex> lock(mutex);
@@ -45,6 +312,8 @@ namespace conditions {
 
     void DestroyConditionCpp(std::string conditionId) {
         std::lock_guard<std::recursive_mutex> lock(mutex);
+
+        DestroyAllConditionEvents(nullptr, conditionId);
 
         logger::trace("conditionId[{}]", conditionId);
 
@@ -261,7 +530,6 @@ namespace conditions {
 
         if (it == conditionsMap.end()) {
             logger::warn("conditionId[{}] not found", conditionId);
-            
             return result;
         }
 
@@ -278,8 +546,16 @@ namespace conditions {
         
         return result;
     }
-
+    
     bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
+        //events
+        vm->RegisterFunction("ConditionEventExists", "DbConditionFunctions", ConditionEventExists);
+        vm->RegisterFunction("CreateConditionEvent", "DbConditionFunctions", CreateConditionEvent);
+        vm->RegisterFunction("DestroyConditionEvent", "DbConditionFunctions", DestroyConditionEvent);
+        vm->RegisterFunction("DestroyAllConditionEvents", "DbConditionFunctions", DestroyAllConditionEvents);
+        vm->RegisterFunction("CountConditionEvents", "DbConditionFunctions", CountConditionEvents);
+
+        //functions
         vm->RegisterFunction("CreateCondition", "DbConditionFunctions", CreateCondition);
         vm->RegisterFunction("DestroyCondition", "DbConditionFunctions", DestroyCondition);
         vm->RegisterFunction("ConditionExists", "DbConditionFunctions", ConditionExists);
