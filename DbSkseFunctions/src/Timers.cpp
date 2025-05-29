@@ -366,12 +366,7 @@ struct NoMenuModeTimer {
         handle = akHandle;
         timerID = aitimerID;
 
-        bool isInMenuMode = false;
-        openedMenusMutex.lock();
-        isInMenuMode = inMenuMode;
-        openedMenusMutex.unlock();
-
-        if (!isInMenuMode) {
+        if (!IsInMenu(nullptr)) {
             StartTimer();
         }
         else {
@@ -394,14 +389,9 @@ struct NoMenuModeTimer {
             std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
 
             if (!cancelled) {
-                bool isInMenuMode = false;
-                openedMenusMutex.lock();
-                isInMenuMode = inMenuMode;
-                openedMenusMutex.unlock();
-
-                if (isInMenuMode) {
+                if (IsInMenu(nullptr)) {
                     started = false;
-                    float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeMenuWasOpened);
+                    float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), GetlastTimeMenuWasOpened());
                     currentInterval += timeInMenu;
                     totalTimePaused += timeInMenu;
                     lastMenuCheckSet = true;
@@ -425,7 +415,7 @@ struct NoMenuModeTimer {
                         finished = true;
                     }
                 }
-                else if (!isInMenuMode && !cancelled) {
+                else if (!IsInMenu(nullptr) && !cancelled) {
                     StartTimer();
                 }
                 else if (!cancelled) {
@@ -795,7 +785,7 @@ struct Timer {
                 if (ui) {
                     if (ui->GameIsPaused()) {
                         started = false;
-                        float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeGameWasPaused);
+                        float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), GetlastTimeGameWasPaused());
                         currentInterval += timeInMenu;
                         totalTimePaused += timeInMenu;
                         lastPausedTimeCheckSet = true;

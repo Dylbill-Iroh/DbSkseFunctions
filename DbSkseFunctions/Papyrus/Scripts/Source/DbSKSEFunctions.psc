@@ -382,10 +382,12 @@ string[] function GetProjectileCollidedLayerNames(ObjectReference projectileRef)
 ; DroppingPick = 46
 string function GetCollisionLayerName(int layer) Global Native
 
-;get the last object reference that the player activated
+;Get the last object reference that the player activated
+;Requires the bActivateEventSinkEnabledByDefault setting in the DbSkseFunctions.ini file to be enabled.
 ObjectReference function GetLastPlayerActivatedRef() Global Native
 
-;get the last object reference that the player activated after a menu was opened
+;Get the last object reference that the player activated after a menu was opened
+;Requires the bMenuOpenCloseEventSinkEnabled and bActivateEventSinkEnabledByDefault settings in the DbSkseFunctions.ini file to be enabled.
 ObjectReference function GetLastPlayerMenuActivatedRef() Global Native
 
 ;If the ref is an ashpile, gets the actor linked to it, if any. If the ref is an actor, gets the ashpile linked to it, if any. 

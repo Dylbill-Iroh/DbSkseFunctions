@@ -1,10 +1,18 @@
 #pragma once
 
-extern std::mutex openedMenusMutex;
+extern std::recursive_mutex openedMenusMutex;
 extern bool inMenuMode;
 extern std::string lastMenuOpened;
 extern std::chrono::system_clock::time_point lastTimeMenuWasOpened;
 extern std::chrono::system_clock::time_point lastTimeGameWasPaused;
+
+std::chrono::system_clock::time_point GetlastTimeMenuWasOpened();
+
+void SetlastTimeMenuWasOpened(std::chrono::system_clock::time_point timePoint);
+
+std::chrono::system_clock::time_point GetlastTimeGameWasPaused();
+
+void SetlastTimeGameWasPaused(std::chrono::system_clock::time_point timePoint);
 
 float GetGameHoursPassed(RE::StaticFunctionTag*);
 

@@ -8,7 +8,7 @@ enum debugLevel { notification, messageBox };
 
 std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
 
-std::mutex openedMenusMutex;
+std::recursive_mutex openedMenusMutex;
 bool inMenuMode = false;
 std::string lastMenuOpened = "";
 std::chrono::system_clock::time_point lastTimeMenuWasOpened;
@@ -16,6 +16,26 @@ std::chrono::system_clock::time_point lastTimeGameWasPaused;
 
 //forward dec
 std::string GetDescription(RE::TESForm* akForm, std::string newLineReplacer);
+
+std::chrono::system_clock::time_point GetlastTimeMenuWasOpened() {
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    return lastTimeMenuWasOpened;
+}
+
+void SetlastTimeMenuWasOpened(std::chrono::system_clock::time_point timePoint) {
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    lastTimeMenuWasOpened = timePoint;
+}
+
+std::chrono::system_clock::time_point GetlastTimeGameWasPaused() {
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    return lastTimeGameWasPaused;
+}
+
+void SetlastTimeGameWasPaused(std::chrono::system_clock::time_point timePoint) {
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    lastTimeGameWasPaused = timePoint;
+}
 
 float GetGameHoursPassed(RE::StaticFunctionTag*) {
     auto* calendar = RE::Calendar::GetSingleton(); 
@@ -48,6 +68,7 @@ bool IsGamePaused(RE::StaticFunctionTag*) {
 }
 
 bool IsInMenu(RE::StaticFunctionTag*) {
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
     auto* ui = RE::UI::GetSingleton();
     if (ui) {
         //hud menu is always open, unless closed by another mod.
@@ -59,17 +80,12 @@ bool IsInMenu(RE::StaticFunctionTag*) {
         }
     }
     else {
-        openedMenusMutex.lock();
-        bool result = inMenuMode;
-        openedMenusMutex.unlock();
-        return result;
+        return inMenuMode;
     }
 }
 
 std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
-    openedMenusMutex.lock();
-    std::string result = lastMenuOpened;
-    openedMenusMutex.unlock();
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
     return lastMenuOpened;
 }
 

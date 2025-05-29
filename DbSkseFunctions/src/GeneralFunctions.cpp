@@ -668,6 +668,31 @@ namespace gfuncs {
         }
     }
 
+    bool IsRefActivatedMenu(RE::BSFixedString menu) {
+        if (menu == RE::DialogueMenu::MENU_NAME) { return true; }
+        if (menu == RE::LockpickingMenu::MENU_NAME) { return true; }
+        if (menu == RE::ContainerMenu::MENU_NAME) { return true; }
+        if (menu == RE::BarterMenu::MENU_NAME) { return true; }
+        if (menu == RE::CraftingMenu::MENU_NAME) { return true; }
+        if (menu == RE::BookMenu::MENU_NAME) { return true; }
+        if (menu == RE::GiftMenu::MENU_NAME) { return true; }
+        return false;
+    }
+
+    bool IsRefActivatedMenuOpen() {
+        auto* ui = RE::UI::GetSingleton();
+        if (ui) {
+            if (ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME)) { return true; }
+            if (ui->IsMenuOpen(RE::LockpickingMenu::MENU_NAME)) { return true; }
+            if (ui->IsMenuOpen(RE::ContainerMenu::MENU_NAME)) { return true; }
+            if (ui->IsMenuOpen(RE::BarterMenu::MENU_NAME)) { return true; }
+            if (ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME)) { return true; }
+            if (ui->IsMenuOpen(RE::BookMenu::MENU_NAME)) { return true; }
+            if (ui->IsMenuOpen(RE::GiftMenu::MENU_NAME)) { return true; }
+        }
+        return false;
+    }
+
     bool SetAliasQuestObjectFlag(RE::BGSBaseAlias* akAlias, bool set) {
         if (!akAlias) {
             return false;

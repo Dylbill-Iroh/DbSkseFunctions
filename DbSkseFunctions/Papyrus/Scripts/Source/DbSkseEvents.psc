@@ -68,7 +68,7 @@ EndEvent
 
 Same goes for ActiveMagicEffects:
 ===================================================================================================================================================================================================================================================================================
-Scriptname MyRefAliasScript extends ReferenceAlias 
+Scriptname MyMagicEffectScript extends ActiveMagicEffect 
 
 Event OnEffectStart(Actor akTarget, Actor akCaster)
 	;these two lines achieve the same thing

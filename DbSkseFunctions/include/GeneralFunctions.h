@@ -86,6 +86,10 @@ namespace gfuncs {
 
     void RefreshItemMenu();
 
+    bool IsRefActivatedMenu(RE::BSFixedString menu);
+
+    bool IsRefActivatedMenuOpen();
+
     bool SetAliasQuestObjectFlag(RE::BGSBaseAlias* akAlias, bool set);
 
     bool IsAliasQuestObjectFlagSet(RE::BGSBaseAlias* akAlias);

@@ -54,7 +54,6 @@ bool bPlayerIsInCombat = false;
 bool bRegisteredForPlayerCombatChange = false;
 //bool inMenuMode = false; //in utility.h
 bool gamePaused = false;
-bool DbSkseCppCallbackEventsAttached = false;
 //std::string lastMenuOpened; //in utility.h
 RE::TESObjectREFR* lastPlayerActivatedRef = nullptr;
 RE::TESObjectREFR* menuRef = nullptr;
@@ -181,30 +180,39 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(9.8);
+    return float(9.9);
+}
+
+void AttachDbSksePersistentVariablesScript() {
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (player) {
+        if (!gfuncs::IsScriptAttachedToRef(player, "DbSksePersistentVariables")) {
+            logger::info("Attaching DbSksePersistentVariables script to player.");
+            ConsoleUtil::ExecuteCommand("player.aps DbSksePersistentVariables", nullptr);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100)); //wait .1 seconds for console command to finish.
+        }
+    }
 }
 
 RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
-    openedMenusMutex.lock();
-    
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
     RE::TESObjectREFR* returnRef = nullptr;
-    if (gfuncs::IsFormValid(lastPlayerActivatedRef, true)) {
+    if (gfuncs::IsFormValid(lastPlayerActivatedRef)) {
         returnRef = lastPlayerActivatedRef;
     }
-
-    openedMenusMutex.unlock();
     return returnRef;
 }
 
 RE::TESObjectREFR* GetLastPlayerMenuActivatedRef(RE::StaticFunctionTag*) {
-    openedMenusMutex.lock();
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
 
     RE::TESObjectREFR* returnRef = nullptr;
     if (gfuncs::IsFormValid(menuRef, true)) {
         returnRef = menuRef;
     }
     
-    openedMenusMutex.unlock();
+    //openedMenusMutex.unlock();
     return returnRef;
 }
 
@@ -212,63 +220,6 @@ void ExecuteConsoleCommand(RE::StaticFunctionTag*, std::string a_command, RE::TE
     logger::trace("called. Command = {}", a_command);
     ConsoleUtil::ExecuteCommand(a_command, objRef);
 }
-
-//event callbacks from papyrus=========================================================================================================================
-//no longer needed as not referencing ammo.projectile at all anymore
-// 
-//from papyrus
-void SaveProjectileForAmmo(RE::StaticFunctionTag*, RE::TESAmmo* akAmmo, RE::BGSProjectile* akProjectile) {
-    //if (gfuncs::IsFormValid(akAmmo) && gfuncs::IsFormValid(akProjectile)) {
-    //    RE::TESForm* ammoProjectileForm = RE::TESForm::LookupByID(akAmmo->data.projectile->GetFormID());
-    //    if (!ammoProjectileForm) { //projectile for ammo not set correctly
-    //        akAmmo->data.projectile = akProjectile;
-    //        logger::debug("ammo {} projectile {} saved from papyrus", gfuncs::GetFormDataString(akAmmo), gfuncs::GetFormDataString(akAmmo->data.projectile));
-    //    }
-    //}
-}
-
-//initially ammo->data.projectile is not set correctly and causes CTDs if trying to access. 
-//This saves ammo projectiles from papyrus if necessarry so they are set correctly
-void SaveAllAmmoProjectilesFromPapyrus() {
-    //auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    //if (!vm) {
-    //    return;
-    //}
-
-    //std::vector<RE::TESAmmo*> allAmmos;
-    //const auto& [allForms, lock] = RE::TESForm::GetAllForms();
-    //for (auto& [id, form] : *allForms) {
-    //    if (gfuncs::IsFormValid(form)) {
-    //        RE::TESAmmo* ammo = form->As<RE::TESAmmo>();
-    //        if (gfuncs::IsFormValid(ammo)) {
-    //            allAmmos.push_back(ammo);
-    //        }
-    //    }
-    //}
-    //auto* args = RE::MakeFunctionArguments((std::vector<RE::TESAmmo*>)allAmmos);
-    //RE::BSFixedString sEvent = "DbSkseFunctions_OnSaveAllAmmoProjectiles";
-    //vm->SendEventAll(sEvent, args);
-    //logger::debug("sending event to papyrus to save ammo projectiles. Size of ammos = {}", allAmmos.size());
-}
-
-//called from DbSkseCppCallbackEvents papyrus script on init and game load
-void SetDbSkseCppCallbackEventsAttached(RE::StaticFunctionTag*) {
-    //DbSkseCppCallbackEventsAttached = true;
-    //logger::trace("called");
-    //SaveAllAmmoProjectilesFromPapyrus();
-}
-
-void DbSkseCppCallbackLoad() {
-    //if (!gfuncs::IsScriptAttachedToRef(playerRef, "DbSkseCppCallbackEvents")) {
-    //    logger::debug("attaching DbSkseCppCallbackEvents script to the player.");
-    //    ConsoleUtil::ExecuteCommand("player.aps DbSkseCppCallbackEvents", nullptr);
-    // 
-    //}
-    //else {
-    //    logger::debug("DbSkseCppCallbackEvents script already attached to the player");
-    //}
-}
-
 
 //Papyrus Events =============================================================================================================================
 
@@ -1329,6 +1280,7 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
     bool sinkAdded = false;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::TESActivateEvent* event, RE::BSTEventSource<RE::TESActivateEvent>*/*source*/) {
+        std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
 
         if (!event) {
             logger::error("event doesn't exist");
@@ -1364,9 +1316,15 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
             if (playerRef) {
                 if (activatorRef == playerRef) {
                     if (activatedRef) {
-                        openedMenusMutex.lock();
                         lastPlayerActivatedRef = activatedRef;
-                        openedMenusMutex.unlock();
+
+                        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+                        if (vm) {
+                            AttachDbSksePersistentVariablesScript();
+                            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatedRef);
+                            vm->SendEventAll("OnDbSksePlayerActivatedRef", args); 
+                            delete args;
+                        }
                     }
                 }
             }
@@ -2150,6 +2108,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
     bool sinkAdded = false;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::ItemCrafted::Event* event, RE::BSTEventSource<RE::ItemCrafted::Event>*/*source*/) {
+        std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
 
         if (!event) {
             logger::error("Event is nullptr");
@@ -2183,7 +2142,6 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
             }
         }
 
-        openedMenusMutex.lock();
 
         if (!gfuncs::IsFormValid(workbenchRef)) {
             if (gfuncs::IsFormValid(menuRef, true)) {
@@ -2208,7 +2166,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
         if (gfuncs::IsFormValid(event->item)) {
             craftedItem = event->item;
             if (!gfuncs::IsFormValid(craftedItem)) {
-                openedMenusMutex.unlock();
+                //openedMenusMutex.unlock();
                 return RE::BSEventNotifyControl::kContinue;
             }
         }
@@ -2229,7 +2187,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
             logger::trace("Event: workbenchRef[{}] craftedItem[{}] benchType[{}] skill[{}]",
                 gfuncs::GetFormName(craftedItem), gfuncs::GetFormName(workbenchRef), benchType, skill);
         }
-        openedMenusMutex.unlock();
+        //openedMenusMutex.unlock();
 
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -2241,6 +2199,8 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
     bool sinkAdded = false;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::ItemsPickpocketed::Event* event, RE::BSTEventSource<RE::ItemsPickpocketed::Event>*/*source*/) {
+        std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+
         if (!event) {
             logger::error("Event is nullptr");
             return RE::BSEventNotifyControl::kContinue;
@@ -2258,12 +2218,10 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
 
         RE::Actor* target = nullptr;
 
-        openedMenusMutex.lock();
-
         if (gfuncs::IsFormValid(menuRef, true)) {
             target = menuRef->As<RE::Actor>();
             if (!gfuncs::IsFormValid(target)) {
-                openedMenusMutex.unlock();
+                //openedMenusMutex.unlock();
                 return RE::BSEventNotifyControl::kContinue;
             }
         }
@@ -2280,7 +2238,7 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
             logger::trace("numItems[{}] form[{}]", event->numItems, gfuncs::GetFormName(akForm));
         }
 
-        openedMenusMutex.unlock();
+        //openedMenusMutex.unlock();
         return RE::BSEventNotifyControl::kContinue;
     }
 };
@@ -3782,18 +3740,6 @@ bool IsItemMenuOpen() {
     return false;
 }
 
-bool IsRefActivatedMenu(RE::BSFixedString menu) {
-    return (
-        menu == RE::DialogueMenu::MENU_NAME ||
-        menu == RE::BarterMenu::MENU_NAME ||
-        menu == RE::GiftMenu::MENU_NAME ||
-        menu == RE::LockpickingMenu::MENU_NAME ||
-        menu == RE::ContainerMenu::MENU_NAME ||
-        menu == RE::BookMenu::MENU_NAME ||
-        menu == RE::CraftingMenu::MENU_NAME
-        );
-}
-
 class InputEventSink : public RE::BSTEventSink<RE::InputEvent*> {
 
 public:
@@ -3845,9 +3791,8 @@ public:
 InputEventSink* inputEventSink;
 
 void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
-    //std::string sMenuName = std::string(bsMenuName);
+    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
 
-    openedMenusMutex.lock();
     auto openedMenusItr = std::find(openedMenus.begin(), openedMenus.end(), sMenuName);
     auto* ui = RE::UI::GetSingleton();
 
@@ -3863,26 +3808,33 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
         if (ui) {
             if (ui->GameIsPaused() && !gamePaused) {
                 gamePaused = true;
-                lastTimeGameWasPaused = std::chrono::system_clock::now();
+                SetlastTimeGameWasPaused(std::chrono::system_clock::now());
                 logger::trace("game was paused");
             }
         }
+
         if (!inMenuMode) { //opened menu
             inMenuMode = true;
-            lastTimeMenuWasOpened = std::chrono::system_clock::now();
+            SetlastTimeMenuWasOpened(std::chrono::system_clock::now());
             logger::trace("inMenuMode = true");
+        }
+
+        if (bActivateEventSinkEnabledByDefault) {
+            if (gfuncs::IsRefActivatedMenu(sMenuName)) {
+                menuRef = lastPlayerActivatedRef;
+                auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+                if (vm) {
+                    AttachDbSksePersistentVariablesScript();
+                    auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)menuRef);
+                    vm->SendEventAll("OnDbSksePlayerActivatedMenuRef", args);
+                    delete args;
+                }
+            }
         }
 
         //AddToMenusCurrentlyOpen(event->menuName);
         /* std::thread tAddToMenusCurrentlyOpen(AddToMenusCurrentlyOpen, event->menuName);
         tAddToMenusCurrentlyOpen.join();*/
-
-        if (bActivateEventSinkEnabledByDefault) {
-            if (IsRefActivatedMenu(sMenuName)) {
-                menuRef = lastPlayerActivatedRef;
-                logger::trace("Menu[{}] opened. saved menuRef[{}]", sMenuName, gfuncs::GetFormName(menuRef));
-            }
-        }
 
         if (ui) {
             if (ui->IsItemMenuOpen()) {
@@ -3892,8 +3844,8 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
                         if (inputManager) {
                             inputEventSink->sinkAdded = true;
                             inputManager->AddEventSink(inputEventSink);
+                            logger::trace("item menu [{}] opened. Added input event sink", sMenuName);
                         }
-                        logger::trace("item menu [{}] opened. Added input event sink", sMenuName);
                     }
                 }
             }
@@ -3906,7 +3858,7 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
             if (!ui->GameIsPaused() && gamePaused) {
                 gamePaused = false;
                 auto now = std::chrono::system_clock::now();
-                float fGamePausedTime = gfuncs::timePointDiffToFloat(now, lastTimeGameWasPaused);
+                float fGamePausedTime = gfuncs::timePointDiffToFloat(now, GetlastTimeGameWasPaused());
                 //UpdateTimers(fGamePausedTime);
                 std::thread tUpdateTimers(timers::UpdateTimers, fGamePausedTime);
                 tUpdateTimers.detach();
@@ -3918,16 +3870,15 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
             openedMenus.erase(openedMenusItr);
         }
 
-        if (openedMenus.size() == 0) { //closed menu
+        if (openedMenus.size() == 0) { //closed all menus
             inMenuMode = false;
             auto now = std::chrono::system_clock::now();
-            float timePointDiff = gfuncs::timePointDiffToFloat(now, lastTimeMenuWasOpened);
+            float timePointDiff = gfuncs::timePointDiffToFloat(now, GetlastTimeMenuWasOpened());
             //UpdateNoMenuModeTimers(timePointDiff);
             std::thread tUpdateNoMenuModeTimers(timers::UpdateNoMenuModeTimers, timePointDiff);
             tUpdateNoMenuModeTimers.detach();
             logger::trace("inMenuMode = false");
         }
-
 
         if (ui) {
             if (!ui->IsItemMenuOpen()) {
@@ -3942,7 +3893,6 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
             }
         }
     }
-    openedMenusMutex.unlock();
 }
 
 struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
@@ -3975,8 +3925,9 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         bool opening = event->opening;
 
         if (sMenuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
-            std::thread t(HandleMenuOpenCloseEvent, opening, sMenuName);
-            t.detach();
+            HandleMenuOpenCloseEvent(opening, sMenuName);
+            //std::thread t(HandleMenuOpenCloseEvent, opening, sMenuName);
+            //t.detach();
         }
 
         return RE::BSEventNotifyControl::kContinue;
@@ -5780,9 +5731,6 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     gvm = vm;
 
     //functions 
-    vm->RegisterFunction("SaveProjectileForAmmo", "DbSkseCppCallbackEvents", SaveProjectileForAmmo);
-    vm->RegisterFunction("SetDbSkseCppCallbackEventsAttached", "DbSkseCppCallbackEvents", SetDbSkseCppCallbackEventsAttached);
-
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
 
     vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
@@ -6037,12 +5985,8 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
         //}
 
         case SKSE::MessagingInterface::kNewGame: {
-            //logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
-
-            DbSkseCppCallbackEventsAttached = false;
-            //DbSkseCppCallbackLoad(); //attach papyrus DbSkseCppCallbackEvents script to the player and save all ammo projectiles
             RegisterActorsForBowDrawAnimEvents();
-            //logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
+            logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
             break;
         }
         case SKSE::MessagingInterface::kDataLoaded: {
