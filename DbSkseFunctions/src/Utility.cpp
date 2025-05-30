@@ -8,34 +8,17 @@ enum debugLevel { notification, messageBox };
 
 std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
 
-std::recursive_mutex openedMenusMutex;
-bool inMenuMode = false;
-std::string lastMenuOpened = "";
-std::chrono::system_clock::time_point lastTimeMenuWasOpened;
-std::chrono::system_clock::time_point lastTimeGameWasPaused;
+//std::recursive_mutex openedMenusMutex; 
+
+//tst::TSWrapper<bool> inMenuMode = false;
+//tst::TSWrapper<std::string> lastMenuOpened;
+//tst::TSWrapper <std::chrono::system_clock::time_point> lastTimeMenuWasOpened;
+//tst::TSWrapper <std::chrono::system_clock::time_point> lastTimeGameWasPaused;
 
 //forward dec
 std::string GetDescription(RE::TESForm* akForm, std::string newLineReplacer);
 
-std::chrono::system_clock::time_point GetlastTimeMenuWasOpened() {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
-    return lastTimeMenuWasOpened;
-}
-
-void SetlastTimeMenuWasOpened(std::chrono::system_clock::time_point timePoint) {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
-    lastTimeMenuWasOpened = timePoint;
-}
-
-std::chrono::system_clock::time_point GetlastTimeGameWasPaused() {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
-    return lastTimeGameWasPaused;
-}
-
-void SetlastTimeGameWasPaused(std::chrono::system_clock::time_point timePoint) {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
-    lastTimeGameWasPaused = timePoint;
-}
+SharedUIVariables sharedVars;
 
 float GetGameHoursPassed(RE::StaticFunctionTag*) {
     auto* calendar = RE::Calendar::GetSingleton(); 
@@ -68,7 +51,8 @@ bool IsGamePaused(RE::StaticFunctionTag*) {
 }
 
 bool IsInMenu(RE::StaticFunctionTag*) {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
+
     auto* ui = RE::UI::GetSingleton();
     if (ui) {
         //hud menu is always open, unless closed by another mod.
@@ -80,12 +64,20 @@ bool IsInMenu(RE::StaticFunctionTag*) {
         }
     }
     else {
+        bool inMenuMode;
+        sharedVars.read([&](const SharedUIVariables& vars) {
+            inMenuMode = vars.inMenuMode;
+        });
         return inMenuMode;
     }
 }
 
 std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
+    std::string lastMenuOpened;
+    sharedVars.read([&](const SharedUIVariables& vars) {
+        lastMenuOpened = vars.lastMenuOpened;
+    });
     return lastMenuOpened;
 }
 

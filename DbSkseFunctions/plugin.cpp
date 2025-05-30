@@ -52,13 +52,17 @@
 
 bool bPlayerIsInCombat = false;
 bool bRegisteredForPlayerCombatChange = false;
-//bool inMenuMode = false; //in utility.h
-bool gamePaused = false;
-//std::string lastMenuOpened; //in utility.h
-RE::TESObjectREFR* lastPlayerActivatedRef = nullptr;
-RE::TESObjectREFR* menuRef = nullptr;
 
-std::vector<std::string> openedMenus;
+//bool inMenuMode = false; //in utility.h
+//tst::TSWrapper<bool> gamePaused = false;
+//std::string lastMenuOpened; //in utility.h
+//tst::TSWrapper<RE::TESObjectREFR*> lastPlayerActivatedRef = nullptr;
+//tst::TSWrapper<RE::TESObjectREFR*> menuRef = nullptr;
+
+//thread safe vector
+//tst::TSvector<std::string> openedMenus;
+
+
 //std::mutex openedMenusMutex; //in utility.h
 
 //using openedMenus vector with mutex lock instead
@@ -180,11 +184,11 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(9.9);
+    return float(10.0);
 }
 
 void AttachDbSksePersistentVariablesScript() {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (player) {
         if (!gfuncs::IsScriptAttachedToRef(player, "DbSksePersistentVariables")) {
@@ -196,20 +200,32 @@ void AttachDbSksePersistentVariablesScript() {
 }
 
 RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
+    
+    //gets the TESObjectREFR in a thread safe way.
     RE::TESObjectREFR* returnRef = nullptr;
-    if (gfuncs::IsFormValid(lastPlayerActivatedRef)) {
-        returnRef = lastPlayerActivatedRef;
+    sharedVars.read([&](const SharedUIVariables& vars) {
+        returnRef = vars.lastPlayerActivatedRef;
+    });
+    
+    if (!gfuncs::IsFormValid(returnRef)) {
+        returnRef = nullptr;
     }
+
     return returnRef;
 }
 
 RE::TESObjectREFR* GetLastPlayerMenuActivatedRef(RE::StaticFunctionTag*) {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
 
+    //gets the TESObjectREFR in a thread safe way.
     RE::TESObjectREFR* returnRef = nullptr;
-    if (gfuncs::IsFormValid(menuRef, true)) {
-        returnRef = menuRef;
+    sharedVars.read([&](const SharedUIVariables& vars) {
+        returnRef = vars.menuRef;
+    });
+
+    if (!gfuncs::IsFormValid(returnRef)) {
+        returnRef = nullptr;
     }
     
     //openedMenusMutex.unlock();
@@ -1276,11 +1292,61 @@ struct FurnitureEventSink : public RE::BSTEventSink<RE::TESFurnitureEvent> {
     }
 };
 
+void HandleActivateEvent(RE::TESObjectREFRPtr actionRef, RE::TESObjectREFRPtr objectActivated) {
+    RE::TESObjectREFR* activatorRef = nullptr;
+    if (actionRef) {
+        activatorRef = actionRef.get();
+        if (!gfuncs::IsFormValid(activatorRef)) {
+            activatorRef = nullptr;
+        }
+    }
+
+    RE::TESObjectREFR* activatedRef = nullptr;
+    if (objectActivated) {
+        activatedRef = objectActivated.get();
+        if (!gfuncs::IsFormValid(activatedRef, true)) {
+            activatedRef = nullptr;
+        }
+    }
+
+    //RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
+
+    if (bActivateEventSinkEnabledByDefault) {
+        RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
+
+        if (playerRef) {
+            if (activatorRef == playerRef) {
+                if (activatedRef) {
+                    sharedVars.update([activatedRef](SharedUIVariables& vars) {
+                        vars.lastPlayerActivatedRef = activatedRef;
+                    });
+
+                    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+                    if (vm) {
+                        AttachDbSksePersistentVariablesScript();
+                        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatedRef);
+                        vm->SendEventAll("OnDbSksePlayerActivatedRef", args);
+                        delete args;
+                    }
+                }
+            }
+        }
+    }
+
+    if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded) {
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActivate]->GetHandles({ activatorRef, activatedRef });
+        if (handles.size() > 0) {
+            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatorRef, (RE::TESObjectREFR*)activatedRef);
+            gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnActivate]->sEvent, args);
+        }
+    }
+}
+
 struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
     bool sinkAdded = false;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::TESActivateEvent* event, RE::BSTEventSource<RE::TESActivateEvent>*/*source*/) {
-        std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+        //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
 
         if (!event) {
             logger::error("event doesn't exist");
@@ -1292,51 +1358,10 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        RE::TESObjectREFR* activatorRef = nullptr;
-        if (event->actionRef) {
-            activatorRef = event->actionRef.get();
-            if (!gfuncs::IsFormValid(activatorRef)) {
-                activatorRef = nullptr;
-            }
-        }
+        //HandleActivateEvent(event->actionRef, event->objectActivated);
 
-        RE::TESObjectREFR* activatedRef = nullptr;
-        if (event->objectActivated) {
-            activatedRef = event->objectActivated.get();
-            if (!gfuncs::IsFormValid(activatedRef, true)) {
-                activatedRef = nullptr;
-            }
-        }
-
-        //RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-
-        if (bActivateEventSinkEnabledByDefault) {
-            RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-
-            if (playerRef) {
-                if (activatorRef == playerRef) {
-                    if (activatedRef) {
-                        lastPlayerActivatedRef = activatedRef;
-
-                        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-                        if (vm) {
-                            AttachDbSksePersistentVariablesScript();
-                            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatedRef);
-                            vm->SendEventAll("OnDbSksePlayerActivatedRef", args); 
-                            delete args;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded) {
-            std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnActivate]->GetHandles({ activatorRef, activatedRef });
-            if (handles.size() > 0) {
-                auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatorRef, (RE::TESObjectREFR*)activatedRef);
-                gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnActivate]->sEvent, args);
-            }
-        }
+        std::thread t(HandleActivateEvent, event->actionRef, event->objectActivated);
+        t.detach();
 
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -2108,7 +2133,7 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
     bool sinkAdded = false;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::ItemCrafted::Event* event, RE::BSTEventSource<RE::ItemCrafted::Event>*/*source*/) {
-        std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+        //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
 
         if (!event) {
             logger::error("Event is nullptr");
@@ -2144,8 +2169,11 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
 
 
         if (!gfuncs::IsFormValid(workbenchRef)) {
-            if (gfuncs::IsFormValid(menuRef, true)) {
-                workbenchRef = menuRef;
+
+            RE::TESObjectREFR* ref = GetLastPlayerMenuActivatedRef(nullptr);
+
+            if (gfuncs::IsFormValid(ref, true)) {
+                workbenchRef = ref;
                 //logger::trace("Event: occupiedFurniture not valid, setting to menuRef");
             }
             else {
@@ -2166,7 +2194,6 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
         if (gfuncs::IsFormValid(event->item)) {
             craftedItem = event->item;
             if (!gfuncs::IsFormValid(craftedItem)) {
-                //openedMenusMutex.unlock();
                 return RE::BSEventNotifyControl::kContinue;
             }
         }
@@ -2187,7 +2214,6 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
             logger::trace("Event: workbenchRef[{}] craftedItem[{}] benchType[{}] skill[{}]",
                 gfuncs::GetFormName(craftedItem), gfuncs::GetFormName(workbenchRef), benchType, skill);
         }
-        //openedMenusMutex.unlock();
 
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -2199,7 +2225,7 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
     bool sinkAdded = false;
 
     RE::BSEventNotifyControl ProcessEvent(const RE::ItemsPickpocketed::Event* event, RE::BSTEventSource<RE::ItemsPickpocketed::Event>*/*source*/) {
-        std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+        //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
 
         if (!event) {
             logger::error("Event is nullptr");
@@ -2217,11 +2243,11 @@ struct ItemsPickpocketedEventSink : public RE::BSTEventSink<RE::ItemsPickpockete
         }
 
         RE::Actor* target = nullptr;
+        RE::TESObjectREFR* ref = GetLastPlayerMenuActivatedRef(nullptr);
 
-        if (gfuncs::IsFormValid(menuRef, true)) {
-            target = menuRef->As<RE::Actor>();
+        if (gfuncs::IsFormValid(ref, true)) {
+            target = ref->As<RE::Actor>();
             if (!gfuncs::IsFormValid(target)) {
-                //openedMenusMutex.unlock();
                 return RE::BSEventNotifyControl::kContinue;
             }
         }
@@ -3791,108 +3817,113 @@ public:
 InputEventSink* inputEventSink;
 
 void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
-    std::lock_guard<std::recursive_mutex> lock(openedMenusMutex);
+    //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
 
-    auto openedMenusItr = std::find(openedMenus.begin(), openedMenus.end(), sMenuName);
-    auto* ui = RE::UI::GetSingleton();
+    //access, read / write SharedUIVariables
+    sharedVars.update([&](SharedUIVariables& vars) {
+        auto openedMenusItr = std::find(vars.openedMenus.begin(), vars.openedMenus.end(), sMenuName);
+        auto* ui = RE::UI::GetSingleton();
 
-    if (opening) {
-        lastMenuOpened = sMenuName;
+        if (opening) {
+            vars.lastMenuOpened = sMenuName;
 
-        if (openedMenusItr == openedMenus.end()) {
-            openedMenus.push_back(sMenuName);
-        }
-
-        logger::trace("menu[{}] opened", sMenuName);
-        
-        if (ui) {
-            if (ui->GameIsPaused() && !gamePaused) {
-                gamePaused = true;
-                SetlastTimeGameWasPaused(std::chrono::system_clock::now());
-                logger::trace("game was paused");
+            if (openedMenusItr == vars.openedMenus.end()) {
+                vars.openedMenus.push_back(sMenuName);
             }
-        }
 
-        if (!inMenuMode) { //opened menu
-            inMenuMode = true;
-            SetlastTimeMenuWasOpened(std::chrono::system_clock::now());
-            logger::trace("inMenuMode = true");
-        }
+            logger::trace("menu[{}] opened", sMenuName);
 
-        if (bActivateEventSinkEnabledByDefault) {
-            if (gfuncs::IsRefActivatedMenu(sMenuName)) {
-                menuRef = lastPlayerActivatedRef;
-                auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-                if (vm) {
-                    AttachDbSksePersistentVariablesScript();
-                    auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)menuRef);
-                    vm->SendEventAll("OnDbSksePlayerActivatedMenuRef", args);
-                    delete args;
+            if (ui) {
+                if (ui->GameIsPaused() && !vars.gamePaused) {
+                    vars.gamePaused = true;
+                    vars.lastTimeGameWasPaused = (std::chrono::system_clock::now());
+                    logger::trace("game was paused");
                 }
             }
-        }
 
-        //AddToMenusCurrentlyOpen(event->menuName);
-        /* std::thread tAddToMenusCurrentlyOpen(AddToMenusCurrentlyOpen, event->menuName);
-        tAddToMenusCurrentlyOpen.join();*/
+            if (!vars.inMenuMode) { //opened menu
+                vars.inMenuMode = true;
+                vars.lastTimeMenuWasOpened = (std::chrono::system_clock::now());
+                logger::trace("inMenuMode = true");
+            }
 
-        if (ui) {
-            if (ui->IsItemMenuOpen()) {
-                if (UIEvents::registeredUIEventDatas.size() > 0) {
-                    if (!inputEventSink->sinkAdded) {
-                        auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
-                        if (inputManager) {
-                            inputEventSink->sinkAdded = true;
-                            inputManager->AddEventSink(inputEventSink);
-                            logger::trace("item menu [{}] opened. Added input event sink", sMenuName);
+            if (bActivateEventSinkEnabledByDefault) {
+                if (gfuncs::IsRefActivatedMenu(sMenuName)) {
+                    if (gfuncs::IsFormValid(vars.lastPlayerActivatedRef)) {
+                        vars.menuRef = vars.lastPlayerActivatedRef;
+                        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+                        if (vm) {
+                            AttachDbSksePersistentVariablesScript();
+                            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)vars.menuRef);
+                            vm->SendEventAll("OnDbSksePlayerActivatedMenuRef", args);
+                            delete args;
+                        }
+                    }
+                }
+            }
+
+            //AddToMenusCurrentlyOpen(event->menuName);
+            /* std::thread tAddToMenusCurrentlyOpen(AddToMenusCurrentlyOpen, event->menuName);
+            tAddToMenusCurrentlyOpen.join();*/
+
+            if (ui) {
+                if (ui->IsItemMenuOpen()) {
+                    if (UIEvents::registeredUIEventDatas.size() > 0) {
+                        if (!inputEventSink->sinkAdded) {
+                            auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
+                            if (inputManager) {
+                                inputEventSink->sinkAdded = true;
+                                inputManager->AddEventSink(inputEventSink);
+                                logger::trace("item menu [{}] opened. Added input event sink", sMenuName);
+                            }
                         }
                     }
                 }
             }
         }
-    }
-    else {
-        logger::trace("menu[{}] closed", sMenuName);
+        else {
+            logger::trace("menu[{}] closed", sMenuName);
 
-        if (ui) {
-            if (!ui->GameIsPaused() && gamePaused) {
-                gamePaused = false;
-                auto now = std::chrono::system_clock::now();
-                float fGamePausedTime = gfuncs::timePointDiffToFloat(now, GetlastTimeGameWasPaused());
-                //UpdateTimers(fGamePausedTime);
-                std::thread tUpdateTimers(timers::UpdateTimers, fGamePausedTime);
-                tUpdateTimers.detach();
-                logger::trace("game was unpaused");
+            if (ui) {
+                if (!ui->GameIsPaused() && vars.gamePaused) {
+                    vars.gamePaused = false;
+                    auto now = std::chrono::system_clock::now();
+                    float fGamePausedTime = gfuncs::timePointDiffToFloat(now, vars.lastTimeGameWasPaused);
+                    //UpdateTimers(fGamePausedTime);
+                    std::thread tUpdateTimers(timers::UpdateTimers, fGamePausedTime);
+                    tUpdateTimers.detach();
+                    logger::trace("game was unpaused");
+                }
             }
-        }
 
-        if (openedMenusItr != openedMenus.end()) {
-            openedMenus.erase(openedMenusItr);
-        }
+            if (openedMenusItr != vars.openedMenus.end()) {
+                vars.openedMenus.erase(openedMenusItr);
+            }
 
-        if (openedMenus.size() == 0) { //closed all menus
-            inMenuMode = false;
-            auto now = std::chrono::system_clock::now();
-            float timePointDiff = gfuncs::timePointDiffToFloat(now, GetlastTimeMenuWasOpened());
-            //UpdateNoMenuModeTimers(timePointDiff);
-            std::thread tUpdateNoMenuModeTimers(timers::UpdateNoMenuModeTimers, timePointDiff);
-            tUpdateNoMenuModeTimers.detach();
-            logger::trace("inMenuMode = false");
-        }
+            if (vars.openedMenus.size() == 0) { //closed all menus
+                vars.inMenuMode = false;
+                auto now = std::chrono::system_clock::now();
+                float timePointDiff = gfuncs::timePointDiffToFloat(now, vars.lastTimeMenuWasOpened);
+                //UpdateNoMenuModeTimers(timePointDiff);
+                std::thread tUpdateNoMenuModeTimers(timers::UpdateNoMenuModeTimers, timePointDiff);
+                tUpdateNoMenuModeTimers.detach();
+                logger::trace("inMenuMode = false");
+            }
 
-        if (ui) {
-            if (!ui->IsItemMenuOpen()) {
-                if (inputEventSink->sinkAdded) {
-                    auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
-                    if (inputManager) {
-                        inputEventSink->sinkAdded = false;
-                        inputManager->RemoveEventSink(inputEventSink);
-                        logger::trace("item menu [{}] closed. Removed input event sink", sMenuName);
+            if (ui) {
+                if (!ui->IsItemMenuOpen()) {
+                    if (inputEventSink->sinkAdded) {
+                        auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
+                        if (inputManager) {
+                            inputEventSink->sinkAdded = false;
+                            inputManager->RemoveEventSink(inputEventSink);
+                            logger::trace("item menu [{}] closed. Removed input event sink", sMenuName);
+                        }
                     }
                 }
             }
         }
-    }
+    });
 }
 
 struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
@@ -3925,9 +3956,9 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         bool opening = event->opening;
 
         if (sMenuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
-            HandleMenuOpenCloseEvent(opening, sMenuName);
-            //std::thread t(HandleMenuOpenCloseEvent, opening, sMenuName);
-            //t.detach();
+            //HandleMenuOpenCloseEvent(opening, sMenuName);
+            std::thread t(HandleMenuOpenCloseEvent, opening, sMenuName);
+            t.detach();
         }
 
         return RE::BSEventNotifyControl::kContinue;

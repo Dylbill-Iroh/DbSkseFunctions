@@ -1,18 +1,35 @@
 #pragma once
 
-extern std::recursive_mutex openedMenusMutex;
-extern bool inMenuMode;
-extern std::string lastMenuOpened;
-extern std::chrono::system_clock::time_point lastTimeMenuWasOpened;
-extern std::chrono::system_clock::time_point lastTimeGameWasPaused;
+#include <shared_mutex>
 
-std::chrono::system_clock::time_point GetlastTimeMenuWasOpened();
+class SharedUIVariables {
+public:
+    // State variables
+    std::vector<std::string> openedMenus;
+    std::string lastMenuOpened = "";
+    bool gamePaused = false;
+    bool inMenuMode = false;
+    std::chrono::system_clock::time_point lastTimeMenuWasOpened;
+    std::chrono::system_clock::time_point lastTimeGameWasPaused;
+    RE::TESObjectREFR* menuRef = nullptr;
+    RE::TESObjectREFR* lastPlayerActivatedRef = nullptr;
 
-void SetlastTimeMenuWasOpened(std::chrono::system_clock::time_point timePoint);
+    // read/write
+    void update(std::function<void(SharedUIVariables&)> updater) {
+        std::unique_lock lock(mutex);
+        updater(*this);
+    }
 
-std::chrono::system_clock::time_point GetlastTimeGameWasPaused();
+    void read(std::function<void(const SharedUIVariables&)> reader) const {
+        std::shared_lock lock(mutex);
+        reader(*this);
+    }
 
-void SetlastTimeGameWasPaused(std::chrono::system_clock::time_point timePoint);
+private:
+    mutable std::shared_mutex mutex;
+};
+
+extern SharedUIVariables sharedVars;
 
 float GetGameHoursPassed(RE::StaticFunctionTag*);
 

@@ -391,7 +391,13 @@ struct NoMenuModeTimer {
             if (!cancelled) {
                 if (IsInMenu(nullptr)) {
                     started = false;
-                    float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), GetlastTimeMenuWasOpened());
+
+                    std::chrono::system_clock::time_point lastTimeMenuWasOpened;
+                    sharedVars.read([&](const SharedUIVariables& vars) {
+                        lastTimeMenuWasOpened = vars.lastTimeMenuWasOpened;
+                    });
+
+                    float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeMenuWasOpened);
                     currentInterval += timeInMenu;
                     totalTimePaused += timeInMenu;
                     lastMenuCheckSet = true;
@@ -785,7 +791,13 @@ struct Timer {
                 if (ui) {
                     if (ui->GameIsPaused()) {
                         started = false;
-                        float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), GetlastTimeGameWasPaused());
+
+                        std::chrono::system_clock::time_point lastTimeGameWasPaused;
+                        sharedVars.read([&](const SharedUIVariables& vars) {
+                            lastTimeGameWasPaused = vars.lastTimeGameWasPaused;
+                        });
+
+                        float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeGameWasPaused);
                         currentInterval += timeInMenu;
                         totalTimePaused += timeInMenu;
                         lastPausedTimeCheckSet = true;
