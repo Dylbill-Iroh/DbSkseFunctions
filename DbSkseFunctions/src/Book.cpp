@@ -1,6 +1,7 @@
 #include "Book.h"
 #include "GeneralFunctions.h"
 #include "Actor.h"
+#include "SharedVariables.h"
 
 std::map<RE::TESObjectBOOK*, int> skillBooksMap;
 
@@ -31,9 +32,8 @@ RE::TESObjectBOOK* GetSpellTomeForSpell(RE::StaticFunctionTag*, RE::SpellItem* a
         return nullptr;
     }
 
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Book));
 
         int ic = 0;
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -62,9 +62,8 @@ std::vector<RE::TESObjectBOOK*> GetSpellTomesForSpell(RE::StaticFunctionTag*, RE
         return v;
     }
 
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Book));
 
         int ic = 0;
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -96,9 +95,8 @@ void AddSpellTomesForSpellToList(RE::StaticFunctionTag*, RE::SpellItem* akSpell,
         return;
     }
 
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Book));
 
         int ic = 0;
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -176,9 +174,8 @@ std::vector<RE::TESObjectBOOK*> GetSkillBooksForSkill(RE::StaticFunctionTag*, st
         return v;
     }
 
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Book));
 
         int ic = 0;
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -213,9 +210,8 @@ void AddSkillBookForSkillToList(RE::StaticFunctionTag*, std::string actorValue, 
         return;
     }
 
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Book));
 
         int ic = 0;
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -264,9 +260,8 @@ void SetBookRead(RE::StaticFunctionTag*, RE::TESObjectBOOK* akBook, bool read) {
 }
 
 void SetAllBooksRead(RE::StaticFunctionTag*, bool read) {
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Book));
 
         int ic = 0;
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -283,9 +278,8 @@ void SetAllBooksRead(RE::StaticFunctionTag*, bool read) {
 //when reading a skill book in game, it removes the skill from the book, not just the TeachesSkill flag
 //this saves skill books and their respective skills for use with skill book functions below.
 void SaveSkillBooks() {
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Book));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Book));
         int ic = 0;
 
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {

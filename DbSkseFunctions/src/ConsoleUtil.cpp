@@ -61,7 +61,7 @@ namespace ConsoleUtil {
 
                 int i = 0;
                 msgQueue->AddMessage(RE::Console::MENU_NAME, RE::UI_MESSAGE_TYPE::kShow, nullptr); //open console
-                while (!ui->IsMenuOpen(RE::Console::MENU_NAME) && i < 100) { //wait for console menu to open
+                while (!ui->IsMenuOpen(RE::Console::MENU_NAME) && i < 100) { //
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     i++;
                 }

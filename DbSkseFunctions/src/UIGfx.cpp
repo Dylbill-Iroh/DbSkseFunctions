@@ -1,5 +1,6 @@
 #include "UIGfx.h"
 #include "GeneralFunctions.h"
+#include "SharedVariables.h"
 
 namespace gfx {
     std::string GetGFxTypeString(int type) {
@@ -94,12 +95,11 @@ namespace gfx {
     }
 
     void InvokeInt(std::string_view menuPath, std::string target, int arg) {
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (vm) {
+        if (sv::vm) {
             auto* args = RE::MakeFunctionArguments((std::string)menuPath, (std::string)target, (int)arg);
             RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> result;
             result.reset();
-            vm->DispatchStaticCall("UI", "InvokeInt", args, result);
+            sv::vm->DispatchStaticCall("UI", "InvokeInt", args, result);
             delete args;
         }
     }
@@ -310,9 +310,8 @@ namespace gfx {
     } 
 
     int GetEntryDataArrayLength(std::string_view menuName) {
-        auto* ui = RE::UI::GetSingleton();
-        if (ui) {
-            auto mv = ui->GetMovieView(menuName);
+        if (sv::ui) {
+            auto mv = sv::ui->GetMovieView(menuName);
             return GetEntryDataArrayLength(menuName, mv);
         }
         return 0;
@@ -326,9 +325,8 @@ namespace gfx {
         //std::string sUIitemListEntryPath = path + ".listEnumeration._entryData.";
         std::string sUIitemListEntryPath = path + ".listEnumeration._entryData.";
 
-        auto* ui = RE::UI::GetSingleton();
-        if (ui) {
-            auto mv = ui->GetMovieView(menuName);
+        if (sv::ui) {
+            auto mv = sv::ui->GetMovieView(menuName);
             if (mv) {
                 
                 int i = 0;
@@ -382,9 +380,8 @@ namespace gfx {
 
     int GetSelectedEntryIndex(std::string_view menuName) {
         int iReturn = -1;
-        auto* ui = RE::UI::GetSingleton();
-        if (ui) {
-            auto mv = ui->GetMovieView(menuName);
+        if (sv::ui) {
+            auto mv = sv::ui->GetMovieView(menuName);
             if (mv) {
                 std::string selectedItemIndexPath = GetItemListPathForItemMenu(menuName) + ".selectedEntry.itemIndex";
                 //std::string selectedItemIndexPath = GetItemListPathForItemMenu(menuName) + ".selectedIndex";
@@ -401,9 +398,8 @@ namespace gfx {
 
     std::string GetSelectedEntryText(std::string_view menuName) {
         std::string sReturn = "";
-        auto* ui = RE::UI::GetSingleton();
-        if (ui) {
-            auto mv = ui->GetMovieView(menuName);
+        if (sv::ui) {
+            auto mv = sv::ui->GetMovieView(menuName);
             if (mv) {
                 std::string selectedItemIndexPath = GetItemListPathForItemMenu(menuName) + ".selectedEntry.text";
                 RE::GFxValue gfxValue;
@@ -420,9 +416,8 @@ namespace gfx {
     RE::GFxValue GetSelectedEntry(std::string_view menuName) {
         RE::GFxValue selectedEntryGfx;
 
-        auto* ui = RE::UI::GetSingleton();
-        if (ui) {
-            auto mv = ui->GetMovieView(menuName);
+        if (sv::ui) {
+            auto mv = sv::ui->GetMovieView(menuName);
             if (mv) {
                 std::string selectedItemIndexPath = GetItemListPathForItemMenu(menuName) + ".selectedEntry";
                 if (mv->GetVariable(&selectedEntryGfx, selectedItemIndexPath.c_str())) {
@@ -436,9 +431,8 @@ namespace gfx {
     std::pair<RE::GFxValue, bool> GetUITargetGfx(std::string menuName, std::string target) {
         RE::GFxValue gfx;
         bool got = false;
-        auto* ui = RE::UI::GetSingleton();
-        if (ui) {
-            auto menu = ui->GetMenu(menuName);
+        if (sv::ui) {
+            auto menu = sv::ui->GetMenu(menuName);
             if (menu) {
                 if (menu->uiMovie->GetVariable(&gfx, target.c_str())) {
                     got = true;

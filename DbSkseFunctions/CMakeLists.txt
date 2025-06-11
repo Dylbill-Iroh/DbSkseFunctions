@@ -77,6 +77,7 @@ PUBLIC src/ProjectileFunctions.cpp
 PUBLIC src/RangeEvents.cpp
 PUBLIC src/BipedSlots.cpp
 PUBLIC src/Serialization.cpp
+PUBLIC src/SharedVariables.cpp
 PUBLIC src/Sound.cpp
 PUBLIC src/Timers.cpp
 PUBLIC src/UIGfx.cpp

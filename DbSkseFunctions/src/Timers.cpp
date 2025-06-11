@@ -1,10 +1,12 @@
 #include "Timers.h"
 #include "GeneralFunctions.h"
 #include "Utility.h"
+#include "SharedVariables.h"
 
 int gameTimerPollingInterval = 1500; //in milliseconds
 
 //menu mode timer ===================================================================================================================================
+//no restrictions on time, time is always counted. 
 
 void EraseFinishedMenuModeTimers();
 bool erasingMenuModeTimers = false;
@@ -32,16 +34,15 @@ struct MenuModeTimer {
             std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
 
             if (!cancelled) {
-                auto* svm = RE::SkyrimVM::GetSingleton();
-                if (svm) {
+                if (sv::skyrimVm) {
                     float elapsedTime = (savedTimeElapsed + gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
                     auto* args = RE::MakeFunctionArguments((int)timerID);
-                    svm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
+                    sv::skyrimVm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
                     delete args;
                     logger::debug("menu mode timer event sent. ID[{}], interval[{}], elapsed time[{}]", timerID, interval, elapsedTime);
                 }
                 else {
-                    logger::error("svm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+                    logger::error("sv::skyrimVm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
                 }
             }
 
@@ -72,17 +73,17 @@ std::vector<MenuModeTimer*> currentMenuModeTimers;
 std::mutex currentMenuModeTimersMutex;
 
 void AddToCurrentMenuModeTimers(MenuModeTimer* timer) {
-    currentMenuModeTimersMutex.lock();
+    std::lock_guard<std::mutex> lock(currentMenuModeTimersMutex);
     currentMenuModeTimers.push_back(timer);
-    currentMenuModeTimersMutex.unlock();
 }
 
 void EraseFinishedMenuModeTimers() {
+    std::lock_guard<std::mutex> lock(currentMenuModeTimersMutex);
+
     if (currentMenuModeTimers.size() == 0) {
         return;
     }
 
-    currentMenuModeTimersMutex.lock();
     erasingMenuModeTimers = true;
 
     for (int i = 0; i < currentMenuModeTimers.size(); i++) {
@@ -101,35 +102,34 @@ void EraseFinishedMenuModeTimers() {
             i--; //move i back 1 cause 1 timer was just erased
         }
     }
-    currentMenuModeTimersMutex.unlock();
     erasingMenuModeTimers = false;
 }
 
 MenuModeTimer* GetTimer(std::vector<MenuModeTimer*>& v, RE::VMHandle akHandle, int aiTimerID) {
+    std::lock_guard<std::mutex> lock(currentMenuModeTimersMutex);
+
     if (v.size() == 0) {
         return nullptr;
     }
 
-    currentMenuModeTimersMutex.lock();
 
     for (int i = 0; i < v.size(); i++) {
         auto* timer = v[i];
         if (timer) {
             if (!timer->cancelled && !timer->finished) {
                 if (timer->handle == akHandle && timer->timerID == aiTimerID) {
-                    currentMenuModeTimersMutex.unlock();
                     return timer;
                 }
             }
         }
     }
 
-
-    currentMenuModeTimersMutex.unlock();
     return nullptr;
 }
 
 bool SaveTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::lock_guard<std::mutex> lock(currentMenuModeTimersMutex);
+
     if (!a_intfc->OpenRecord(record, 1)) {
         logger::error("MenuModeTimers Failed to open record[{}]", record);
         return false;
@@ -142,8 +142,6 @@ bool SaveTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
         return false;
     }
 
-    currentMenuModeTimersMutex.lock();
-
     for (auto* timer : v) {
         if (timer) {
             float timeLeft = timer->GetTimeLeft();
@@ -152,42 +150,36 @@ bool SaveTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
             if (!a_intfc->WriteRecordData(timeLeft)) {
                 logger::error("record[{}] Failed to write time left", record);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timeElapsed)) {
                 logger::error("record[{}] Failed to write time elapsed", record);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->handle)) {
                 logger::error("record[{}] Failed to write handle[{}]", record, timer->handle);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->timerID)) {
                 logger::error("record[{}] Failed to write timerID[{}]", record, timer->timerID);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->cancelled)) {
                 logger::error("record[{}] Failed to write cancelled[{}]", record, timer->cancelled);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->finished)) {
                 logger::error("record[{}] Failed to write finished[{}]", record, timer->finished);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
@@ -205,59 +197,52 @@ bool SaveTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
             if (!a_intfc->WriteRecordData(noTimerTimeLeft)) {
                 logger::error("record[{}] Failed to write no Timer Time Left", record);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(noTimerTimeElapsed)) {
                 logger::error("record[{}] Failed to write no Timer Time Elapsed", record);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(handle)) {
                 logger::error("record[{}] Failed to write no timer handle", record);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(ID)) {
                 logger::error("record[{}] Failed to write no timer Id", record);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(cancelled)) {
                 logger::error("record[{}] Failed to write no timer cancelled[{}]", record, cancelled);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(finished)) {
                 logger::error("record[{}] Failed to write no timer finished[{}]", record, finished);
 
-                currentMenuModeTimersMutex.unlock();
                 return false;
             }
         }
     }
 
-    currentMenuModeTimersMutex.unlock();
     return true;
 }
 
 bool loadTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::lock_guard<std::mutex> lock(currentMenuModeTimersMutex);
+
     std::size_t size;
     if (!a_intfc->ReadRecordData(size)) {
         logger::error("record[{}] Failed to load size of MenuModeTimers!", record);
         return false;
     }
-
-    currentMenuModeTimersMutex.lock();
 
     if (v.size() > 0) { //cancel current timers
         for (auto* timer : v) {
@@ -278,42 +263,36 @@ bool loadTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
         if (!a_intfc->ReadRecordData(timeLeft)) {
             logger::error("{}: MenuModeTimer Failed to load timeLeft!", i);
 
-            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(timeElapsed)) {
             logger::error("{}: MenuModeTimer Failed to load timeElapsed!", i);
 
-            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(handle)) {
             logger::error("{}: MenuModeTimer Failed to load handle!", i);
 
-            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(ID)) {
             logger::error("{}: MenuModeTimer Failed to load ID!", i);
 
-            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(cancelled)) {
             logger::error("{}: MenuModeTimer Failed to load cancelled!", i);
 
-            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(finished)) {
             logger::error("{}: MenuModeTimer Failed to load finished!", i);
 
-            currentMenuModeTimersMutex.unlock();
             return false;
         }
 
@@ -333,23 +312,21 @@ bool loadTimers(std::vector<MenuModeTimer*>& v, uint32_t record, SKSE::Serializa
             timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
     }
 
-    currentMenuModeTimersMutex.unlock();
     return true;
 }
 
 //NoMenuModeTimer =========================================================================================================================================
 void EraseFinishedNoMenuModeTimers();
 bool erasingNoMenuModeTimers = false;
+bool noMenuModeTimersEmpty = true;
 RE::BSFixedString sNoMenuModeTimerEvent = "OnTimerNoMenuMode";
 
 struct NoMenuModeTimer {
     std::chrono::system_clock::time_point startTime;
+    std::chrono::system_clock::time_point endTime;
     std::chrono::system_clock::time_point lastMenuCheck;
     bool lastMenuCheckSet = false;
-    float initInterval;
-    float currentInterval;
-    float totalTimePaused;
-    float savedTimeElapsed;
+    float timeToWait;
     RE::VMHandle handle;
     int timerID;
     bool cancelled = false;
@@ -357,83 +334,67 @@ struct NoMenuModeTimer {
     bool finished = false;
     bool canDelete = false;
 
-    NoMenuModeTimer(RE::VMHandle akHandle, float afInterval, int aitimerID, float afSavedTimeElapsed = 0.0) {
+    NoMenuModeTimer(RE::VMHandle akHandle, float afInterval, int aitimerID) {
         startTime = std::chrono::system_clock::now();
-        initInterval = afInterval;
-        currentInterval = afInterval;
-        totalTimePaused = 0.0;
-        savedTimeElapsed = afSavedTimeElapsed;
+        std::chrono::milliseconds millisecondsToAdd(int(afInterval * 1000));
+        endTime = startTime + millisecondsToAdd;
+
+        timeToWait = afInterval;
         handle = akHandle;
         timerID = aitimerID;
 
-        if (!IsInMenu(nullptr)) {
-            StartTimer();
-        }
-        else {
-            lastMenuCheckSet = true;
-            lastMenuCheck = std::chrono::system_clock::now();
-        }
+        StartTimer();
     }
 
     void StartTimer() {
         started = true;
-
-        if (lastMenuCheckSet) {
-            lastMenuCheckSet = false;
-            totalTimePaused += gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastMenuCheck);
-        }
+        noMenuModeTimersEmpty = false;
 
         std::thread t([=]() {
-            int milliSecondInterval = (currentInterval * 1000);
-            currentInterval = 0.0;
-            std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
+            bool inMenu = sv::inMenuMode;
+            if (inMenu) {
+                lastMenuCheck = std::chrono::system_clock::now();
+            }
+
+            {
+                std::unique_lock<std::mutex> lock(sv::updateMutex);
+                // waiting
+                sv::updateCv.wait(lock, [=] {
+                    return (inMenu != sv::inMenuMode || sv::currentTimePoint >= endTime);
+                });
+            }
+
+            if (inMenu) { //started timer while in menu, add time spent in menu.
+                auto now = std::chrono::system_clock::now();
+                auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastMenuCheck);
+                std::chrono::milliseconds millisecondsToAdd(milliseconds);
+                startTime = startTime + millisecondsToAdd; //for getTimeLeft and getTimeElapsed functions
+                endTime = endTime + millisecondsToAdd;
+            } 
 
             if (!cancelled) {
-                if (IsInMenu(nullptr)) {
-                    started = false;
-
-                    std::chrono::system_clock::time_point lastTimeMenuWasOpened;
-                    sharedVars.read([&](const SharedUIVariables& vars) {
-                        lastTimeMenuWasOpened = vars.lastTimeMenuWasOpened;
-                    });
-
-                    float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeMenuWasOpened);
-                    currentInterval += timeInMenu;
-                    totalTimePaused += timeInMenu;
-                    lastMenuCheckSet = true;
-                    lastMenuCheck = std::chrono::system_clock::now();
-                }
-
-                if (currentInterval <= 0.0 && !cancelled) {
-                    auto* svm = RE::SkyrimVM::GetSingleton();
-                    if (svm) {
-                        float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+                if (sv::currentTimePoint >= endTime) {
+                    if (sv::skyrimVm) {
+                        float elapsedTime = GetElapsedTime();
                         auto* args = RE::MakeFunctionArguments((int)timerID);
-                        svm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
-                        logger::debug("NoMenuModeTimer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
-                            timerID, initInterval, totalTimePaused, elapsedTime);
+                        sv::skyrimVm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
+                        logger::debug("NoMenuModeTimer event sent: timerID[{}] timeToWait[{}] elapsedTime[{}]",
+                            timerID, timeToWait, elapsedTime);
 
                         delete args;
                         finished = true;
                     }
                     else {
-                        logger::error("svm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+                        logger::error("sv::skyrimVm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
                         finished = true;
                     }
                 }
-                else if (!IsInMenu(nullptr) && !cancelled) {
+                else {
                     StartTimer();
                 }
-                else if (!cancelled) {
-                    started = false;
-                }
             }
-
+            
             if (cancelled || finished) {
-                //while (erasingNoMenuModeTimers) { //only 1 thread should call EraseFinishedNoMenuModeTimers at a time.
-                //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-                //}
-
                 canDelete = true;
                 EraseFinishedNoMenuModeTimers();
             }
@@ -442,19 +403,17 @@ struct NoMenuModeTimer {
     }
 
     float GetElapsedTime() {
-        return (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
-    }
-
-    float GetCurrentElapsedTime() {
-        return (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused);
+        if (sv::inMenuMode) {
+            return (gfuncs::timePointDiffToFloat(lastMenuCheck, startTime));
+        }
+        else {
+            return (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
+        }
     }
 
     float GetTimeLeft() {
-        float timeLeft = initInterval - GetCurrentElapsedTime();
-        if (timeLeft < 0.0) {
-            timeLeft = 0.0;
-        }
-        return (timeLeft);
+        float elapsedTime = GetElapsedTime();
+        return (timeToWait - elapsedTime);
     }
 };
 
@@ -462,19 +421,19 @@ std::vector<NoMenuModeTimer*> currentNoMenuModeTimers;
 std::mutex currentNoMenuModeTimersMutex;
 
 void AddToCurrentNoMenuModeTimers(NoMenuModeTimer* timer) {
-    currentNoMenuModeTimersMutex.lock();
+    std::lock_guard<std::mutex> lock(currentNoMenuModeTimersMutex);
     currentNoMenuModeTimers.push_back(timer);
-    currentNoMenuModeTimersMutex.unlock();
 }
 
 void EraseFinishedNoMenuModeTimers() {
+    std::lock_guard<std::mutex> lock(currentNoMenuModeTimersMutex);
+
     if (currentNoMenuModeTimers.size() == 0) {
+        noMenuModeTimersEmpty = true;
         return;
     }
 
-    currentNoMenuModeTimersMutex.lock();
     erasingNoMenuModeTimers = true;
-
 
     for (int i = 0; i < currentNoMenuModeTimers.size(); i++) {
         auto* timer = currentNoMenuModeTimers[i];
@@ -492,35 +451,38 @@ void EraseFinishedNoMenuModeTimers() {
             i--; //move i back 1 cause 1 timer was just erased
         }
     }
-    erasingNoMenuModeTimers = false;
-    currentNoMenuModeTimersMutex.unlock();
 
+    if (currentNoMenuModeTimers.size() == 0) {
+        noMenuModeTimersEmpty = true;
+    }
+
+    erasingNoMenuModeTimers = false;
 }
 
 NoMenuModeTimer* GetTimer(std::vector<NoMenuModeTimer*>& v, RE::VMHandle akHandle, int aiTimerID) {
+    std::lock_guard<std::mutex> lock(currentNoMenuModeTimersMutex);
+
     if (v.size() == 0) {
         return nullptr;
     }
-
-    currentNoMenuModeTimersMutex.lock();
 
     for (int i = 0; i < v.size(); i++) {
         auto* timer = v[i];
         if (timer) {
             if (!timer->cancelled && !timer->finished) {
                 if (timer->handle == akHandle && timer->timerID == aiTimerID) {
-                    currentNoMenuModeTimersMutex.unlock();
                     return timer;
                 }
             }
         }
     }
 
-    currentNoMenuModeTimersMutex.unlock();
     return nullptr;
 }
 
 bool SaveTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::lock_guard<std::mutex> lock(currentNoMenuModeTimersMutex);
+
     if (!a_intfc->OpenRecord(record, 1)) {
         logger::error("MenuModeTimers Failed to open record[{}]", record);
         return false;
@@ -533,9 +495,6 @@ bool SaveTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
         return false;
     }
 
-    currentNoMenuModeTimersMutex.lock();
-
-
     for (auto* timer : v) {
         if (timer) {
             float timeLeft = timer->GetTimeLeft();
@@ -544,42 +503,36 @@ bool SaveTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
             if (!a_intfc->WriteRecordData(timeLeft)) {
                 logger::error("record[{}] Failed to write time left", record);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timeElapsed)) {
                 logger::error("record[{}] Failed to write time elapsed", record);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->handle)) {
                 logger::error("record[{}] Failed to write handle[{}]", record, timer->handle);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->timerID)) {
                 logger::error("record[{}] Failed to write timerID[{}]", record, timer->timerID);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->cancelled)) {
                 logger::error("record[{}] Failed to write cancelled[{}]", record, timer->cancelled);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->finished)) {
                 logger::error("record[{}] Failed to write finished[{}]", record, timer->finished);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
@@ -597,59 +550,52 @@ bool SaveTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
             if (!a_intfc->WriteRecordData(noTimerTimeLeft)) {
                 logger::error("record[{}] Failed to write no Timer Time Left", record);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(noTimerTimeElapsed)) {
                 logger::error("record[{}] Failed to write no Timer Time Elapsed", record);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(handle)) {
                 logger::error("record[{}] Failed to write no timer handle", record);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(ID)) {
                 logger::error("record[{}] Failed to write no timer Id", record);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(cancelled)) {
                 logger::error("record[{}] Failed to write no timer cancelled[{}]", record, cancelled);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(finished)) {
                 logger::error("record[{}] Failed to write no timer finished[{}]", record, finished);
 
-                currentNoMenuModeTimersMutex.unlock();
                 return false;
             }
         }
     }
 
-    currentNoMenuModeTimersMutex.unlock();
     return true;
 }
 
 bool loadTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::lock_guard<std::mutex> lock(currentNoMenuModeTimersMutex);
+
     std::size_t size;
     if (!a_intfc->ReadRecordData(size)) {
         logger::error("record[{}] Failed to load size of MenuModeTimers!", record);
         return false;
     }
-
-    currentNoMenuModeTimersMutex.lock();
 
     if (v.size() > 0) { //cancel current timers
         for (auto* timer : v) {
@@ -669,43 +615,31 @@ bool loadTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
 
         if (!a_intfc->ReadRecordData(timeLeft)) {
             logger::error("{}: MenuModeTimer Failed to load timeLeft!", i);
-
-            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(timeElapsed)) {
             logger::error("{}: MenuModeTimer Failed to load timeElapsed!", i);
-
-            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(handle)) {
             logger::error("{}: MenuModeTimer Failed to load handle!", i);
-
-            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(ID)) {
             logger::error("{}: MenuModeTimer Failed to load ID!", i);
-
-            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(cancelled)) {
             logger::error("{}: MenuModeTimer Failed to load cancelled!", i);
-
-            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(finished)) {
             logger::error("{}: MenuModeTimer Failed to load finished!", i);
-
-            currentNoMenuModeTimersMutex.unlock();
             return false;
         }
 
@@ -718,14 +652,13 @@ bool loadTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
             continue;
         }
 
-        NoMenuModeTimer* timer = new NoMenuModeTimer(handle, timeLeft, ID, timeElapsed);
+        NoMenuModeTimer* timer = new NoMenuModeTimer(handle, timeLeft, ID);
         v.push_back(timer);
 
         logger::debug("NoMenuModeTimer loaded: timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
             timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
     }
 
-    currentNoMenuModeTimersMutex.unlock();
     return true;
 }
 
@@ -733,16 +666,15 @@ bool loadTimers(std::vector<NoMenuModeTimer*>& v, uint32_t record, SKSE::Seriali
 
 void EraseFinishedTimers();
 bool erasingTimers = false;
+bool timersEmpty = true;
 RE::BSFixedString sTimerEvent = "OnTimer";
 
 struct Timer {
     std::chrono::system_clock::time_point startTime;
-    std::chrono::system_clock::time_point lastPausedTimeCheck;
-    bool lastPausedTimeCheckSet = false;
-    float initInterval;
-    float currentInterval;
-    float totalTimePaused;
-    float savedTimeElapsed;
+    std::chrono::system_clock::time_point endTime;
+    std::chrono::system_clock::time_point lastMenuCheck;
+    bool lastMenuCheckSet = false;
+    float timeToWait;
     RE::VMHandle handle;
     int timerID;
     bool cancelled = false;
@@ -750,137 +682,106 @@ struct Timer {
     bool finished = false;
     bool canDelete = false;
 
-    Timer(RE::VMHandle akHandle, float afInterval, int aiTimerID, float afSavedTimeElapsed = 0.0) {
+    Timer(RE::VMHandle akHandle, float afInterval, int aitimerID) {
         startTime = std::chrono::system_clock::now();
-        initInterval = afInterval;
-        currentInterval = afInterval;
-        totalTimePaused = 0.0;
-        savedTimeElapsed = afSavedTimeElapsed;
-        handle = akHandle;
-        timerID = aiTimerID;
-        auto* ui = RE::UI::GetSingleton();
-        bool isPaused = false; 
-        if (ui) {
-            isPaused = ui->GameIsPaused();
-        }
+        std::chrono::milliseconds millisecondsToAdd(int(afInterval * 1000));
+        endTime = startTime + millisecondsToAdd;
 
-        if (!isPaused) {
-            StartTimer();
-        }
-        else {
-            lastPausedTimeCheckSet = true;
-            lastPausedTimeCheck = std::chrono::system_clock::now();
-        }
+        timeToWait = afInterval;
+        handle = akHandle;
+        timerID = aitimerID;
+
+        StartTimer();
     }
 
     void StartTimer() {
         started = true;
-
-        if (lastPausedTimeCheckSet) {
-            lastPausedTimeCheckSet = false;
-            totalTimePaused += gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastPausedTimeCheck);
-        }
+        timersEmpty = false;
 
         std::thread t([=]() {
-            int milliSecondInterval = (currentInterval * 1000);
-            currentInterval = 0.0;
-            std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
+            
+            bool gamePaused = sv::gamePaused;
+            if (gamePaused) {
+                lastMenuCheck = std::chrono::system_clock::now();
+            }
+
+            {
+                std::unique_lock<std::mutex> lock(sv::updateMutex);
+                // waiting
+                sv::updateCv.wait(lock, [=] {
+                    return (gamePaused != sv::gamePaused || sv::currentTimePoint >= endTime);
+                });
+            }
+
+            if (gamePaused) { //started timer while in menu, add time spent in menu.
+                auto now = std::chrono::system_clock::now();
+                auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastMenuCheck);
+                std::chrono::milliseconds millisecondsToAdd(milliseconds);
+                startTime = startTime + millisecondsToAdd; //for getTimeLeft and getTimeElapsed functions
+                endTime = endTime + millisecondsToAdd;
+            }
 
             if (!cancelled) {
-                auto* ui = RE::UI::GetSingleton();
-                if (ui) {
-                    if (ui->GameIsPaused()) {
-                        started = false;
-
-                        std::chrono::system_clock::time_point lastTimeGameWasPaused;
-                        sharedVars.read([&](const SharedUIVariables& vars) {
-                            lastTimeGameWasPaused = vars.lastTimeGameWasPaused;
-                        });
-
-                        float timeInMenu = gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), lastTimeGameWasPaused);
-                        currentInterval += timeInMenu;
-                        totalTimePaused += timeInMenu;
-                        lastPausedTimeCheckSet = true;
-                        lastPausedTimeCheck = std::chrono::system_clock::now();
-                    }
-                }
-
-                if (currentInterval <= 0.0 && !cancelled) {
-                    auto* svm = RE::SkyrimVM::GetSingleton();
-                    if (svm) {
-                        float elapsedTime = (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
+                if (sv::currentTimePoint >= endTime) {
+                    if (sv::skyrimVm) {
+                        float elapsedTime = GetElapsedTime();
                         auto* args = RE::MakeFunctionArguments((int)timerID);
-                        svm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
-                        delete args;
-                        logger::debug("timer event sent: timerID[{}] initInterval[{}] totalTimePaused[{}] elapsedTime[{}]",
-                            timerID, initInterval, totalTimePaused, elapsedTime);
+                        sv::skyrimVm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
+                        logger::debug("Timer event sent: timerID[{}] timeToWait[{}] elapsedTime[{}]",
+                            timerID, timeToWait, elapsedTime);
 
+                        delete args;
                         finished = true;
                     }
                     else {
-                        logger::error("svm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+                        logger::error("sv::skyrimVm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
                         finished = true;
                     }
                 }
-                else if (!ui->GameIsPaused() && !cancelled) {
+                else {
                     StartTimer();
-                }
-                else if (!cancelled) {
-                    started = false;
                 }
             }
 
             if (cancelled || finished) {
-                //while (erasingTimers) { //only 1 thread should call EraseFinishedTimers at a time.
-                //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-                //}
-
                 canDelete = true;
-
                 EraseFinishedTimers();
-                /*std::thread tEraseFinishedTimers(EraseFinishedTimers);
-                tEraseFinishedTimers.join();*/
             }
             });
         t.detach();
     }
 
     float GetElapsedTime() {
-        return (savedTimeElapsed + (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused));
-    }
-
-    float getCurrentElapsedTime() {
-        return (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime) - totalTimePaused);
+        if (sv::gamePaused) {
+            return (gfuncs::timePointDiffToFloat(lastMenuCheck, startTime));
+        }
+        else {
+            return (gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
+        }
     }
 
     float GetTimeLeft() {
-        float timeLeft = initInterval - getCurrentElapsedTime();
-        if (timeLeft < 0.0) {
-            timeLeft = 0.0;
-        }
-        return (timeLeft);
-    }
-
-    void CancelTimer() {
-        cancelled = true;
+        float elapsedTime = GetElapsedTime();
+        return (timeToWait - elapsedTime);
     }
 };
 
 std::vector<Timer*> currentTimers;
 std::mutex currentTimersMutex;
 
-void AddTimerToCurrentTimers(Timer* timer) {
-    currentTimersMutex.lock();
+void AddToCurrentTimers(Timer* timer) {
+    std::lock_guard<std::mutex> lock(currentTimersMutex);
     currentTimers.push_back(timer);
-    currentTimersMutex.unlock();
 }
 
 void EraseFinishedTimers() {
+    std::lock_guard<std::mutex> lock(currentTimersMutex);
+
     if (currentTimers.size() == 0) {
+        timersEmpty = true;
         return;
     }
 
-    currentTimersMutex.lock();
     erasingTimers = true;
 
     for (int i = 0; i < currentTimers.size(); i++) {
@@ -889,7 +790,7 @@ void EraseFinishedTimers() {
             if (timer->finished) {
                 delete timer;
                 timer = nullptr;
-                //logger::trace("erased noMenuModeTimer, Timers left = {}", currentTimers.size());
+                //logger::trace("erased Timer, Timers left = {}", currentTimers.size());
             }
         }
 
@@ -899,34 +800,38 @@ void EraseFinishedTimers() {
             i--; //move i back 1 cause 1 timer was just erased
         }
     }
-    currentTimersMutex.unlock();
+
+    if (currentTimers.size() == 0) {
+        timersEmpty = true;
+    }
+
     erasingTimers = false;
 }
 
 Timer* GetTimer(std::vector<Timer*>& v, RE::VMHandle akHandle, int aiTimerID) {
+    std::lock_guard<std::mutex> lock(currentTimersMutex);
+
     if (v.size() == 0) {
         return nullptr;
     }
-
-    currentTimersMutex.lock();
 
     for (int i = 0; i < v.size(); i++) {
         auto* timer = v[i];
         if (timer) {
             if (!timer->cancelled && !timer->finished) {
                 if (timer->handle == akHandle && timer->timerID == aiTimerID) {
-                    currentTimersMutex.unlock();
                     return timer;
                 }
             }
         }
     }
 
-    currentTimersMutex.unlock();
     return nullptr;
 }
 
 bool SaveTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::lock_guard<std::mutex> lock(currentTimersMutex);
+
     if (!a_intfc->OpenRecord(record, 1)) {
         logger::error("MenuModeTimers Failed to open record[{}]", record);
         return false;
@@ -939,8 +844,6 @@ bool SaveTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
         return false;
     }
 
-    currentTimersMutex.lock();
-
     for (auto* timer : v) {
         if (timer) {
             float timeLeft = timer->GetTimeLeft();
@@ -948,43 +851,31 @@ bool SaveTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
 
             if (!a_intfc->WriteRecordData(timeLeft)) {
                 logger::error("record[{}] Failed to write time left", record);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timeElapsed)) {
                 logger::error("record[{}] Failed to write time elapsed", record);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->handle)) {
                 logger::error("record[{}] Failed to write handle[{}]", record, timer->handle);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->timerID)) {
                 logger::error("record[{}] Failed to write timerID[{}]", record, timer->timerID);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->cancelled)) {
                 logger::error("record[{}] Failed to write cancelled[{}]", record, timer->cancelled);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->finished)) {
                 logger::error("record[{}] Failed to write finished[{}]", record, timer->finished);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
@@ -1001,61 +892,46 @@ bool SaveTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
 
             if (!a_intfc->WriteRecordData(noTimerTimeLeft)) {
                 logger::error("record[{}] Failed to write no Timer Time Left", record);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(noTimerTimeElapsed)) {
                 logger::error("record[{}] Failed to write no Timer Time Elapsed", record);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(handle)) {
                 logger::error("record[{}] Failed to write no timer handle", record);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(ID)) {
                 logger::error("record[{}] Failed to write no timer Id", record);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(cancelled)) {
                 logger::error("record[{}] Failed to write no timer cancelled[{}]", record, cancelled);
-
-                currentTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(finished)) {
                 logger::error("record[{}] Failed to write no timer finished[{}]", record, finished);
-
-                currentTimersMutex.unlock();
                 return false;
             }
         }
     }
-
-    currentTimersMutex.unlock();
     return true;
 }
 
 bool loadTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::lock_guard<std::mutex> lock(currentTimersMutex);
+
     std::size_t size;
     if (!a_intfc->ReadRecordData(size)) {
         logger::error("record[{}] Failed to load size of MenuModeTimers!", record);
         return false;
     }
-
-    currentTimersMutex.lock();
-
 
     if (v.size() > 0) { //cancel current timers
         for (auto* timer : v) {
@@ -1075,43 +951,31 @@ bool loadTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
 
         if (!a_intfc->ReadRecordData(timeLeft)) {
             logger::error("{}: MenuModeTimer Failed to load timeLeft!", i);
-
-            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(timeElapsed)) {
             logger::error("{}: MenuModeTimer Failed to load timeElapsed!", i);
-
-            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(handle)) {
             logger::error("{}: MenuModeTimer Failed to load handle!", i);
-
-            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(ID)) {
             logger::error("{}: MenuModeTimer Failed to load ID!", i);
-
-            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(cancelled)) {
             logger::error("{}: MenuModeTimer Failed to load cancelled!", i);
-
-            currentTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(finished)) {
             logger::error("{}: MenuModeTimer Failed to load finished!", i);
-
-            currentTimersMutex.unlock();
             return false;
         }
 
@@ -1124,127 +988,96 @@ bool loadTimers(std::vector<Timer*>& v, uint32_t record, SKSE::SerializationInte
             continue;
         }
 
-        Timer* timer = new Timer(handle, timeLeft, ID, timeElapsed);
+        Timer* timer = new Timer(handle, timeLeft, ID);
         v.push_back(timer);
 
         logger::debug("Timer loaded: timeLeft[{}], timeElapsed[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
             timeLeft, timeElapsed, timer->handle, timer->timerID, timer->cancelled, timer->finished);
     }
-
-    currentTimersMutex.unlock();
     return true;
 }
+
 
 //GameTimeTimer =========================================================================================================================================
 
 void EraseFinishedGameTimers();
 bool erasingGameTimers = false;
 RE::BSFixedString sGameTimeTimerEvent = "OnTimerGameTime";
+bool gameTimersEmpty = true;
 
 struct GameTimeTimer {
     float startTime;
     float endTime;
-    float initGameHoursInterval;
     int tick;
     int timerID;
     RE::VMHandle handle;
     bool cancelled = false;
     bool started = false;
     bool finished = false;
-    bool canDelete = false;
 
-    GameTimeTimer(RE::VMHandle akHandle, float afInterval, int aiTimerID, float afStartTime = -1.0, float afEndTime = -1.0) {
+    GameTimeTimer(RE::VMHandle akHandle, float afInterval, int aiTimerID) {
         handle = akHandle;
         timerID = aiTimerID;
-        initGameHoursInterval = afInterval;
 
-        tick = gameTimerPollingInterval;
-        auto* calendar = RE::Calendar::GetSingleton();
-
-        if (afStartTime != -1.0) { //timer created from LoadTimers on game load.
-            startTime = afStartTime;
-            endTime = afEndTime;
-        }
-        else if (calendar) {
-            startTime = calendar->GetHoursPassed();
-            endTime = startTime + afInterval;
-        }
-        
-        if (calendar) {
-            float secondsInterval = GameHoursToRealTimeSeconds(nullptr, afInterval);
-            int milliTick = (secondsInterval * 1000);
-
-            if (tick > milliTick) {
-                tick = milliTick;
-            }
-
+        if (sv::calendar) {
+            endTime = sv::calendar->GetHoursPassed() + afInterval;
             StartTimer();
         }
         else {
-            logger::error("calendar* not found, timer[{}] for handle[{}] event not started.", timerID, handle);
-            finished = true;
+            logger::error("sv::calendar* not found, timer[{}] for handle[{}] event not started.", timerID, handle);
+            cancelled = true;
         }
     }
 
     void StartTimer() {
+        gameTimersEmpty = false;
+
         std::thread t([=]() {
-            auto* calendar = RE::Calendar::GetSingleton();
-            if (calendar) {
-                while (calendar->GetHoursPassed() < endTime && !cancelled) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(tick));
-                }
-
-                if (!cancelled) {
-                    auto now = std::chrono::system_clock::now();
-                    float endTime = calendar->GetHoursPassed();
-                    float elapsedGameHours = (calendar->GetHoursPassed() - startTime);
-
-                    auto* args = RE::MakeFunctionArguments((int)timerID);
-                    auto* svm = RE::SkyrimVM::GetSingleton();
-
-                    svm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
-                    delete args;
-                    logger::debug("game timer event sent. ID[{}] gameHoursInterval[{}] startTime[{}] endTime[{}] elapsedGameHours[{}]",
-                        timerID, initGameHoursInterval, startTime, endTime, elapsedGameHours);
-
-                    finished = true;
-                }
-
-                if (cancelled || finished) {
-                    //while (erasingGameTimers) { //only 1 thread should call EraseFinishedTimers at a time.
-                    //    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-                    //}
-
-                    canDelete = true;
-                    EraseFinishedGameTimers();
-                }
+            {
+                std::unique_lock<std::mutex> lock(sv::updateMutex);
+                // waiting
+                sv::updateCv.wait(lock, [=] {
+                    return (sv::gameTime >= endTime);
+                });
             }
-            else {
-                logger::error("calendar* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+
+            if (!cancelled) {
+                auto now = std::chrono::system_clock::now();
+                float endTime = sv::gameTime;
+                float elapsedGameHours = (sv::gameTime - startTime);
+
+                auto* args = RE::MakeFunctionArguments((int)timerID);
+                sv::skyrimVm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
+                delete args;
+                logger::debug("game timer event sent. ID[{}] startTime[{}] endTime[{}] elapsedGameHours[{}]",
+                    timerID, startTime, endTime, elapsedGameHours);
+
                 finished = true;
             }
-            });
+
+            if (cancelled || finished) {
+                EraseFinishedGameTimers();
+            }
+        });
         t.detach();
     }
 
     float GetElapsedTime() {
-        auto* calendar = RE::Calendar::GetSingleton();
-        if (calendar) {
-            return (calendar->GetHoursPassed() - startTime);
+        if (sv::calendar) {
+            return (sv::calendar->GetHoursPassed() - startTime);
         }
         else {
-            logger::error("calendar* not found, timer[{}] for handle[{}]", timerID, handle);
+            logger::error("sv::calendar* not found, timer[{}] for handle[{}]", timerID, handle);
             return -1.0;
         }
     }
 
     float GetTimeLeft() {
-        auto* calendar = RE::Calendar::GetSingleton();
-        if (calendar) {
-            return (endTime - calendar->GetHoursPassed());
+        if (sv::calendar) {
+            return (endTime - sv::calendar->GetHoursPassed());
         }
         else {
-            logger::error("calendar* not found, timer[{}] for handle[{}]", timerID, handle);
+            logger::error("sv::calendar* not found, timer[{}] for handle[{}]", timerID, handle);
             return -1.0;
         }
     }
@@ -1258,26 +1091,27 @@ std::vector<GameTimeTimer*> currentGameTimeTimers;
 std::mutex currentGameTimeTimersMutex;
 
 void AddToCurrentGameTimeTimers(GameTimeTimer* timer) {
-    currentGameTimeTimersMutex.lock();
+    std::lock_guard<std::mutex> lock(currentGameTimeTimersMutex);
     currentGameTimeTimers.push_back(timer);
-    currentGameTimeTimersMutex.unlock();
 }
 
 void EraseFinishedGameTimers() {
+    std::lock_guard<std::mutex> lock(currentGameTimeTimersMutex);
+
     if (currentGameTimeTimers.size() == 0) {
+        gameTimersEmpty = true;
         return;
     }
 
-    currentGameTimeTimersMutex.lock();
     erasingGameTimers = true;
 
     for (int i = 0; i < currentGameTimeTimers.size(); i++) {
         auto* timer = currentGameTimeTimers[i];
         if (timer) {
-            if (timer->finished) {
+            if (timer->finished || timer->cancelled) {
                 delete timer;
                 timer = nullptr;
-                //logger::trace("erased noMenuModeTimer, Timers left = {}", currentGameTimeTimers.size());
+                //logger::trace("erased GameTimeTimers, Timers left = {}", currentGameTimeTimers.size());
             }
         }
 
@@ -1286,35 +1120,40 @@ void EraseFinishedGameTimers() {
             currentGameTimeTimers.erase(it);
             i--; //move i back 1 cause 1 timer was just erased
         }
+    
     }
-    currentGameTimeTimersMutex.unlock();
+
+    if (currentGameTimeTimers.size() == 0) {
+        gameTimersEmpty = true;
+    }
+
     erasingGameTimers = false;
 }
 
 GameTimeTimer* GetTimer(std::vector<GameTimeTimer*>& v, RE::VMHandle akHandle, int aiTimerID) {
+    std::lock_guard<std::mutex> lock(currentGameTimeTimersMutex);
+
     if (v.size() == 0) {
         return nullptr;
     }
-
-    currentGameTimeTimersMutex.lock();
 
     for (int i = 0; i < v.size(); i++) {
         auto* timer = v[i];
         if (timer) {
             if (!timer->cancelled && !timer->finished) {
                 if (timer->handle == akHandle && timer->timerID == aiTimerID) {
-                    currentGameTimeTimersMutex.unlock();
                     return timer;
                 }
             }
         }
     }
 
-    currentGameTimeTimersMutex.unlock();
     return nullptr;
 }
 
 bool SaveTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::lock_guard<std::mutex> lock(currentGameTimeTimersMutex);
+
     if (!a_intfc->OpenRecord(record, 1)) {
         logger::error("MenuModeTimers Failed to open record[{}]", record);
         return false;
@@ -1327,62 +1166,41 @@ bool SaveTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
         return false;
     }
 
-    currentGameTimeTimersMutex.lock();
-
     for (auto* timer : v) {
         if (timer) {
 
             if (!a_intfc->WriteRecordData(timer->startTime)) {
                 logger::error("record[{}] Failed to write startTime", record);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->endTime)) {
                 logger::error("record[{}] Failed to write endTime", record);
-
-                currentGameTimeTimersMutex.unlock();
-                return false;
-            }
-
-            if (!a_intfc->WriteRecordData(timer->initGameHoursInterval)) {
-                logger::error("record[{}] Failed to write initGameHoursInterval", record);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->handle)) {
                 logger::error("record[{}] Failed to write handle[{}]", record, timer->handle);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->timerID)) {
                 logger::error("record[{}] Failed to write timerID[{}]", record, timer->timerID);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->cancelled)) {
                 logger::error("record[{}] Failed to write cancelled[{}]", record, timer->cancelled);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(timer->finished)) {
                 logger::error("record[{}] Failed to write finished[{}]", record, timer->finished);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
-            logger::debug("gameTimer saved : startTime[{}], endTime[{}], initGameHoursInterval[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
-                timer->startTime, timer->endTime, timer->initGameHoursInterval, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+            logger::debug("gameTimer saved : startTime[{}], endTime[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+                timer->startTime, timer->endTime, timer->handle, timer->timerID, timer->cancelled, timer->finished);
         }
         else {
             float startTime = 0.0;
@@ -1395,67 +1213,46 @@ bool SaveTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
 
             if (!a_intfc->WriteRecordData(startTime)) {
                 logger::error("record[{}] Failed to write no Timer startTime", record);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(endTime)) {
                 logger::error("record[{}] Failed to write no Timer endTime", record);
-
-                currentGameTimeTimersMutex.unlock();
-                return false;
-            }
-
-            if (!a_intfc->WriteRecordData(initGameHoursInterval)) {
-                logger::error("record[{}] Failed to write no Timer initGameHoursInterval", record);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(handle)) {
                 logger::error("record[{}] Failed to write no timer handle", record);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(ID)) {
                 logger::error("record[{}] Failed to write no timer Id", record);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(cancelled)) {
                 logger::error("record[{}] Failed to write no timer cancelled[{}]", record, cancelled);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
 
             if (!a_intfc->WriteRecordData(finished)) {
                 logger::error("record[{}] Failed to write no timer finished[{}]", record, finished);
-
-                currentGameTimeTimersMutex.unlock();
                 return false;
             }
         }
     }
-
-    currentGameTimeTimersMutex.unlock();
     return true;
 }
 
 bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::SerializationInterface* a_intfc) {
+    std::lock_guard<std::mutex> lock(currentGameTimeTimersMutex);
+
     std::size_t size;
     if (!a_intfc->ReadRecordData(size)) {
         logger::error("record[{}] Failed to load size of MenuModeTimers!", record);
         return false;
     }
-
-    currentGameTimeTimersMutex.lock();
 
     if (v.size() > 0) { //cancel current timers
         for (auto* timer : v) {
@@ -1463,6 +1260,11 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
                 timer->cancelled = true;
             }
         }
+    }
+
+    if (!sv::calendar) {
+        logger::critical("sv::calendar not found, aborting load.");
+        return false;
     }
 
     for (std::size_t i = 0; i < size; i++) {
@@ -1476,50 +1278,31 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
 
         if (!a_intfc->ReadRecordData(startTime)) {
             logger::error("{}: MenuModeTimer Failed to load startTime!", i);
-
-            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(endTime)) {
             logger::error("{}: MenuModeTimer Failed to load endTime!", i);
-
-            currentGameTimeTimersMutex.unlock();
-            return false;
-        }
-
-        if (!a_intfc->ReadRecordData(initGameHoursInterval)) {
-            logger::error("{}: MenuModeTimer Failed to load initGameHoursInterval!", i);
-
-            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(handle)) {
             logger::error("{}: MenuModeTimer Failed to load handle!", i);
-
-            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(ID)) {
             logger::error("{}: MenuModeTimer Failed to load ID!", i);
-
-            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(cancelled)) {
             logger::error("{}: MenuModeTimer Failed to load cancelled!", i);
-
-            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
         if (!a_intfc->ReadRecordData(finished)) {
             logger::error("{}: MenuModeTimer Failed to load finished!", i);
-
-            currentGameTimeTimersMutex.unlock();
             return false;
         }
 
@@ -1532,14 +1315,12 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
             continue;
         }
 
-        GameTimeTimer* timer = new GameTimeTimer(handle, initGameHoursInterval, ID, startTime, endTime);
+        GameTimeTimer* timer = new GameTimeTimer(handle, (endTime - sv::calendar->GetHoursPassed()), ID);
         v.push_back(timer);
 
-        logger::debug("gameTimer loaded: startTime[{}], endTime[{}], initGameHoursInterval[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
-            timer->startTime, timer->endTime, timer->initGameHoursInterval, timer->handle, timer->timerID, timer->cancelled, timer->finished);
+        logger::debug("gameTimer loaded: startTime[{}], endTime[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",
+            timer->startTime, timer->endTime, timer->handle, timer->timerID, timer->cancelled, timer->finished);
     }
-
-    currentGameTimeTimersMutex.unlock();
     return true;
 }
 
@@ -1773,7 +1554,7 @@ void StartTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, float 
     }
 
     Timer* newTimer = new Timer(handle, afInterval, aiTimerID);
-    AddTimerToCurrentTimers(newTimer);
+    AddToCurrentTimers(newTimer);
 }
 
 void CancelTimerOnForm(RE::StaticFunctionTag*, RE::TESForm* eventReceiver, int aiTimerID) {
@@ -2182,7 +1963,7 @@ void StartTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, 
     }
 
     Timer* newTimer = new Timer(handle, afInterval, aiTimerID);
-    AddTimerToCurrentTimers(newTimer);
+    AddToCurrentTimers(newTimer);
 }
 
 void CancelTimerOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* eventReceiver, int aiTimerID) {
@@ -2592,7 +2373,7 @@ void StartTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eve
     }
 
     Timer* newTimer = new Timer(handle, afInterval, aiTimerID);
-    AddTimerToCurrentTimers(newTimer);
+    AddToCurrentTimers(newTimer);
 }
 
 void CancelTimerOnActiveMagicEffect(RE::StaticFunctionTag*, RE::ActiveEffect* eventReceiver, int aiTimerID) {
@@ -2773,6 +2554,10 @@ float GetTimeLeftOnGameTimerActiveMagicEffect(RE::StaticFunctionTag*, RE::Active
 }
 
 namespace timers {
+    size_t GetCurrentGameTimeTimersSize() {
+        return currentGameTimeTimers.size();
+    }
+
     bool IsTimerType(std::uint32_t& type) {
         return (type == 'DBT0' || type == 'DBT1' || type == 'DBT2' || type == 'DBT3');
     }
@@ -2812,8 +2597,8 @@ namespace timers {
             if (noMenuModeTimer) {
                 if (!noMenuModeTimer->cancelled && !noMenuModeTimer->finished) {
                     if (noMenuModeTimer->started) {
-                        noMenuModeTimer->currentInterval += timeElapsedWhilePaused;
-                        noMenuModeTimer->totalTimePaused += timeElapsedWhilePaused;
+                        //noMenuModeTimer->currentInterval += timeElapsedWhilePaused;
+                        //noMenuModeTimer->totalTimePaused += timeElapsedWhilePaused;
                     }
                     else {
                         noMenuModeTimer->StartTimer();
@@ -2837,8 +2622,8 @@ namespace timers {
             if (timer) {
                 if (!timer->cancelled && !timer->finished) {
                     if (timer->started) {
-                        timer->currentInterval += timeElapsedWhilePaused;
-                        timer->totalTimePaused += timeElapsedWhilePaused;
+                        //timer->currentInterval += timeElapsedWhilePaused;
+                        //timer->totalTimePaused += timeElapsedWhilePaused;
                     }
                     else {
                         timer->StartTimer();
@@ -2850,6 +2635,14 @@ namespace timers {
     }
 
     bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
+
+        if (!vm) {
+            logger::error("vm* not found!");
+            return true;
+        }
+        else {
+            logger::info("");
+        }
 
         //form
         vm->RegisterFunction("StartTimer", "DbFormTimer", StartTimerOnForm);

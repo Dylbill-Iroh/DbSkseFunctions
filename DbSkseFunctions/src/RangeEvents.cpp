@@ -9,6 +9,9 @@ int eventPollingInterval = 500; //in milliseconds
 namespace rangeEvents {
     RE::BSFixedString enterRangeEventName = "OnEnterRange";
     RE::BSFixedString leaveRangeEventName = "OnLeaveRange";
+    std::mutex updateMutex;
+    std::condition_variable updateCv;
+    bool isEmpty = true;
 
     //forward declaration
     struct RefRangeEvent;
@@ -37,6 +40,7 @@ namespace rangeEvents {
             target = akTarget;
             centerRef = akCenterRef;
             fDistance = distance;
+            inRange = distanceCondition->IsTrue(centerRef, nullptr);
             startPolling();
         }
     private:
@@ -53,29 +57,48 @@ namespace rangeEvents {
                     rangeEvents::EraseEvent(this);
                 }
                 else {
+                    isEmpty = false; //tell the update hook in plugin.cpp to notify the updateCv
                     bool akInRange = distanceCondition->IsTrue(centerRef, nullptr);
                     if (inRange != akInRange) {
                         inRange = akInRange;
                         handleEvent(inRange);
                     }
                     else {
-                        while (inRange == akInRange) {
-                            std::this_thread::sleep_for(std::chrono::milliseconds(eventPollingInterval));
-                            if (centerRef && target) {
-                                akInRange = distanceCondition->IsTrue(centerRef, nullptr);
-                            }
-                            else {
-                                akInRange = false;
-                                break;
-                            }
+                        {
+                            std::unique_lock<std::mutex> lock(updateMutex);
+                            // waiting
+                            updateCv.wait(lock, [=] {
+                                int status = ConditionStatus();
+                                if (status == -1) {
+                                    return true;
+                                }
+                                else {
+                                    return (bool(status) != akInRange);
+                                }
+                            });
                         }
+                         
+                        if (ConditionStatus() == -1) {
+                            logger::error("centerRef[{}] and/or target[{}] is nullptr. Erasing event. Distance[{}]",
+                                gfuncs::GetFormNameAndId(centerRef), gfuncs::GetFormNameAndId(target), fDistance);
 
-                        inRange = !inRange;
-                        handleEvent(akInRange);
+                            rangeEvents::EraseEvent(this);
+                        }
+                        else {
+                            inRange = !inRange;
+                            handleEvent(inRange);
+                        }
                     }
                 }
             });
             t.detach();
+        }
+
+        int ConditionStatus() {
+            if (!centerRef) {
+                return -1;
+            }
+            return int(distanceCondition->IsTrue(centerRef, nullptr));
         }
 
         void handleEvent(bool isInRange) {
@@ -117,7 +140,6 @@ namespace rangeEvents {
                     gfuncs::SendEvents(registeredHandles, leaveRangeEventName, args);
                 }
             }
-            
             startPolling();
         }
     };
@@ -163,6 +185,11 @@ namespace rangeEvents {
                 delete event->distanceCondition;
                 event->distanceCondition = nullptr;
             }
+
+            if (rangeEvents.size() == 0) {
+                isEmpty = true;
+            }
+
             rangeEventsMutex.unlock();
             return true;
         }

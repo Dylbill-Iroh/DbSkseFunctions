@@ -18,6 +18,7 @@
 #include "mini/ini.h"
 #include "logger.h"
 #include "GeneralFunctions.h"
+#include "SharedVariables.h"
 #include "Keyword.h"
 #include "KeyInput.h"
 #include "Magic.h"
@@ -152,7 +153,12 @@ void SetSettingsFromIniFile() {
     mINI::INIStructure ini;
     file.read(ini);
 
-    //eventPollingInterval
+    //iFrameUpdateInterval
+
+    sv::iFrameUpdateInterval = mINI::GetIniFloat(ini, "Main", "iFrameUpdateInterval", 1);
+    if (sv::iFrameUpdateInterval < 1) {
+        sv::iFrameUpdateInterval = 1;
+    }
 
     gameTimerPollingInterval = (mINI::GetIniFloat(ini, "Main", "gameTimerPollingInterval", 1.5) * 1000);
     if (gameTimerPollingInterval < 100) {
@@ -172,8 +178,9 @@ void SetSettingsFromIniFile() {
     bActivateEventSinkEnabledByDefault = mINI::GetIniBool(ini, "Main", "bActivateEventSinkEnabledByDefault", true);
     bMenuOpenCloseEventSinkEnabled = mINI::GetIniBool(ini, "Main", "bMenuOpenCloseEventSinkEnabled", true);
 
-    logger::info("gameTimerPollingInterval set to {} milliseconds", gameTimerPollingInterval);
-    logger::info("eventPollingInterval set to {} milliseconds", eventPollingInterval);
+    logger::info("iFrameUpdateInterval set to {}", sv::iFrameUpdateInterval);
+    //logger::info("gameTimerPollingInterval set to {} milliseconds", gameTimerPollingInterval); //no longer used, uses iFrameUpdateInterval instead
+    //logger::info("eventPollingInterval set to {} milliseconds", eventPollingInterval); //no longer used, uses iFrameUpdateInterval instead
     logger::info("iMaxArrowsSavedPerReference set to {} ", iMaxArrowsSavedPerReference);
     logger::info("bActivateEventSinkEnabledByDefault set to {} ", bActivateEventSinkEnabledByDefault);
     logger::info("bMenuOpenCloseEventSinkEnabled set to {} ", bMenuOpenCloseEventSinkEnabled);
@@ -184,29 +191,51 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
-    return float(10.0);
+    return float(10.1);
 }
 
 void AttachDbSksePersistentVariablesScript() {
     //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
-    auto* player = RE::PlayerCharacter::GetSingleton();
-    if (player) {
-        if (!gfuncs::IsScriptAttachedToRef(player, "DbSksePersistentVariables")) {
+    if (sv::player) {
+        auto handle = gfuncs::GetHandle(sv::player);
+        RE::BSFixedString scriptName = "DbSksePersistentVariables";
+        RE::BSFixedString slastPlayerActivatedRef = "lastPlayerActivatedRef";
+        RE::BSFixedString sLastPlayerMenuActivatedRef = "LastPlayerMenuActivatedRef";
+
+        if (!gfuncs::IsScriptAttachedToHandle(handle, scriptName)) {
             logger::info("Attaching DbSksePersistentVariables script to player.");
             ConsoleUtil::ExecuteCommand("player.aps DbSksePersistentVariables", nullptr);
             std::this_thread::sleep_for(std::chrono::milliseconds(100)); //wait .1 seconds for console command to finish.
+        }
+
+        auto it = sv::vm->attachedScripts.find(handle);
+        if (it == sv::vm->attachedScripts.end()) {
+            logger::error("DbSkse: sv::vm->attachedScripts couldn't find handle[{}] scriptName[{}]",
+                handle, scriptName);
+            return;
+        }
+
+        for (int i = 0; i < it->second.size(); i++) {
+            auto& attachedScript = it->second[i];
+            if (attachedScript) {
+                auto* script = attachedScript.get();
+                if (script) {
+                    auto info = script->GetTypeInfo();
+                    if (info) {
+                        if (info->name == scriptName) {
+                            logger::trace("script[{}] found attached to handle[{}]", scriptName, handle);
+                            sv::lastPlayerActivatedRefScriptProperty = script->GetProperty("lastPlayerActivatedRef");
+                            sv::LastPlayerMenuActivatedRefScriptProperty = script->GetProperty("LastPlayerMenuActivatedRef");
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
-    //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
-    
-    //gets the TESObjectREFR in a thread safe way.
-    RE::TESObjectREFR* returnRef = nullptr;
-    sharedVars.read([&](const SharedUIVariables& vars) {
-        returnRef = vars.lastPlayerActivatedRef;
-    });
+    RE::TESObjectREFR* returnRef = sv::lastPlayerActivatedRef;
     
     if (!gfuncs::IsFormValid(returnRef)) {
         returnRef = nullptr;
@@ -216,19 +245,12 @@ RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
 }
 
 RE::TESObjectREFR* GetLastPlayerMenuActivatedRef(RE::StaticFunctionTag*) {
-    //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
-
-    //gets the TESObjectREFR in a thread safe way.
-    RE::TESObjectREFR* returnRef = nullptr;
-    sharedVars.read([&](const SharedUIVariables& vars) {
-        returnRef = vars.menuRef;
-    });
+    RE::TESObjectREFR* returnRef = sv::menuRef;
 
     if (!gfuncs::IsFormValid(returnRef)) {
         returnRef = nullptr;
     }
     
-    //openedMenusMutex.unlock();
     return returnRef;
 }
 
@@ -316,14 +338,13 @@ struct EventData {
     }
 
     bool PlayerIsRegistered() {
-        RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-        if (!playerRef) {
-            logger::error("playerRef not found");
+        if (!sv::player) {
+            logger::error("player not found");
             return false;
         }
 
         for (int i = 0; i < eventParamMaps.size(); i++) {
-            auto it = eventParamMaps[i].find(playerRef);
+            auto it = eventParamMaps[i].find(sv::player);
             if (it != eventParamMaps[i].end()) {
                 return true;
             }
@@ -430,9 +451,8 @@ struct EventData {
 
             if (eventSinkIndex == EventEnum_OnCombatStateChanged && paramFilterIndex == 0) {
                 logger::debug("adding handle for Combat State change");
-                RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-                if (playerRef) {
-                    if (paramFilter->As<RE::Actor>() == playerRef) {
+                if (sv::player) {
+                    if (paramFilter->As<RE::Actor>() == sv::player) {
                         //playerForm = paramFilter;
                         bRegisteredForPlayerCombatChange = true;
                         logger::debug("bRegisteredForPlayerCombatChange = true");
@@ -443,12 +463,7 @@ struct EventData {
     }
 
     void CheckAndRemoveSink() {
-        std::thread t([=]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1500)); //wait for 1.5 seconds before checking removeSinkIfEmpty
-            removeSinkIfEmpty();
-
-            });
-        t.detach();
+        removeSinkIfEmpty();
     }
 
     void RemoveHandle(RE::VMHandle handle, RE::TESForm* paramFilter, int paramFilterIndex, bool removeSink = true) {
@@ -524,9 +539,11 @@ struct EventData {
         auto it = eventParamMaps[index].find(akForm);
 
         if (it != eventParamMaps[index].end()) {
-            logger::trace("events for form: [{}] ID[{:x}] found", gfuncs::GetFormName(akForm), akForm->GetFormID());
-            handles.reserve(handles.size() + it->second.size());
-            handles.insert(handles.end(), it->second.begin(), it->second.end());
+            if (it->second.size() > 0) {
+                logger::trace("events for form: [{}] ID[{:x}] found", gfuncs::GetFormName(akForm), akForm->GetFormID());
+                handles.reserve(handles.size() + it->second.size());
+                handles.insert(handles.end(), it->second.begin(), it->second.end());
+            }
         }
         else {
             logger::trace("events for form: [{}] ID[{:x}] not found", gfuncs::GetFormName(akForm), akForm->GetFormID());
@@ -542,9 +559,9 @@ struct EventData {
         }
 
         for (int i = 0; i < size; i++) {
-            CombineEventHandles(eventHandles, formParams[i], i);
             if (formParams[i]) {
-                auto* ref = skyrim_cast<RE::TESObjectREFR*>(formParams[i]);
+                CombineEventHandles(eventHandles, formParams[i], i);
+                RE::TESObjectREFR* ref = skyrim_cast<RE::TESObjectREFR*>(formParams[i]);
                 if (gfuncs::IsFormValid(ref)) {
                     CombineEventHandles(eventHandles, ref->GetBaseObject(), i);
                 }
@@ -633,13 +650,12 @@ struct AnimationEventSink : public RE::BSTEventSink<RE::BSAnimationGraphEvent> {
         }
 
         if (event->tag == "BowRelease") {
-            auto* calendar = RE::Calendar::GetSingleton();
-            if (calendar) {
+            if (sv::calendar) {
                 lastReleaseTime = std::chrono::system_clock::now();
-                lastReleaseGameTime = calendar->GetHoursPassed();
+                lastReleaseGameTime = sv::calendar->GetHoursPassed();
             }
             else {
-                logger::error("calendar not found");
+                logger::error("sv::calendar not found");
             }
         }
         else if (event->tag == "bowDraw") {
@@ -736,13 +752,12 @@ struct ProjectileImpactHook
         if ((projectile)) {
             bool killOnCollision = projectile->GetKillOnCollision();
 
-            auto* calendar = RE::Calendar::GetSingleton();
             float gameHoursPassed = 0.0;
-            if (calendar) {
-                gameHoursPassed = calendar->GetHoursPassed();
+            if (sv::calendar) {
+                gameHoursPassed = sv::calendar->GetHoursPassed();
             }
             else {
-                logger::error("calendar not found");
+                logger::error("sv::calendar not found");
             }
 
             //uint32_t runTime = RE::GetDurationOfApplicationRunTime();
@@ -933,13 +948,12 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
         }
 
         std::chrono::system_clock::time_point hitTime = std::chrono::system_clock::now();
-        auto* calendar = RE::Calendar::GetSingleton();
         float currentGameTime = -1.0;
-        if (calendar) {
-            currentGameTime = calendar->GetHoursPassed();
+        if (sv::calendar) {
+            currentGameTime = sv::calendar->GetHoursPassed();
         }
         else {
-            logger::error("calendar not found");
+            logger::error("sv::calendar not found");
         }
 
         RE::TESObjectREFR* attacker = nullptr;
@@ -1051,12 +1065,12 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
                                     if (it->second->forceChangedAmmos.size() > 0) { //the attacker did have their ammo force unequipped by shooting last arrow of type. 
                                         int indexToErase = -1;
                                         float gameHoursPassed = -1.0;
-                                        if (calendar) {
-                                            gameHoursPassed = calendar->GetHoursPassed();
+                                        if (sv::calendar) {
+                                            gameHoursPassed = sv::calendar->GetHoursPassed();
                                         }
                                         bool ammoFound = false;
 
-                                        if (iMaxArrowsSavedPerReference > 0 && calendar) {
+                                        if (iMaxArrowsSavedPerReference > 0 && sv::calendar) {
                                             auto recentHitIt = recentShotProjectiles.find(attacker);
                                             if (recentHitIt != recentShotProjectiles.end()) {
                                                 for (int i = 0; i < it->second->forceChangedAmmos.size() && !ammoFound; i++) { //cycle through force unequipped ammos due to shooting last arrow of type. 
@@ -1083,7 +1097,7 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
                                             }
                                         }
 
-                                        if (!ammoFound && calendar) { //ammo not found in previous search
+                                        if (!ammoFound && sv::calendar) { //ammo not found in previous search
                                             for (int i = 0; i < it->second->forceChangedAmmos.size(); i++) {
                                                 if (GameHoursToRealTimeSeconds(nullptr, (gameHoursPassed - it->second->forceChangedAmmos[0].gameTimeStamp) < 1.5)) {
                                                     ammo = it->second->forceChangedAmmos[i].ammo;
@@ -1132,25 +1146,18 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
 
 void CheckForPlayerCombatStatusChange() {
     logger::trace("");
-    auto* player = RE::PlayerCharacter::GetSingleton();
-    if (!player) {
+    if (!sv::player) {
         logger::error("player* not found");
         return;
     }
 
-    RE::Actor* playerRef = static_cast<RE::Actor*>(player);
-    if (!playerRef) {
-        logger::error("playerRef* not found");
-        return;
-    }
-
-    bool playerInCombat = player->IsInCombat();
+    bool playerInCombat = sv::player->IsInCombat();
     if (bPlayerIsInCombat != playerInCombat) {
         bPlayerIsInCombat = playerInCombat;
         int combatState = static_cast<int>(bPlayerIsInCombat);
 
         RE::Actor* target = nullptr;
-        auto* combatGroup = player->GetCombatGroup();
+        auto* combatGroup = sv::player->GetCombatGroup();
         if (combatGroup) {
             if (combatGroup->targets.size() > 0) {
                 auto combatHandle = combatGroup->targets[0].targetHandle;
@@ -1165,10 +1172,10 @@ void CheckForPlayerCombatStatusChange() {
 
         logger::debug("target[{}]", gfuncs::GetFormName(target));
 
-        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->GetHandles({ playerRef, target, });
+        std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnCombatStateChanged]->GetHandles({ sv::player, target, });
 
         if (handles.size() > 0) {
-            auto* args = RE::MakeFunctionArguments((RE::Actor*)playerRef, (RE::Actor*)target, (int)combatState);
+            auto* args = RE::MakeFunctionArguments((RE::Actor*)sv::player, (RE::Actor*)target, (int)combatState);
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnCombatStateChanged]->sEvent, args);
         }
     }
@@ -1219,7 +1226,7 @@ struct CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
             gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnCombatStateChanged]->sEvent, args);
 
             if (bRegisteredForPlayerCombatChange) {
-                gfuncs::DelayedFunction(&CheckForPlayerCombatStatusChange, 1200); //check for player combat status change after 1.2 seconds.
+                gfuncs::DelayedFunction(&CheckForPlayerCombatStatusChange, 1200); //check for sv::player combat status change after 1.2 seconds.
             }
         }
         return RE::BSEventNotifyControl::kContinue;
@@ -1309,24 +1316,17 @@ void HandleActivateEvent(RE::TESObjectREFRPtr actionRef, RE::TESObjectREFRPtr ob
         }
     }
 
-    //RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-
     if (bActivateEventSinkEnabledByDefault) {
-        RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-
-        if (playerRef) {
-            if (activatorRef == playerRef) {
+        if (sv::player) {
+            if (activatorRef == sv::player) {
                 if (activatedRef) {
-                    sharedVars.update([activatedRef](SharedUIVariables& vars) {
-                        vars.lastPlayerActivatedRef = activatedRef;
-                    });
+                    sv::lastPlayerActivatedRef = activatedRef;
 
-                    auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-                    if (vm) {
-                        AttachDbSksePersistentVariablesScript();
-                        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)activatedRef);
-                        vm->SendEventAll("OnDbSksePlayerActivatedRef", args);
-                        delete args;
+                    if (sv::lastPlayerActivatedRefScriptProperty) {
+                        RE::BSScript::PackValue(sv::lastPlayerActivatedRefScriptProperty, activatedRef);
+                    }
+                    else {
+                        logger::error(" sv::lastPlayerActivatedRefScriptProperty is nullptr");
                     }
                 }
             }
@@ -1358,11 +1358,8 @@ struct ActivateEventSink : public RE::BSTEventSink<RE::TESActivateEvent> {
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        //HandleActivateEvent(event->actionRef, event->objectActivated);
-
-        std::thread t(HandleActivateEvent, event->actionRef, event->objectActivated);
-        t.detach();
-
+        HandleActivateEvent(event->actionRef, event->objectActivated);
+        
         return RE::BSEventNotifyControl::kContinue;
     }
 };
@@ -1577,10 +1574,9 @@ struct EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent> {
         bool equipped = event->equipped;
         int eventIndex = -1;
 
-        auto* calendar = RE::Calendar::GetSingleton();
         float fTime = 0.0;
-        if (calendar) {
-            fTime = calendar->GetHoursPassed();
+        if (sv::calendar) {
+            fTime = sv::calendar->GetHoursPassed();
             //equip events can get sent twice apparently. This happens when an ammo is force unequipped after shooting the last arrow or bolt of type in inventory. 
             //skip the event if time and other variables match last equip event
             if (fTime == lastEquipEvent.gameTimeStamp) {
@@ -2151,9 +2147,8 @@ struct ItemCraftedEventSink : public RE::BSTEventSink<RE::ItemCrafted::Event> {
 
         RE::TESObjectREFR* workbenchRef = nullptr;
 
-        RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-        if (playerRef) {
-            auto* aiProcess = playerRef->GetActorRuntimeData().currentProcess;
+        if (sv::player) {
+            auto* aiProcess = sv::player->GetActorRuntimeData().currentProcess;
             if (aiProcess) {
                 if (aiProcess->middleHigh) {
                     if (aiProcess->middleHigh->occupiedFurniture) {
@@ -2286,9 +2281,8 @@ struct LocationClearedEventSink : public RE::BSTEventSink<RE::LocationCleared::E
         }
 
         RE::BGSLocation* location = nullptr;
-        RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-        if (playerRef) {
-            location = playerRef->GetCurrentLocation();
+        if (sv::player) {
+            location = sv::player->GetCurrentLocation();
             if (gfuncs::IsFormValid(location)) {
                 bool locationCleared = location->IsCleared();
                 while (!locationCleared) {
@@ -2531,20 +2525,19 @@ QuestObjectiveEventSink* questObjectiveEventSink;
 
 //offset difference for PLAYER_RUNTIME_DATA members between AE and SE is 8.
 RE::PLAYER_TARGET_LOC* GetPlayerQueuedTargetLoc() {
-    auto* player = RE::PlayerCharacter::GetSingleton();
-    if (!player) {
+    if (!sv::player) {
         logger::error("player* not found");
         return nullptr;
     }
     if (REL::Module::IsAE()) {
         uint32_t offset = 0x648;
         //logger::critical("AE Offset [{:x}]", offset);
-        return reinterpret_cast<RE::PLAYER_TARGET_LOC*>((uintptr_t)player + offset);
+        return reinterpret_cast<RE::PLAYER_TARGET_LOC*>((uintptr_t)sv::player + offset);
     }
     else if (REL::Module::IsSE()) {
         uint32_t offset = 0x640;
         //logger::critical("SE Offset [{:x}]", offset);
-        return reinterpret_cast<RE::PLAYER_TARGET_LOC*>((uintptr_t)player + offset);
+        return reinterpret_cast<RE::PLAYER_TARGET_LOC*>((uintptr_t)sv::player + offset);
     }
     else {
         return nullptr;
@@ -2653,7 +2646,7 @@ struct PositionPlayerEventSink : public RE::BSTEventSink<RE::PositionPlayerEvent
 
 PositionPlayerEventSink* positionPlayerEventSink;
 
-//used only for the player
+//used only for the sv::player
 struct ActorCellEventSink : public RE::BSTEventSink<RE::BGSActorCellEvent> {
     bool sinkAdded = false;
     RE::FormID previousCellId;
@@ -2678,9 +2671,8 @@ struct ActorCellEventSink : public RE::BSTEventSink<RE::BGSActorCellEvent> {
         if (gfuncs::IsFormValid(newCellForm)) {
             newCell = static_cast<RE::TESObjectCELL*>(newCellForm);
             if (!gfuncs::IsFormValid(newCell)) {
-                RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-                if (playerRef) {
-                    newCell = playerRef->GetParentCell();
+                if (sv::player) {
+                    newCell = sv::player->GetParentCell();
                 }
             }
         }
@@ -3024,116 +3016,47 @@ ObjectREFRTranslationEventSink* objectREFRTranslationEventSink;
 
 struct MusicChangeEventSink {
     bool AddEventSink() {
-        mutex.lock();
         if (!sinkAdded) {
-            logger::debug("");
             sinkAdded = true;
-            mutex.unlock();
-            ListenForMusicChangeStart();
+            sv::currentBSIMusicType = sv::musicManager->current;
+            logger::debug("");
             return true;
         }
         else {
-            mutex.unlock();
             return false;
         }
     }
 
     bool RemoveEventSink() {
-        mutex.lock();
         if (sinkAdded) {
             sinkAdded = false; 
-            mutex.unlock();
+            logger::debug("");
             return true;
         }
         else {
-            mutex.unlock();
             return false;
         }
     }
 
     bool IsSinkAdded() {
-        bool added;
-        mutex.lock();
-        added = sinkAdded;
-        mutex.unlock();
-        return added;
-    }
-
-    void SetCurrentMusic(RE::BGSMusicType* musicType) {
-        mutex.lock();
-        currentMusicType = musicType;
-        mutex.unlock();
-    }
-
-    RE::BGSMusicType* GetCurrentMusic() {
-        RE::BGSMusicType* musicType = nullptr;
-        mutex.lock();
-        musicType = currentMusicType;
-        mutex.unlock();
-        return musicType;
-    }
-
-private:
-    void ListenForMusicChangeStart() {
-        ListenForMusicChange();
-    }
-
-    void ListenForMusicChange() {
-        std::thread t([=]() {
-            auto* musicManager = RE::BSMusicManager::GetSingleton();
-            mutex.lock();
-
-            if (!musicManager) {
-                sinkAdded = false;
-                isPolling = false;
-                mutex.unlock();
-                logger::critical("musicManager* not found. OnMusicChangeGlobal event disabled.");
-            }
-            else if (isPolling){
-                logger::trace("already polling");
-                mutex.unlock();
-            }
-            else {
-                isPolling = true;
-                mutex.unlock();
-
-                logger::trace("musicManager* found. listening for music change");
-                RE::BGSMusicType* bsgMusicType = GetCurrentMusicType(nullptr);
-                //RE::BSIMusicType* bsiMusicType = musicManager->current;
-                RE::BSIMusicType* bsiMusicType = bsgMusicType;
-                SetCurrentMusic(bsgMusicType);
-
-                //using mutex lock with SetCurrentMusicBsi because it could be changed when loading a save.
-                while (bsiMusicType == musicManager->current) {
-                    //logger::info("while loop");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(eventPollingInterval));
-                    bsiMusicType = GetCurrentMusic();
-                }
-
-                if (sinkAdded) {
-                    HandleMusicChangeEvent(GetCurrentMusicType(nullptr), GetCurrentMusic());
-                    mutex.lock();
-                    isPolling = false;
-                    mutex.unlock();
-                    ListenForMusicChangeStart();
-                }
-                else {
-                    mutex.lock();
-                    isPolling = false;
-                    mutex.unlock();
-                }
-            }
-        });
-        t.detach();
+        return sinkAdded;
     }
 
     void HandleMusicChangeEvent(RE::BGSMusicType* newMusicType, RE::BGSMusicType* oldMusicType) {
+        if (!gfuncs::IsFormValid(newMusicType)) {
+            newMusicType = nullptr;
+        }
+
+        if (!gfuncs::IsFormValid(oldMusicType)) {
+            oldMusicType = nullptr;
+        }
+        
         if (newMusicType == oldMusicType) {
-            logger::debug("newMusicType == oldMusicType, likely because of loading a save. Aborting sending event.");
+            logger::debug("newWeather == oldWeather, likely because of loading a save. Aborting sending event.");
             return;
         }
 
-        logger::trace("oldMusicType[{}] newMusicType[{}]", 
+        logger::debug("oldMusicType[{}] newMusicType[{}]", 
             gfuncs::GetFormDataString(oldMusicType), gfuncs::GetFormDataString(newMusicType));
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnMusicTypeChange]->GetHandles(
@@ -3145,120 +3068,46 @@ private:
         }
     }
 
-    std::mutex mutex;
     bool sinkAdded = false;
-    bool isPolling = false;
-    RE::BGSMusicType* currentMusicType = nullptr;
 };
 
 MusicChangeEventSink* musicChangeEventSink;
 
 struct WeatherChangeEventSink {
     bool AddEventSink() {
-        mutex.lock();
         if (!sinkAdded) {
-            logger::debug("");
             sinkAdded = true;
-            mutex.unlock();
-            ListenForWeatherChangeStart();
+            sv::currentWeather = sv::sky->currentWeather;
+            logger::debug("");
             return true;
         }
         else {
-            mutex.unlock();
             return false;
         }
     }
 
     bool RemoveEventSink() {
-        mutex.lock();
         if (sinkAdded) {
             sinkAdded = false;
-            mutex.unlock();
+            logger::debug("");
             return true;
         }
         else {
-            mutex.unlock();
             return false;
         }
     }
 
     bool IsSinkAdded() {
-        bool added;
-        mutex.lock();
-        added = sinkAdded;
-        mutex.unlock();
-        return added;
+        return sinkAdded;
     }
-
-    void SetCurrentWeather(RE::TESWeather* weather) {
-        mutex.lock();
-        currentWeather = weather;
-        mutex.unlock();
-    }
-
-    RE::TESWeather* GetCurrentWeather() {
-        RE::TESWeather* weather = nullptr; 
-        mutex.lock();
-        weather = currentWeather;
-        mutex.unlock();
-        return weather;
-    }
-
-private:
-    void ListenForWeatherChangeStart() {
-        ListenForWeatherChange();
-    }
-
-    void ListenForWeatherChange() {
-        std::thread t([=]() {
-            auto* sky = RE::Sky::GetSingleton();
-            mutex.lock();
-
-            if (!sky) {
-                sinkAdded = false;
-                isPolling = false;
-                mutex.unlock();
-                logger::critical("sky* not found. OnWeatherChangeGlobal event disabled.");
-            }
-            else if (isPolling) {
-                logger::trace("already polling");
-                mutex.unlock();
-            }
-            else {
-                isPolling = true;
-                mutex.unlock();
-
-                logger::trace("sky* found. listening for weather change");
-                
-                SetCurrentWeather(sky->currentWeather);
-
-                //using mutex lock to GetCurrentWeather. Loading a save may change the current weather.
-                while (GetCurrentWeather() == sky->currentWeather) {
-                    //logger::info("while loop");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(eventPollingInterval));
-                }
-
-                if (sinkAdded) {
-                    HandleWeatherChangeEvent(sky->currentWeather, GetCurrentWeather());
-                    mutex.lock();
-                    isPolling = false;
-                    mutex.unlock();
-                    ListenForWeatherChangeStart();
-                }
-                else {
-                    mutex.lock();
-                    isPolling = false;
-                    mutex.unlock();
-                }
-            }
-            });
-        t.detach();
-    }
-
+    
     void HandleWeatherChangeEvent(RE::TESWeather* newWeather, RE::TESWeather* oldWeather) {
         if (!gfuncs::IsFormValid(newWeather)) {
-            logger::warn("newWeather doesn't exist");
-            return;
+            newWeather = nullptr;
+        }
+
+        if (!gfuncs::IsFormValid(oldWeather)) {
+            oldWeather = nullptr;
         }
 
         if (newWeather == oldWeather) {
@@ -3266,12 +3115,8 @@ private:
             return;
         }
 
-        logger::trace("oldWeather[{}] newWeather[{}]",
+        logger::debug("oldWeather[{}] newWeather[{}]",
             gfuncs::GetFormDataString(oldWeather), gfuncs::GetFormDataString(newWeather));
-
-        if (!gfuncs::IsFormValid(oldWeather)) {
-            oldWeather = nullptr;
-        }
 
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWeatherChange]->GetHandles(
             { newWeather, oldWeather });
@@ -3282,10 +3127,7 @@ private:
         }
     }
 
-    std::mutex mutex;
     bool sinkAdded = false;
-    bool isPolling = false;
-    RE::TESWeather* currentWeather = nullptr;
 };
 
 WeatherChangeEventSink* weatherChangeEventSink;
@@ -3312,10 +3154,9 @@ namespace ActiveEffectEvents {
                                 logger::warn("EffectStart: activeEffect IsBadReadPtr");
                             }
                             else {
-                                auto* calendar = RE::Calendar::GetSingleton();
                                 float gameHoursPassed = 0.0; 
-                                if (calendar) {
-                                    gameHoursPassed = calendar->GetHoursPassed();
+                                if (sv::calendar) {
+                                    gameHoursPassed = sv::calendar->GetHoursPassed();
                                 }
 
                                 std::pair<std::chrono::system_clock::time_point, float> startTime{std::chrono::system_clock::now(), gameHoursPassed};
@@ -3559,9 +3400,8 @@ namespace ActiveEffectEvents {
                                         if (startTime != now) {
                                             auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime);
                                             elapsedSeconds = float(milliseconds.count()) * float(0.001);
-                                            auto* calendar = RE::Calendar::GetSingleton();
-                                            if (calendar) {
-                                                elapsedGameHours = calendar->GetHoursPassed() - startGameTime;
+                                            if (sv::calendar) {
+                                                elapsedGameHours = sv::calendar->GetHoursPassed() - startGameTime;
                                             }
                                         }
 
@@ -3743,23 +3583,21 @@ struct ObjectLoadedEventSink : public RE::BSTEventSink<RE::TESObjectLoadedEvent>
 ObjectLoadedEventSink* objectLoadedEventSink;
 
 bool IsItemMenuOpenNative(RE::StaticFunctionTag*) {
-    auto* ui = RE::UI::GetSingleton();
-    if (!ui) {
+    if (!sv::ui) {
         logger::error("ui* not found");
         return false;
     }
-    return ui->IsItemMenuOpen();
+    return sv::ui->IsItemMenuOpen();
 }
 
 bool IsItemMenuOpen() {
-    auto* ui = RE::UI::GetSingleton();
-    if (!ui) {
+    if (!sv::ui) {
         logger::error("ui* not found");
         return false;
     }
 
     for (auto& menu : itemMenus) {
-        if (ui->IsMenuOpen(menu)) {
+        if (sv::ui->IsMenuOpen(menu)) {
             return true;
         }
     }
@@ -3775,10 +3613,9 @@ public:
 
         //logger::trace("input event");
 
-        auto* ui = RE::UI::GetSingleton();
-        if (ui) {
+        if (sv::ui) {
             //don't want to send ui select events to papyrus if message box context is open, only when selecting item.
-            if (ui->IsMenuOpen(RE::MessageBoxMenu::MENU_NAME)) {
+            if (sv::ui->IsMenuOpen(RE::MessageBoxMenu::MENU_NAME)) {
                 return RE::BSEventNotifyControl::kContinue;
             }
         }
@@ -3801,7 +3638,7 @@ public:
             if (buttonEvent) {
                 if (buttonEvent->IsDown()) {
                     if (buttonEvent->GetIDCode() == 28) { //enter key pressed
-                        if (ui->IsItemMenuOpen()) {
+                        if (sv::ui->IsItemMenuOpen()) {
                             UIEvents::ProcessUiItemSelectEvent();
                             logger::trace("button[{}] pressed. ProcessUiItemSelectEvent", buttonEvent->GetIDCode());
                         }
@@ -3816,114 +3653,119 @@ public:
 
 InputEventSink* inputEventSink;
 
+bool firstLoadCalled = false;
+void FirstLoad() {
+    if (!firstLoadCalled) {
+        firstLoadCalled = true;
+        AttachDbSksePersistentVariablesScript();
+        logger::info("");
+    }
+}
+
 void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
     //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
 
-    //access, read / write SharedUIVariables
-    sharedVars.update([&](SharedUIVariables& vars) {
-        auto openedMenusItr = std::find(vars.openedMenus.begin(), vars.openedMenus.end(), sMenuName);
-        auto* ui = RE::UI::GetSingleton();
+    bool notifyCv = false;
 
-        if (opening) {
-            vars.lastMenuOpened = sMenuName;
+    if (opening) {
+        if (!sv::inMenuMode) { //opened menu
+            sv::inMenuMode = true;
+            notifyCv = true;
+            sv::lastTimeMenuWasOpened = (std::chrono::system_clock::now());
+            logger::trace("inMenuMode = true");
+        } 
 
-            if (openedMenusItr == vars.openedMenus.end()) {
-                vars.openedMenus.push_back(sMenuName);
+        if (sMenuName != RE::CursorMenu::MENU_NAME) {
+            sv::lastMenuOpened = sMenuName;
+        }
+
+        logger::trace("menu[{}] opened", sMenuName);
+
+        if (sv::ui) {
+            if (sv::ui->GameIsPaused() && !sv::gamePaused) {
+                sv::gamePaused = true;
+                notifyCv = true;
+                sv::lastTimeGameWasPaused = (std::chrono::system_clock::now());
+                logger::trace("game was paused");
             }
 
-            logger::trace("menu[{}] opened", sMenuName);
-
-            if (ui) {
-                if (ui->GameIsPaused() && !vars.gamePaused) {
-                    vars.gamePaused = true;
-                    vars.lastTimeGameWasPaused = (std::chrono::system_clock::now());
-                    logger::trace("game was paused");
-                }
-            }
-
-            if (!vars.inMenuMode) { //opened menu
-                vars.inMenuMode = true;
-                vars.lastTimeMenuWasOpened = (std::chrono::system_clock::now());
-                logger::trace("inMenuMode = true");
-            }
-
-            if (bActivateEventSinkEnabledByDefault) {
-                if (gfuncs::IsRefActivatedMenu(sMenuName)) {
-                    if (gfuncs::IsFormValid(vars.lastPlayerActivatedRef)) {
-                        vars.menuRef = vars.lastPlayerActivatedRef;
-                        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-                        if (vm) {
-                            AttachDbSksePersistentVariablesScript();
-                            auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)vars.menuRef);
-                            vm->SendEventAll("OnDbSksePlayerActivatedMenuRef", args);
-                            delete args;
-                        }
-                    }
-                }
-            }
-
-            //AddToMenusCurrentlyOpen(event->menuName);
-            /* std::thread tAddToMenusCurrentlyOpen(AddToMenusCurrentlyOpen, event->menuName);
-            tAddToMenusCurrentlyOpen.join();*/
-
-            if (ui) {
-                if (ui->IsItemMenuOpen()) {
-                    if (UIEvents::registeredUIEventDatas.size() > 0) {
-                        if (!inputEventSink->sinkAdded) {
-                            auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
-                            if (inputManager) {
-                                inputEventSink->sinkAdded = true;
-                                inputManager->AddEventSink(inputEventSink);
-                                logger::trace("item menu [{}] opened. Added input event sink", sMenuName);
-                            }
+            if (sv::ui->IsItemMenuOpen()) {
+                if (UIEvents::registeredUIEventDatas.size() > 0) {
+                    if (!inputEventSink->sinkAdded) {
+                        if (sv::inputManager) {
+                            inputEventSink->sinkAdded = true;
+                            sv::inputManager->AddEventSink(inputEventSink);
+                            logger::trace("item menu [{}] opened. Added input event sink", sMenuName);
                         }
                     }
                 }
             }
         }
-        else {
-            logger::trace("menu[{}] closed", sMenuName);
 
-            if (ui) {
-                if (!ui->GameIsPaused() && vars.gamePaused) {
-                    vars.gamePaused = false;
-                    auto now = std::chrono::system_clock::now();
-                    float fGamePausedTime = gfuncs::timePointDiffToFloat(now, vars.lastTimeGameWasPaused);
-                    //UpdateTimers(fGamePausedTime);
-                    std::thread tUpdateTimers(timers::UpdateTimers, fGamePausedTime);
-                    tUpdateTimers.detach();
-                    logger::trace("game was unpaused");
+        if (bActivateEventSinkEnabledByDefault) {
+            if (gfuncs::IsRefActivatedMenu(sMenuName)) {
+                if (gfuncs::IsFormValid(sv::lastPlayerActivatedRef)) {
+                    sv::menuRef = sv::lastPlayerActivatedRef;
+
+                    if (sv::LastPlayerMenuActivatedRefScriptProperty) {
+                        RE::BSScript::PackValue(sv::LastPlayerMenuActivatedRefScriptProperty, sv::menuRef);
+                    }
+                    else {
+                        logger::error("sv::LastPlayerMenuActivatedRefScriptProperty is nullptr");
+                    }
                 }
             }
+        }
+    }
+    else {
+        logger::trace("menu[{}] closed", sMenuName);
 
-            if (openedMenusItr != vars.openedMenus.end()) {
-                vars.openedMenus.erase(openedMenusItr);
+        if (sv::ui) {
+            if (!sv::ui->GameIsPaused() && sv::gamePaused) {
+                sv::gamePaused = false;
+                notifyCv = true;
+
+                //old way, now uses condition variable
+                /*auto now = std::chrono::system_clock::now();
+                float fGamePausedTime = gfuncs::timePointDiffToFloat(now, sv::lastTimeGameWasPaused);
+                timers::UpdateTimers(fGamePausedTime);
+                std::thread tUpdateTimers(timers::UpdateTimers, fGamePausedTime);
+                tUpdateTimers.detach();*/
+
+                logger::trace("game was unpaused");
             }
 
-            if (vars.openedMenus.size() == 0) { //closed all menus
-                vars.inMenuMode = false;
-                auto now = std::chrono::system_clock::now();
-                float timePointDiff = gfuncs::timePointDiffToFloat(now, vars.lastTimeMenuWasOpened);
-                //UpdateNoMenuModeTimers(timePointDiff);
+            if (!IsInMenu(nullptr) && sv::inMenuMode) { //closed all menus
+                sv::inMenuMode = false;
+                notifyCv = true;
+
+                //old way, now uses condition variable
+                /*auto now = std::chrono::system_clock::now();
+                float timePointDiff = gfuncs::timePointDiffToFloat(now, sv::lastTimeMenuWasOpened);
+                timers::UpdateNoMenuModeTimers(timePointDiff);
                 std::thread tUpdateNoMenuModeTimers(timers::UpdateNoMenuModeTimers, timePointDiff);
-                tUpdateNoMenuModeTimers.detach();
+                tUpdateNoMenuModeTimers.detach();*/
+
+                FirstLoad();
                 logger::trace("inMenuMode = false");
             }
 
-            if (ui) {
-                if (!ui->IsItemMenuOpen()) {
-                    if (inputEventSink->sinkAdded) {
-                        auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
-                        if (inputManager) {
-                            inputEventSink->sinkAdded = false;
-                            inputManager->RemoveEventSink(inputEventSink);
-                            logger::trace("item menu [{}] closed. Removed input event sink", sMenuName);
-                        }
+            if (!sv::ui->IsItemMenuOpen()) {
+                if (inputEventSink->sinkAdded) {
+                    if (sv::inputManager) {
+                        inputEventSink->sinkAdded = false;
+                        sv::inputManager->RemoveEventSink(inputEventSink);
+                        logger::trace("item menu [{}] closed. Removed input event sink", sMenuName);
                     }
                 }
             }
         }
-    });
+    }
+
+    if (notifyCv) {
+        std::lock_guard<std::mutex> lock(sv::updateMutex);
+        sv::updateCv.notify_all();
+    }
 }
 
 struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
@@ -3933,10 +3775,9 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         //this sink is for managing timers and GetCurrentMenuOpen function.
         
         if (!bMenuOpenCloseEventSinkEnabled) {
-            auto* ui = RE::UI::GetSingleton();
-            if (ui) {
+            if (sv::ui) {
                 sinkAdded = false;
-                ui->RemoveEventSink<RE::MenuOpenCloseEvent>(this);
+                sv::ui->RemoveEventSink<RE::MenuOpenCloseEvent>(this);
             }
             return RE::BSEventNotifyControl::kContinue;
         }
@@ -3956,9 +3797,9 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
         bool opening = event->opening;
 
         if (sMenuName != RE::HUDMenu::MENU_NAME) { //hud menu is always open, don't need to do anything for it.
-            //HandleMenuOpenCloseEvent(opening, sMenuName);
-            std::thread t(HandleMenuOpenCloseEvent, opening, sMenuName);
-            t.detach();
+            HandleMenuOpenCloseEvent(opening, sMenuName);
+            //std::thread t(HandleMenuOpenCloseEvent, opening, sMenuName);
+            //t.detach();
         }
 
         return RE::BSEventNotifyControl::kContinue;
@@ -3994,18 +3835,17 @@ bool ShouldActorActionEventSinkBeAdded() {
 bool AddEquipEventSink() {
     //logger::trace("");
     if (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() || !eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty() || !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-        auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
-        if (eventSourceholder) {
+        if (sv::eventSourceholder) {
             if (!equipEventSink->sinkAdded) {
                 equipEventSink->sinkAdded = true;
-                eventSourceholder->AddEventSink(equipEventSink);
+                sv::eventSourceholder->AddEventSink(equipEventSink);
                 RegisterActorsForBowDrawAnimEvents();
                 logger::debug("Sink Added");
                 return true;
             }
         }
         else {
-            logger::error("eventSourceholder not found. Equip Event Sink not added");
+            logger::error("sv::eventSourceholder not found. Equip Event Sink not added");
         }
     }
     return false;
@@ -4015,17 +3855,16 @@ bool RemoveEquipEventSink() {
     logger::trace("");
     
     if (eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty() && eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty() && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-        auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
-        if (eventSourceholder) {
+        if (sv::eventSourceholder) {
             if (equipEventSink->sinkAdded) {
                 equipEventSink->sinkAdded = false;
-                eventSourceholder->RemoveEventSink(equipEventSink); //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
+                sv::eventSourceholder->RemoveEventSink(equipEventSink); //always added to track recent hit projectiles for the GetRecentHitArrowRefsMap function
                 logger::debug("Sink Removed");
                 return true;
             }
         }
         else {
-            logger::error("eventSourceholder not found. Equip Event Sink not added");
+            logger::error("sv::eventSourceholder not found. Equip Event Sink not added");
         }
     }
     return false;
@@ -4033,16 +3872,15 @@ bool RemoveEquipEventSink() {
 
 bool AddHitEventSink() {
     if (!hitEventSink->sinkAdded && (!eventDataPtrs[EventEnum_HitEvent]->isEmpty() || !eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty())) {
-        auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
-        if (eventSourceholder) {
+        if (sv::eventSourceholder) {
             hitEventSink->sinkAdded = true;
             RegisterActorsForBowDrawAnimEvents();
-            eventSourceholder->AddEventSink(hitEventSink);
+            sv::eventSourceholder->AddEventSink(hitEventSink);
 
             return true;
         }
         else {
-            logger::error("eventSourceholder not found. Hit Event Sink not added");
+            logger::error("sv::eventSourceholder not found. Hit Event Sink not added");
         }
     }
     return false;
@@ -4050,16 +3888,15 @@ bool AddHitEventSink() {
 
 bool RemoveHitEventSink() {
     if (hitEventSink->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty() && eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
-        auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
-        if (eventSourceholder) {
+        if (sv::eventSourceholder) {
             hitEventSink->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(hitEventSink);
+            sv::eventSourceholder->RemoveEventSink(hitEventSink);
             RegisterActorsForBowDrawAnimEvents();
             logger::debug("");
             return true;
         }
         else {
-            logger::error("eventSourceholder not found. Hiy Event Sink not removed");
+            logger::error("sv::eventSourceholder not found. Hiy Event Sink not removed");
         }
     }
     return false;
@@ -4070,7 +3907,6 @@ bool ShouldPositionPlayerEventSinkBeAdded() {
 }
 
 void AddSink(int index) {
-    auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
     std::string eventName = "not found";
     auto* eventData = eventDataPtrs[index];
     if (eventData) {
@@ -4081,13 +3917,13 @@ void AddSink(int index) {
     switch (index) {
     case EventEnum_OnCombatStateChanged:
         if (!combatEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnCombatStateChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             combatEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded = true;
-            eventSourceholder->AddEventSink(combatEventSink);
+            sv::eventSourceholder->AddEventSink(combatEventSink);
             logger::debug("EventEnum_OnCombatStateChanged sink added");
         }
         break;
@@ -4096,27 +3932,27 @@ void AddSink(int index) {
 
     case EventEnum_FurnitureExit:
         if (!furnitureEventSink->sinkAdded && (!eventDataPtrs[EventEnum_FurnitureEnter]->isEmpty() || !eventDataPtrs[EventEnum_FurnitureExit]->isEmpty())) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             furnitureEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded = true;
-            eventSourceholder->AddEventSink(furnitureEventSink);
+            sv::eventSourceholder->AddEventSink(furnitureEventSink);
             logger::debug("EventEnum_FurnitureExit sink added");
         }
         break;
 
     case EventEnum_OnActivate:
         if (!eventDataPtrs[EventEnum_OnActivate]->sinkAdded && !eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
-            if (!eventSourceholder && !activateEventSink->sinkAdded) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder && !activateEventSink->sinkAdded) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
 
             if (!activateEventSink->sinkAdded) {
                 activateEventSink->sinkAdded = true;
-                eventSourceholder->AddEventSink(activateEventSink);
+                sv::eventSourceholder->AddEventSink(activateEventSink);
             }
 
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = true;
@@ -4133,8 +3969,8 @@ void AddSink(int index) {
             logger::debug("EventEnum_HitEvent Equip event sink added");
         }
         if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = true;
@@ -4146,21 +3982,21 @@ void AddSink(int index) {
 
     case EventEnum_DyingEvent:
         if (!deathEventSink->sinkAdded && (!eventDataPtrs[EventEnum_DeathEvent]->isEmpty() || !eventDataPtrs[EventEnum_DyingEvent]->isEmpty())) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             deathEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_DeathEvent]->sinkAdded = true;
-            eventSourceholder->AddEventSink(deathEventSink);
+            sv::eventSourceholder->AddEventSink(deathEventSink);
             logger::debug("EventEnum_DyingEvent sink added");
         }
         break;
 
     case EventEnum_OnObjectEquipped:
         if (!eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = true;
@@ -4173,8 +4009,8 @@ void AddSink(int index) {
 
     case EventEnum_OnObjectUnequipped:
         if (!eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded = true;
@@ -4187,65 +4023,65 @@ void AddSink(int index) {
 
     case EventEnum_OnWaitStart:
         if (!waitStartEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnWaitStart]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             waitStartEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded = true;
-            eventSourceholder->AddEventSink(waitStartEventSink);
+            sv::eventSourceholder->AddEventSink(waitStartEventSink);
             logger::debug("EventEnum_OnWaitStart sink added");
         }
         break;
 
     case EventEnum_OnWaitStop:
         if (!waitStopEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnWaitStop]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             waitStopEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded = true;
-            eventSourceholder->AddEventSink(waitStopEventSink);
+            sv::eventSourceholder->AddEventSink(waitStopEventSink);
             logger::debug("EventEnum_OnWaitStop sink added");
         }
         break;
 
     case EventEnum_OnMagicEffectApply:
         if (!magicEffectApplyEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnMagicEffectApply]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             magicEffectApplyEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded = true;
-            eventSourceholder->AddEventSink(magicEffectApplyEventSink);
+            sv::eventSourceholder->AddEventSink(magicEffectApplyEventSink);
             logger::debug("EventEnum_OnMagicEffectApply sink added");
         }
         break;
 
     case EventEnum_OnSpellCast: //13
         if (!spellCastEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnSpellCast]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             spellCastEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = true;
-            eventSourceholder->AddEventSink(spellCastEventSink);
+            sv::eventSourceholder->AddEventSink(spellCastEventSink);
             logger::debug("EventEnum_OnSpellCast sink added");
         }
         break;
 
     case EventEnum_LockChanged:
         if (!lockChangedEventSink->sinkAdded && !eventDataPtrs[EventEnum_LockChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             lockChangedEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_LockChanged]->sinkAdded = true;
-            eventSourceholder->AddEventSink(lockChangedEventSink);
+            sv::eventSourceholder->AddEventSink(lockChangedEventSink);
             logger::debug("EventEnum_LockChanged sink added");
         }
         break;
@@ -4254,13 +4090,13 @@ void AddSink(int index) {
 
     case EventEnum_OnClose:
         if (!openCloseEventSink->sinkAdded && (!eventDataPtrs[EventEnum_OnOpen]->isEmpty() || !eventDataPtrs[EventEnum_OnClose]->isEmpty())) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             openCloseEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnOpen]->sinkAdded = true;
-            eventSourceholder->AddEventSink(openCloseEventSink);
+            sv::eventSourceholder->AddEventSink(openCloseEventSink);
             logger::debug("EventEnum_OnClose sink added");
         }
         break;
@@ -4280,7 +4116,7 @@ void AddSink(int index) {
     case EventEnum_EndSheathe:
         if (!actorActionEventSink->sinkAdded && ShouldActorActionEventSinkBeAdded()) {
             auto* actionEventSource = SKSE::GetActionEventSource();
-            if (!eventSourceholder) {
+            if (!sv::eventSourceholder) {
                 logger::error("ActionEventSource not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
@@ -4293,13 +4129,13 @@ void AddSink(int index) {
 
     case EventEnum_OnContainerChanged:
         if (!containerChangedEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             containerChangedEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = true;
-            eventSourceholder->AddEventSink(containerChangedEventSink);
+            sv::eventSourceholder->AddEventSink(containerChangedEventSink);
             logger::debug("EventEnum_OnContainerChanged sink added");
         }
         break;
@@ -4310,8 +4146,8 @@ void AddSink(int index) {
 
         }
         if (!eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded && !eventDataPtrs[EventEnum_OnProjectileImpact]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded = true;
@@ -4365,28 +4201,28 @@ void AddSink(int index) {
 
     case EventEnum_OnEnterBleedout:
         if (!enterBleedoutEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnEnterBleedout]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             enterBleedoutEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnEnterBleedout]->sinkAdded = true;
-            eventSourceholder->AddEventSink(enterBleedoutEventSink);
+            sv::eventSourceholder->AddEventSink(enterBleedoutEventSink);
             logger::debug("EventEnum_OnEnterBleedout sink added");
         }
         break;
 
     case EventEnum_OnSwitchRaceComplete:
         if (!switchRaceCompleteEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnSwitchRaceComplete]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             switchRaceCompleteEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnSwitchRaceComplete]->sinkAdded = true;
             SaveActorRaces(); //save current actors loaded in game race's
-            eventSourceholder->AddEventSink(switchRaceCompleteEventSink);
-            eventSourceholder->AddEventSink(objectInitEventSink); //save new actors loaded races to send akOldRace parameter on switchRaceComplete event
+            sv::eventSourceholder->AddEventSink(switchRaceCompleteEventSink);
+            sv::eventSourceholder->AddEventSink(objectInitEventSink); //save new actors loaded races to send akOldRace parameter on switchRaceComplete event
             logger::debug("EventEnum_OnSwitchRaceComplete sink added");
         }
         break;
@@ -4423,9 +4259,8 @@ void AddSink(int index) {
 
     case EventEnum_OnPositionPlayerFinish:
         if (!positionPlayerEventSink->sinkAdded && ShouldPositionPlayerEventSinkBeAdded()) {
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            if (player) {
-                auto* posPlayerEventSource = player->AsPositionPlayerEventSource();
+            if (sv::player) {
+                auto* posPlayerEventSource = sv::player->AsPositionPlayerEventSource();
                 if (posPlayerEventSource) {
                     positionPlayerEventSink->sinkAdded = true;
                     posPlayerEventSource->AddEventSink(positionPlayerEventSink);
@@ -4443,13 +4278,12 @@ void AddSink(int index) {
 
     case EventEnum_OnPlayerChangeCell:
         if (!actorCellEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnPlayerChangeCell]->isEmpty()) {
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            if (player) {
-                auto* playerCellChangeSource = player->AsBGSActorCellEventSource();
+            if (sv::player) {
+                auto* playerCellChangeSource = sv::player->AsBGSActorCellEventSource();
                 if (playerCellChangeSource) {
                     actorCellEventSink->sinkAdded = true;
                     eventDataPtrs[EventEnum_OnPlayerChangeCell]->sinkAdded = true;
-                    //actorCellEventSink->previousCell = playerRef->GetParentCell();
+                    //actorCellEventSink->previousCell = sv::player->GetParentCell();
                     playerCellChangeSource->AddEventSink(actorCellEventSink);
                     logger::debug("EventEnum_OnPlayerChangeCell sink added");
                 }
@@ -4500,39 +4334,39 @@ void AddSink(int index) {
 
     case EventEnum_OnPerkEntryRun:
         if (!perkEntryRunEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnPerkEntryRun]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             perkEntryRunEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnPerkEntryRun]->sinkAdded = true;
-            eventSourceholder->AddEventSink(perkEntryRunEventSink);
+            sv::eventSourceholder->AddEventSink(perkEntryRunEventSink);
             logger::debug("EventEnum_OnPerkEntryRun sink added");
         }
         break;
 
     case EventEnum_OnTriggerEnter:
         if (!triggerEnterEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnTriggerEnter]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             triggerEnterEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnTriggerEnter]->sinkAdded = true;
-            eventSourceholder->AddEventSink(triggerEnterEventSink);
+            sv::eventSourceholder->AddEventSink(triggerEnterEventSink);
             logger::debug("EventEnum_OnTriggerEnter sink added");
         }
         break;
 
     case EventEnum_OnTriggerLeave:
         if (!triggerLeaveEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnTriggerLeave]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             triggerLeaveEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnTriggerLeave]->sinkAdded = true;
-            eventSourceholder->AddEventSink(triggerLeaveEventSink);
+            sv::eventSourceholder->AddEventSink(triggerLeaveEventSink);
             logger::debug("EventEnum_OnTriggerLeave sink added");
         }
         break;
@@ -4541,26 +4375,26 @@ void AddSink(int index) {
     case EventEnum_OnPackageChange:
     case EventEnum_OnPackageEnd:
         if (!packageEventSink->sinkAdded && !eventDataPtrs[index]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             packageEventSink->sinkAdded = true;
             eventDataPtrs[index]->sinkAdded = true;
-            eventSourceholder->AddEventSink(packageEventSink);
+            sv::eventSourceholder->AddEventSink(packageEventSink);
             logger::debug("EventEnum_OnPackage{} sink added", eventName);
         }
         break;
 
     case EventEnum_OnDestructionStageChanged:
         if (!destructionStageChangedEventSink->sinkAdded && !eventDataPtrs[EventEnum_OnDestructionStageChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             destructionStageChangedEventSink->sinkAdded = true;
             eventDataPtrs[EventEnum_OnDestructionStageChanged]->sinkAdded = true;
-            eventSourceholder->AddEventSink(destructionStageChangedEventSink);
+            sv::eventSourceholder->AddEventSink(destructionStageChangedEventSink);
             logger::debug("EventEnum_OnDestructionStageChanged sink added");
         }
         break;
@@ -4569,13 +4403,13 @@ void AddSink(int index) {
     case EventEnum_OnTranslationAlmostComplete:
     case EventEnum_OnTranslationComplete:
         if (!objectREFRTranslationEventSink->sinkAdded && !eventDataPtrs[index]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
             objectREFRTranslationEventSink->sinkAdded = true;
             eventDataPtrs[index]->sinkAdded = true;
-            eventSourceholder->AddEventSink(objectREFRTranslationEventSink);
+            sv::eventSourceholder->AddEventSink(objectREFRTranslationEventSink);
             logger::debug("EventEnum_OnTranslation{} sink added", eventName);
         }
         break;
@@ -4583,7 +4417,6 @@ void AddSink(int index) {
 }
 
 void RemoveSink(int index) {
-    auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
     std::string eventName = "not found";
     auto* eventData = eventDataPtrs[index];
     if (eventData) {
@@ -4594,13 +4427,13 @@ void RemoveSink(int index) {
     switch (index) {
     case EventEnum_OnCombatStateChanged:
         if (combatEventSink->sinkAdded && eventDataPtrs[EventEnum_OnCombatStateChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             combatEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnCombatStateChanged]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(combatEventSink);
+            sv::eventSourceholder->RemoveEventSink(combatEventSink);
             logger::debug("EventEnum_OnCombatStateChanged sink removed");
         }
         break;
@@ -4609,13 +4442,13 @@ void RemoveSink(int index) {
 
     case EventEnum_FurnitureExit:
         if (furnitureEventSink->sinkAdded && eventDataPtrs[EventEnum_FurnitureEnter]->isEmpty() && eventDataPtrs[EventEnum_FurnitureExit]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             furnitureEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_FurnitureEnter]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(furnitureEventSink);
+            sv::eventSourceholder->RemoveEventSink(furnitureEventSink);
             logger::debug("EventEnum_FurnitureEnter sink removed");
         }
         break;
@@ -4624,15 +4457,15 @@ void RemoveSink(int index) {
         if (eventDataPtrs[EventEnum_OnActivate]->sinkAdded && eventDataPtrs[EventEnum_OnActivate]->isEmpty()) {
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = false;
 
-            if (!eventSourceholder && activateEventSink->sinkAdded && !bActivateEventSinkEnabledByDefault) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
+            if (!sv::eventSourceholder && activateEventSink->sinkAdded && !bActivateEventSinkEnabledByDefault) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not added.", index, eventName);
                 return;
             }
 
-            //only remove if not added by default to track last player activated reference
+            //only remove if not added by default to track last sv::player activated reference
             if (activateEventSink->sinkAdded && !bActivateEventSinkEnabledByDefault) {
                 activateEventSink->sinkAdded = false;
-                eventSourceholder->RemoveEventSink(activateEventSink);
+                sv::eventSourceholder->RemoveEventSink(activateEventSink);
             }
 
             eventDataPtrs[EventEnum_OnActivate]->sinkAdded = false;
@@ -4649,8 +4482,8 @@ void RemoveSink(int index) {
             logger::debug("EventEnum_HitEvent equip event sink removed");
         }
         if (eventDataPtrs[EventEnum_HitEvent]->sinkAdded && eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             eventDataPtrs[EventEnum_HitEvent]->sinkAdded = false;
@@ -4662,21 +4495,21 @@ void RemoveSink(int index) {
 
     case EventEnum_DyingEvent:
         if (deathEventSink->sinkAdded && eventDataPtrs[EventEnum_DeathEvent]->isEmpty() && eventDataPtrs[EventEnum_DyingEvent]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             deathEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_DeathEvent]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(deathEventSink);
+            sv::eventSourceholder->RemoveEventSink(deathEventSink);
             logger::debug("EventEnum_DeathEvent sink removed");
         }
         break;
 
     case EventEnum_OnObjectEquipped:
         if (eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded && eventDataPtrs[EventEnum_OnObjectEquipped]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             eventDataPtrs[EventEnum_OnObjectEquipped]->sinkAdded = false;
@@ -4689,8 +4522,8 @@ void RemoveSink(int index) {
 
     case EventEnum_OnObjectUnequipped:
         if (eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded && eventDataPtrs[EventEnum_OnObjectUnequipped]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             eventDataPtrs[EventEnum_OnObjectUnequipped]->sinkAdded = false;
@@ -4703,65 +4536,65 @@ void RemoveSink(int index) {
 
     case EventEnum_OnWaitStart:
         if (waitStartEventSink->sinkAdded && eventDataPtrs[EventEnum_OnWaitStart]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             waitStartEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnWaitStart]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(waitStartEventSink);
+            sv::eventSourceholder->RemoveEventSink(waitStartEventSink);
             logger::debug("EventEnum_OnWaitStart sink removed");
         }
         break;
 
     case EventEnum_OnWaitStop:
         if (waitStopEventSink->sinkAdded && eventDataPtrs[EventEnum_OnWaitStop]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             waitStopEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnWaitStop]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(waitStopEventSink);
+            sv::eventSourceholder->RemoveEventSink(waitStopEventSink);
             logger::debug("EventEnum_OnWaitStop sink removed");
         }
         break;
 
     case EventEnum_OnMagicEffectApply:
         if (magicEffectApplyEventSink->sinkAdded && eventDataPtrs[EventEnum_OnMagicEffectApply]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             magicEffectApplyEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnMagicEffectApply]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(magicEffectApplyEventSink);
+            sv::eventSourceholder->RemoveEventSink(magicEffectApplyEventSink);
             logger::debug("EventEnum_OnMagicEffectApply sink removed");
         }
         break;
 
     case EventEnum_OnSpellCast:
         if (spellCastEventSink->sinkAdded && eventDataPtrs[EventEnum_OnSpellCast]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             spellCastEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnSpellCast]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(spellCastEventSink);
+            sv::eventSourceholder->RemoveEventSink(spellCastEventSink);
             logger::debug("EventEnum_OnSpellCast sink removed");
         }
         break;
 
     case EventEnum_LockChanged:
         if (lockChangedEventSink->sinkAdded && eventDataPtrs[EventEnum_LockChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             lockChangedEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_LockChanged]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(lockChangedEventSink);
+            sv::eventSourceholder->RemoveEventSink(lockChangedEventSink);
             logger::debug("EventEnum_LockChanged sink removed");
         }
         break;
@@ -4770,13 +4603,13 @@ void RemoveSink(int index) {
 
     case EventEnum_OnClose:
         if (openCloseEventSink->sinkAdded && eventDataPtrs[EventEnum_OnOpen]->isEmpty() && eventDataPtrs[EventEnum_OnClose]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             openCloseEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnOpen]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(openCloseEventSink);
+            sv::eventSourceholder->RemoveEventSink(openCloseEventSink);
             logger::debug("EventEnum_OnOpen sink removed");
         }
         break;
@@ -4796,7 +4629,7 @@ void RemoveSink(int index) {
     case EventEnum_EndSheathe:
         if (actorActionEventSink->sinkAdded && !ShouldActorActionEventSinkBeAdded()) {
             auto* actionEventSource = SKSE::GetActionEventSource();
-            if (!eventSourceholder) {
+            if (!sv::eventSourceholder) {
                 logger::error("ActionEventSource not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
@@ -4809,13 +4642,13 @@ void RemoveSink(int index) {
 
     case EventEnum_OnContainerChanged:
         if (containerChangedEventSink->sinkAdded && eventDataPtrs[EventEnum_OnContainerChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             containerChangedEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnContainerChanged]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(containerChangedEventSink);
+            sv::eventSourceholder->RemoveEventSink(containerChangedEventSink);
             logger::debug("EventEnum_OnContainerChanged sink removed");
         }
         break;
@@ -4875,27 +4708,27 @@ void RemoveSink(int index) {
 
     case EventEnum_OnEnterBleedout:
         if (enterBleedoutEventSink->sinkAdded && eventDataPtrs[EventEnum_OnEnterBleedout]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             enterBleedoutEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnEnterBleedout]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(enterBleedoutEventSink);
+            sv::eventSourceholder->RemoveEventSink(enterBleedoutEventSink);
             logger::debug("EventEnum_OnEnterBleedout sink removed");
         }
         break;
 
     case EventEnum_OnSwitchRaceComplete:
         if (switchRaceCompleteEventSink->sinkAdded && eventDataPtrs[EventEnum_OnSwitchRaceComplete]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             switchRaceCompleteEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnSwitchRaceComplete]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(switchRaceCompleteEventSink);
-            eventSourceholder->RemoveEventSink(objectInitEventSink);
+            sv::eventSourceholder->RemoveEventSink(switchRaceCompleteEventSink);
+            sv::eventSourceholder->RemoveEventSink(objectInitEventSink);
             actorRacesSaved = false;
             logger::debug("EventEnum_OnSwitchRaceComplete sink removed");
         }
@@ -4933,9 +4766,8 @@ void RemoveSink(int index) {
 
     case EventEnum_OnPositionPlayerFinish:
         if (positionPlayerEventSink->sinkAdded && !ShouldPositionPlayerEventSinkBeAdded()) {
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            if (player) {
-                auto posPlayerEventSource = player->AsPositionPlayerEventSource();
+            if (sv::player) {
+                auto posPlayerEventSource = sv::player->AsPositionPlayerEventSource();
                 if (posPlayerEventSource) {
                     positionPlayerEventSink->sinkAdded = false;
                     posPlayerEventSource->RemoveEventSink(positionPlayerEventSink);
@@ -4953,9 +4785,8 @@ void RemoveSink(int index) {
 
     case EventEnum_OnPlayerChangeCell:
         if (actorCellEventSink->sinkAdded && eventDataPtrs[EventEnum_OnPlayerChangeCell]->isEmpty()) {
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            if (player) {
-                auto* playerCellChangeSource = player->AsBGSActorCellEventSource();
+            if (sv::player) {
+                auto* playerCellChangeSource = sv::player->AsBGSActorCellEventSource();
                 if (playerCellChangeSource) {
                     actorCellEventSink->sinkAdded = false;
                     eventDataPtrs[EventEnum_OnPlayerChangeCell]->sinkAdded = false;
@@ -5005,39 +4836,39 @@ void RemoveSink(int index) {
     //New Events ===================================================================================================================
     case EventEnum_OnPerkEntryRun:
         if (perkEntryRunEventSink->sinkAdded && eventDataPtrs[EventEnum_OnPerkEntryRun]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             perkEntryRunEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnPerkEntryRun]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(perkEntryRunEventSink);
+            sv::eventSourceholder->RemoveEventSink(perkEntryRunEventSink);
             logger::debug("EventEnum_OnPerkEntryRun sink removed");
         }
         break;
 
     case EventEnum_OnTriggerEnter:
         if (triggerEnterEventSink->sinkAdded && eventDataPtrs[EventEnum_OnTriggerEnter]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             triggerEnterEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnTriggerEnter]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(triggerEnterEventSink);
+            sv::eventSourceholder->RemoveEventSink(triggerEnterEventSink);
             logger::debug("EventEnum_OnTriggerEnter sink removed");
         }
         break;
 
     case EventEnum_OnTriggerLeave:
         if (triggerLeaveEventSink->sinkAdded && eventDataPtrs[EventEnum_OnTriggerLeave]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             triggerLeaveEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnTriggerLeave]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(triggerLeaveEventSink);
+            sv::eventSourceholder->RemoveEventSink(triggerLeaveEventSink);
             logger::debug("EventEnum_OnTriggerLeave sink removed");
         }
         break;
@@ -5050,26 +4881,26 @@ void RemoveSink(int index) {
             eventDataPtrs[EventEnum_OnPackageChange]->isEmpty() &&
             eventDataPtrs[EventEnum_OnPackageEnd]->isEmpty()) {
 
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             packageEventSink->sinkAdded = false;
             eventDataPtrs[index]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(packageEventSink);
+            sv::eventSourceholder->RemoveEventSink(packageEventSink);
             logger::debug("EventEnum_OnPackage{} sink removed", eventName);
         }
         break;
 
     case EventEnum_OnDestructionStageChanged:
         if (destructionStageChangedEventSink->sinkAdded && eventDataPtrs[EventEnum_OnDestructionStageChanged]->isEmpty()) {
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             destructionStageChangedEventSink->sinkAdded = false;
             eventDataPtrs[EventEnum_OnDestructionStageChanged]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(destructionStageChangedEventSink);
+            sv::eventSourceholder->RemoveEventSink(destructionStageChangedEventSink);
             logger::debug("EventEnum_OnDestructionStageChanged sink removed");
         }
         break;
@@ -5082,13 +4913,13 @@ void RemoveSink(int index) {
             eventDataPtrs[EventEnum_OnTranslationAlmostComplete]->isEmpty() &&
             eventDataPtrs[EventEnum_OnTranslationComplete]->isEmpty()) {
 
-            if (!eventSourceholder) {
-                logger::error("eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
+            if (!sv::eventSourceholder) {
+                logger::error("sv::eventSourceholder not found. Index[{}] Event[{}] not removed.", index, eventName);
                 return;
             }
             objectREFRTranslationEventSink->sinkAdded = false;
             eventDataPtrs[index]->sinkAdded = false;
-            eventSourceholder->RemoveEventSink(objectREFRTranslationEventSink);
+            sv::eventSourceholder->RemoveEventSink(objectREFRTranslationEventSink);
             logger::debug("EventEnum_OnTranslation{} sink removed", eventName);
         }
         break;
@@ -5705,25 +5536,22 @@ void CreateEventSinks() {
     if (!destructionStageChangedEventSink) { destructionStageChangedEventSink = new DestructionStageChangedEventSink(); }
     if (!objectREFRTranslationEventSink) { objectREFRTranslationEventSink = new ObjectREFRTranslationEventSink(); }
 
-    auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
-
     if (!activateEventSink->sinkAdded && bActivateEventSinkEnabledByDefault) {
-        if (eventSourceholder) {
+        if (sv::eventSourceholder) {
             //always active to track lastPlayerActivatedRef
             activateEventSink->sinkAdded = true;
-            eventSourceholder->AddEventSink(activateEventSink);
+            sv::eventSourceholder->AddEventSink(activateEventSink);
         }
         else {
-            logger::error("eventSourceHolder not found. activateEventSink not added");
+            logger::error("sv::eventSourceholder not found. activateEventSink not added");
         }
     }
 
     if (!menuOpenCloseEventSink->sinkAdded && bMenuOpenCloseEventSinkEnabled) {
-        auto* ui = RE::UI::GetSingleton();
-        if (ui) {
+        if (sv::ui) {
             menuOpenCloseEventSink->sinkAdded = true;
             //always active to track opened menus / game pausing
-            ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
+            sv::ui->AddEventSink<RE::MenuOpenCloseEvent>(menuOpenCloseEventSink);
         }
         else {
             logger::error("ui* not found. menuOpenCloseEventSink not added");
@@ -5752,14 +5580,13 @@ void CreateEventSinks() {
     logger::trace("Event Sinks Created");
 }
 
-
 bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     // vm->RegisterFunction("MyNativeFunction", "DbSkseFunctions", MyNativeFunction);
     logger::trace("Binding Papyrus Functions");
 
     //RE::BSScript::IVirtualMachine;
 
-    gvm = vm;
+    sv::ivm = vm;
 
     //functions 
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
@@ -5961,6 +5788,83 @@ int GetActiveMagicEffectConditionStatus(RE::ActiveEffect* akEffect) {
     }
 }
 
+struct UpdateHooks {
+    //updates every frame
+    struct MainUpdate_Nullsub {
+        static void thunk() {
+            func();
+            //logger::info("frame update");
+
+            sv::frameUpdateCount++;
+            if (sv::frameUpdateCount < sv::iFrameUpdateInterval) {
+                return;
+            }
+
+            sv::frameUpdateCount = 0; 
+
+            bool notifyCv = false;
+            if (!noMenuModeTimersEmpty || !timersEmpty) {
+                std::lock_guard<std::mutex> lock(sv::updateMutex);
+                sv::currentTimePoint = std::chrono::system_clock::now();
+                notifyCv = true;
+            }
+            if (!gameTimersEmpty) {
+                std::lock_guard<std::mutex> lock(sv::updateMutex);
+                sv::gameTime = sv::calendar->GetHoursPassed();
+                notifyCv = true;
+            }
+
+            if (notifyCv) {
+                sv::updateCv.notify_all();
+            }
+
+            if (!conditions::isEmpty) {
+                conditions::updateCv.notify_all();
+            }
+
+            if (!rangeEvents::isEmpty) {
+                rangeEvents::updateCv.notify_all();
+            }
+
+            if (musicChangeEventSink->sinkAdded) {
+                if (sv::currentBSIMusicType != sv::musicManager->current) {
+                    logger::debug("music type changed");
+                    RE::BGSMusicType* newBGSMusicType = GetCurrentMusicType(nullptr);
+                    RE::BGSMusicType* oldBGSMusicType = sv::currentBGSMusicType;
+                    sv::currentBSIMusicType = sv::musicManager->current;
+                    sv::currentBGSMusicType = newBGSMusicType;
+                    musicChangeEventSink->HandleMusicChangeEvent(newBGSMusicType, oldBGSMusicType);
+                }
+            }
+
+            if (weatherChangeEventSink->sinkAdded) {
+                if (sv::currentWeather != sv::sky->currentWeather) {
+                    logger::debug("weather changed");
+                    RE::TESWeather* newWeather = sv::sky->currentWeather;
+                    RE::TESWeather* oldWeather = sv::currentWeather;
+                    sv::currentWeather = newWeather;
+                    weatherChangeEventSink->HandleWeatherChangeEvent(newWeather, oldWeather);
+                }
+            }
+        }
+        static inline REL::Relocation<decltype(thunk)> func;
+    };
+
+    //updates every frame when the game isn't paused
+    struct PlayerCharacter_Update {
+        static void thunk(RE::PlayerCharacter* a_player, float a_delta) {
+            func(a_player, a_delta);
+            //logger::info("player updated");
+        }
+        static inline REL::Relocation<decltype(thunk)> func;
+    };
+
+    static void Install() {
+        stl::write_thunk_call<MainUpdate_Nullsub>(REL::RelocationID(35565, 36564).address() + REL::Relocate(0x748, 0xC26));
+        //stl::write_vfunc<RE::PlayerCharacter, 0xAD, PlayerCharacter_Update>();
+    }
+};
+
 void MessageListener(SKSE::MessagingInterface::Message* message) {
     switch (message->type) {
         // Descriptions are taken from the original skse64 library
@@ -5991,9 +5895,8 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             // plugin state.
             //SendLoadGameEvent();
             //CreateEventSinks();
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            if (player) {
-                bPlayerIsInCombat = player->IsInCombat();
+            if (sv::player) {
+                bPlayerIsInCombat = sv::player->IsInCombat();
             }
             logger::trace("kPostLoadGame: sent after an attempt to load a saved game has finished");
 
@@ -6017,12 +5920,15 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 
         case SKSE::MessagingInterface::kNewGame: {
             RegisterActorsForBowDrawAnimEvents();
+            AttachDbSksePersistentVariablesScript();
             logger::trace("kNewGame: sent after a new game is created, before the game has loaded");
             break;
         }
+
         case SKSE::MessagingInterface::kDataLoaded: {
             // RE::ConsoleLog::GetSingleton()->Print("DbSkseFunctions Installed");
             if (!nullForm) { nullForm = gfuncs::FindNullForm(); }
+            sv::Install();
             gfuncs::Install();
 
             auto* papyrusInterface = SKSE::GetPapyrusInterface();
@@ -6041,10 +5947,11 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             papyrusInterface->Register(papyrusUtilEx::BindPapyrusFunctions);
             papyrusInterface->Register(conditions::BindPapyrusFunctions);
             papyrusInterface->Register(rangeEvents::BindPapyrusFunctions);
-            
+
             SetSettingsFromIniFile();
             CreateEventSinks();
             SaveSkillBooks();
+            UpdateHooks::Install();
 
             logger::trace("kDataLoaded: sent after the data handler has loaded all its forms");
             break;
@@ -6058,44 +5965,23 @@ void LoadCallback(SKSE::SerializationInterface* ssi) {
     logger::trace("LoadCallback started");
 
     int max = EventEnum_Last + 1;
-    std::uint32_t type, version, length;
+    std::uint32_t record, version, length;
 
     if (ssi) {
         if (serialize::SetSerializing(true)) {
-            while (ssi->GetNextRecordInfo(type, version, length)) {
-                logger::trace("type[{}]", gfuncs::uint32_to_string(type));
+            while (ssi->GetNextRecordInfo(record, version, length)) {
+                logger::trace("record[{}]", gfuncs::uint32_to_string(record));
 
-                if (type == eventDataPtrs[EventEnum_OnWeatherChange]->record) {
-                    if (weatherChangeEventSink) {
-                        if (weatherChangeEventSink->IsSinkAdded()) {
-                            RE::TESWeather* currentWeather = serialize::LoadForm<RE::TESWeather>(ssi);
-                            weatherChangeEventSink->SetCurrentWeather(currentWeather);
-                            logger::trace("weatherChangeEventSink currentWeather set to[{}]", gfuncs::GetFormNameAndId(currentWeather));
-                        }
-                    }
-                    else {
-                        logger::warn("weatherChangeEventSink is nullptr");
-                    }
-                } 
-                else if (type == eventDataPtrs[EventEnum_OnMusicTypeChange]->record) {
-                    if (musicChangeEventSink) {
-                        if (musicChangeEventSink->IsSinkAdded()) {
-                            RE::BGSMusicType* currentmusic = serialize::LoadForm<RE::BGSMusicType>(ssi);
-                            musicChangeEventSink->SetCurrentMusic(currentmusic);
-                            logger::trace("musicChangeEventSink currentmusic set to[{}]", gfuncs::GetFormNameAndId(currentmusic));
-                        }
-                    }
-                    else {
-                        logger::warn("weatherChangeEventSink is nullptr");
-                    }
+                if (record == sv::record) {
+                    sv::Load(ssi);
                 }
-                else if (timers::IsTimerType(type)) {
-                    timers::LoadTimers(type, ssi);
+                else if (timers::IsTimerType(record)) {
+                    timers::LoadTimers(record, ssi);
                 }
                 else {
                     //this is causing ctd on Skyrim AE when fast traveling too many times too quickly.
                     /*for (int i = EventEnum_First; i < max; i++) {
-                        if (type == eventDataPtrs[i]->record) {
+                        if (record == eventDataPtrs[i]->record) {
                             eventDataPtrs[i]->Load(ssi);
                             break;
                         }
@@ -6103,9 +5989,8 @@ void LoadCallback(SKSE::SerializationInterface* ssi) {
                 }
             }
 
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            if (player) {
-                bPlayerIsInCombat = player->IsInCombat();
+            if (sv::player) {
+                bPlayerIsInCombat = sv::player->IsInCombat();
             }
 
             //EventEnum_OnLoadGame doesn't have an event sink, hence EventEnum_First + 1
@@ -6117,10 +6002,9 @@ void LoadCallback(SKSE::SerializationInterface* ssi) {
             //gfuncs::RemoveDuplicates(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles);
             //gfuncs::SendEvents(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles, eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
 
-            auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton(); 
-            if (vm) {
+            if (sv::vm) {
                 auto* args = RE::MakeFunctionArguments();
-                vm->SendEventAll(eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
+                sv::vm->SendEventAll(eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
                 delete args;
             }
 
@@ -6136,6 +6020,7 @@ void LoadCallback(SKSE::SerializationInterface* ssi) {
     else {
         logger::error("ssi doesn't exist, aborting load.");
     }
+    AttachDbSksePersistentVariablesScript();
 }
 
 void SaveCallback(SKSE::SerializationInterface* ssi) {
@@ -6149,27 +6034,8 @@ void SaveCallback(SKSE::SerializationInterface* ssi) {
                 eventDataPtrs[i]->Save(ssi);
             }*/
 
+            sv::Save(ssi);
             timers::SaveTimers(ssi);
-
-            if (weatherChangeEventSink) {
-                if (weatherChangeEventSink->IsSinkAdded()) {
-                    auto* currentWeather = weatherChangeEventSink->GetCurrentWeather();
-                    serialize::SaveForm(currentWeather, eventDataPtrs[EventEnum_OnWeatherChange]->record, ssi);
-                }
-            }
-            else {
-                logger::warn("weatherChangeEventSink is nullptr");
-            }
-
-            if (musicChangeEventSink) {
-                if (musicChangeEventSink->IsSinkAdded()) {
-                    auto* currentmusic = musicChangeEventSink->GetCurrentMusic();
-                    serialize::SaveForm(currentmusic, eventDataPtrs[EventEnum_OnMusicTypeChange]->record, ssi);
-                }
-            }
-            else {
-                logger::warn("musicChangeEventSink is nullptr");
-            }
 
             serialize::SetSerializing(false);
             logger::trace("SaveCallback complete");

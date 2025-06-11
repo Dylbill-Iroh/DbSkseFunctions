@@ -7,6 +7,7 @@
 #include <cmath>
 #include "GeneralFunctions.h"
 #include "editorID.hpp"
+#include "SharedVariables.h"
 
 namespace gfuncs {
     std::chrono::system_clock::time_point lastTimeGameWasLoaded;
@@ -205,7 +206,7 @@ namespace gfuncs {
 
     //forms and formParamNames should be the same size
     bool AllFormsValid(std::vector<RE::TESForm*> forms, std::vector<std::string> formParamNames, std::string callingFunctionName, bool checkDeleted) {
-        for (size_t i; i < forms.size(); i++) {
+        for (size_t i = 0; i < forms.size(); i++) {
             auto* form = forms[i];
             if (!IsFormValid(form)) {
                 logger::warn("[{}] [{}] doesn't exist", callingFunctionName, formParamNames[i]);
@@ -310,14 +311,13 @@ namespace gfuncs {
             return nullptr;
         }
 
-        auto* dataHandler = RE::TESDataHandler::GetSingleton();
-        if (!dataHandler) {
+        if (!sv::dataHandler) {
             return nullptr;
         }
 
         auto id = akForm->GetFormID();
 
-        for (auto* file : dataHandler->files) {
+        for (auto* file : sv::dataHandler->files) {
             if (file) {
                 if (file->IsFormInMod(id)) {
                     return file;
@@ -334,7 +334,7 @@ namespace gfuncs {
         }
 
         auto rawIndex = (rawFormID & 0xFF000000) >> 24;
-        if (REL::Module::IsVR() && !RE::TESDataHandler::GetSingleton()->VRcompiledFileCollection) {
+        if (REL::Module::IsVR() && !sv::dataHandler->VRcompiledFileCollection) {
             if (rawIndex >= file->masterCount) {
                 return file;
             }
@@ -389,9 +389,10 @@ namespace gfuncs {
         }
     }
 
+    //return difference of time points in seconds as float
     float timePointDiffToFloat(std::chrono::system_clock::time_point end, std::chrono::system_clock::time_point start) {
-        std::chrono::duration<float> timeElapsed = end - start;
-        return timeElapsed.count();
+        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        return float(milliseconds.count()) * 0.001;
     }
 
     RE::VMHandle GetHandle(RE::TESForm* akForm) {
@@ -400,14 +401,13 @@ namespace gfuncs {
             return NULL;
         }
 
-        auto* gsvm = RE::SkyrimVM::GetSingleton();
-        if (!gsvm) {
-            logger::error("gsvm* not found");
+        if (!sv::skyrimVm) {
+            logger::error("sv::skyrimVm* not found");
             return NULL;
         }
 
         RE::VMTypeID id = static_cast<RE::VMTypeID>(akForm->GetFormType());
-        RE::VMHandle handle = gsvm->handlePolicy.GetHandleForObject(id, akForm);
+        RE::VMHandle handle = sv::skyrimVm->handlePolicy.GetHandleForObject(id, akForm);
 
         return handle;
     }
@@ -418,14 +418,13 @@ namespace gfuncs {
             return NULL;
         }
 
-        auto* gsvm = RE::SkyrimVM::GetSingleton();
-        if (!gsvm) {
-            logger::error("gsvm* not found");
+        if (!sv::skyrimVm) {
+            logger::error("sv::skyrimVm* not found");
             return NULL;
         }
 
         RE::VMTypeID id = akAlias->GetVMTypeID();
-        RE::VMHandle handle = gsvm->handlePolicy.GetHandleForObject(id, akAlias);
+        RE::VMHandle handle = sv::skyrimVm->handlePolicy.GetHandleForObject(id, akAlias);
 
         return handle;
     }
@@ -436,29 +435,27 @@ namespace gfuncs {
             return NULL;
         }
 
-        auto* gsvm = RE::SkyrimVM::GetSingleton();
-        if (!gsvm) {
-            logger::error("gsvm* not found");
+        if (!sv::skyrimVm) {
+            logger::error("sv::skyrimVm* not found");
             return NULL;
         }
 
         RE::VMTypeID id = akEffect->VMTYPEID;
         //RE::VMTypeID id = RE::ActiveEffect::VMTYPEID;
-        RE::VMHandle handle = gsvm->handlePolicy.GetHandleForObject(id, akEffect);
+        RE::VMHandle handle = sv::skyrimVm->handlePolicy.GetHandleForObject(id, akEffect);
 
         return handle;
     }
 
     RE::ActiveEffect* GetActiveEffectFromHandle(RE::VMHandle handle) {
         RE::ActiveEffect* activeEffect = nullptr;
-        auto* gsvm = RE::SkyrimVM::GetSingleton();
-        if (!gsvm) {
-            logger::error("gsvm* not found");
+        if (!sv::skyrimVm) {
+            logger::error("sv::skyrimVm* not found");
             return activeEffect;
         }
 
         RE::VMTypeID id = RE::ActiveEffect::VMTYPEID;
-        auto* obj = gsvm->handlePolicy.GetObjectForHandle(id, handle);
+        auto* obj = sv::skyrimVm->handlePolicy.GetObjectForHandle(id, handle);
         if (obj) {
             activeEffect = static_cast<RE::ActiveEffect*>(obj);
         }
@@ -533,14 +530,13 @@ namespace gfuncs {
             return false;
         }
 
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
+        if (!sv::vm) {
             logger::error("vm not found");
             return false;
         }
 
-        auto it = vm->attachedScripts.find(handle);
-        if (it != vm->attachedScripts.end()) {
+        auto it = sv::vm->attachedScripts.find(handle);
+        if (it != sv::vm->attachedScripts.end()) {
             //logger::error("it->second.size() = {}", it->second.size());
             for (int i = 0; i < it->second.size(); i++) {
                 auto& attachedScript = it->second[i];
@@ -587,13 +583,12 @@ namespace gfuncs {
             return nullptr;
         }
 
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
+        if (!sv::vm) {
             return nullptr;
         }
 
-        auto it = vm->attachedScripts.find(handle);
-        if (it != vm->attachedScripts.end()) {
+        auto it = sv::vm->attachedScripts.find(handle);
+        if (it != sv::vm->attachedScripts.end()) {
             for (int i = 0; i < it->second.size(); i++) {
                 auto& attachedScript = it->second[i];
                 if (attachedScript) {
@@ -624,9 +619,8 @@ namespace gfuncs {
     }
 
     RE::Actor* GetPlayerDialogueTarget() {
-        RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-        if (!playerRef) {
-            logger::error("playerRef not found");
+        if (!sv::player) {
+            logger::error("sv::player not found");
             return nullptr;
         }
 
@@ -639,7 +633,7 @@ namespace gfuncs {
                     if (IsFormValid(ref)) {
                         RE::Actor* dialogueActorRef = skyrim_cast<RE::Actor*>(ref);
                         if (IsFormValid(dialogueActorRef)) {
-                            if (dialogueActorRef == playerRef) {
+                            if (dialogueActorRef == sv::player) {
                                 return actor;
                             }
                         }
@@ -651,20 +645,18 @@ namespace gfuncs {
     }
 
     void RefreshItemMenu() {
-        auto* gui = RE::UI::GetSingleton();
-        if (!gui) {
-            logger::error("gui* not found");
+        if (!sv::ui) {
+            logger::error("sv::ui* not found");
             return;
         }
 
-        if (gui->IsItemMenuOpen()) {
-            RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-            if (!playerRef) {
-                logger::error("playerRef not found");
+        if (sv::ui->IsItemMenuOpen()) {
+            if (!sv::player) {
+                logger::error("sv::player not found");
                 return;
             }
 
-            RE::SendUIMessage::SendInventoryUpdateMessage(playerRef, nullptr);
+            RE::SendUIMessage::SendInventoryUpdateMessage(sv::player, nullptr);
         }
     }
 
@@ -680,15 +672,14 @@ namespace gfuncs {
     }
 
     bool IsRefActivatedMenuOpen() {
-        auto* ui = RE::UI::GetSingleton();
-        if (ui) {
-            if (ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME)) { return true; }
-            if (ui->IsMenuOpen(RE::LockpickingMenu::MENU_NAME)) { return true; }
-            if (ui->IsMenuOpen(RE::ContainerMenu::MENU_NAME)) { return true; }
-            if (ui->IsMenuOpen(RE::BarterMenu::MENU_NAME)) { return true; }
-            if (ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME)) { return true; }
-            if (ui->IsMenuOpen(RE::BookMenu::MENU_NAME)) { return true; }
-            if (ui->IsMenuOpen(RE::GiftMenu::MENU_NAME)) { return true; }
+        if (sv::ui) {
+            if (sv::ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME)) { return true; }
+            if (sv::ui->IsMenuOpen(RE::LockpickingMenu::MENU_NAME)) { return true; }
+            if (sv::ui->IsMenuOpen(RE::ContainerMenu::MENU_NAME)) { return true; }
+            if (sv::ui->IsMenuOpen(RE::BarterMenu::MENU_NAME)) { return true; }
+            if (sv::ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME)) { return true; }
+            if (sv::ui->IsMenuOpen(RE::BookMenu::MENU_NAME)) { return true; }
+            if (sv::ui->IsMenuOpen(RE::GiftMenu::MENU_NAME)) { return true; }
         }
         return false;
     }
@@ -1115,316 +1106,314 @@ namespace gfuncs {
 
     RE::BSFixedString GetBSUIMessageDataTypeString(RE::BSUIMessageData* msgData) {
         if (msgData) {
-            RE::UserEvents* userEvents = RE::UserEvents::GetSingleton();
-
-            if (userEvents) {
-                if (msgData->fixedStr == userEvents->forward) {
+            if (sv::userEvents) {
+                if (msgData->fixedStr == sv::userEvents->forward) {
                     return "forward";
                 }
-                else if (msgData->fixedStr == userEvents->back) {
+                else if (msgData->fixedStr == sv::userEvents->back) {
                     return "back";
                 }
-                else if (msgData->fixedStr == userEvents->strafeLeft) {
+                else if (msgData->fixedStr == sv::userEvents->strafeLeft) {
                     return "strafeLeft";
                 }
-                else if (msgData->fixedStr == userEvents->strafeRight) {
+                else if (msgData->fixedStr == sv::userEvents->strafeRight) {
                     return "strafeRight";
                 }
-                else if (msgData->fixedStr == userEvents->move) {
+                else if (msgData->fixedStr == sv::userEvents->move) {
                     return "move";
                 }
-                else if (msgData->fixedStr == userEvents->look) {
+                else if (msgData->fixedStr == sv::userEvents->look) {
                     return "look";
                 }
-                else if (msgData->fixedStr == userEvents->activate) {
+                else if (msgData->fixedStr == sv::userEvents->activate) {
                     return "activate";
                 }
-                else if (msgData->fixedStr == userEvents->leftAttack) {
+                else if (msgData->fixedStr == sv::userEvents->leftAttack) {
                     return "leftAttack";
                 }
-                else if (msgData->fixedStr == userEvents->rightAttack) {
+                else if (msgData->fixedStr == sv::userEvents->rightAttack) {
                     return "rightAttack";
                 }
-                else if (msgData->fixedStr == userEvents->dualAttack) {
+                else if (msgData->fixedStr == sv::userEvents->dualAttack) {
                     return "dualAttack";
                 }
-                else if (msgData->fixedStr == userEvents->forceRelease) {
+                else if (msgData->fixedStr == sv::userEvents->forceRelease) {
                     return "forceRelease";
                 }
-                else if (msgData->fixedStr == userEvents->pause) {
+                else if (msgData->fixedStr == sv::userEvents->pause) {
                     return "pause";
                 }
-                else if (msgData->fixedStr == userEvents->readyWeapon) {
+                else if (msgData->fixedStr == sv::userEvents->readyWeapon) {
                     return "readyWeapon";
                 }
-                else if (msgData->fixedStr == userEvents->togglePOV) {
+                else if (msgData->fixedStr == sv::userEvents->togglePOV) {
                     return "togglePOV";
                 }
-                else if (msgData->fixedStr == userEvents->jump) {
+                else if (msgData->fixedStr == sv::userEvents->jump) {
                     return "jump";
                 }
-                else if (msgData->fixedStr == userEvents->journal) {
+                else if (msgData->fixedStr == sv::userEvents->journal) {
                     return "journal";
                 }
-                else if (msgData->fixedStr == userEvents->sprint) {
+                else if (msgData->fixedStr == sv::userEvents->sprint) {
                     return "sprint";
                 }
-                else if (msgData->fixedStr == userEvents->sneak) {
+                else if (msgData->fixedStr == sv::userEvents->sneak) {
                     return "sneak";
                 }
-                else if (msgData->fixedStr == userEvents->shout) {
+                else if (msgData->fixedStr == sv::userEvents->shout) {
                     return "shout";
                 }
-                else if (msgData->fixedStr == userEvents->kinectShout) {
+                else if (msgData->fixedStr == sv::userEvents->kinectShout) {
                     return "kinectShout";
                 }
-                else if (msgData->fixedStr == userEvents->grab) {
+                else if (msgData->fixedStr == sv::userEvents->grab) {
                     return "grab";
                 }
-                else if (msgData->fixedStr == userEvents->run) {
+                else if (msgData->fixedStr == sv::userEvents->run) {
                     return "run";
                 }
-                else if (msgData->fixedStr == userEvents->toggleRun) {
+                else if (msgData->fixedStr == sv::userEvents->toggleRun) {
                     return "toggleRun";
                 }
-                else if (msgData->fixedStr == userEvents->autoMove) {
+                else if (msgData->fixedStr == sv::userEvents->autoMove) {
                     return "autoMove";
                 }
-                else if (msgData->fixedStr == userEvents->quicksave) {
+                else if (msgData->fixedStr == sv::userEvents->quicksave) {
                     return "quicksave";
                 }
-                else if (msgData->fixedStr == userEvents->quickload) {
+                else if (msgData->fixedStr == sv::userEvents->quickload) {
                     return "quickload";
                 }
-                else if (msgData->fixedStr == userEvents->newSave) {
+                else if (msgData->fixedStr == sv::userEvents->newSave) {
                     return "newSave";
                 }
-                else if (msgData->fixedStr == userEvents->inventory) {
+                else if (msgData->fixedStr == sv::userEvents->inventory) {
                     return "inventory";
                 }
-                else if (msgData->fixedStr == userEvents->stats) {
+                else if (msgData->fixedStr == sv::userEvents->stats) {
                     return "stats";
                 }
-                else if (msgData->fixedStr == userEvents->map) {
+                else if (msgData->fixedStr == sv::userEvents->map) {
                     return "map";
                 }
-                else if (msgData->fixedStr == userEvents->screenshot) {
+                else if (msgData->fixedStr == sv::userEvents->screenshot) {
                     return "screenshot";
                 }
-                else if (msgData->fixedStr == userEvents->multiScreenshot) {
+                else if (msgData->fixedStr == sv::userEvents->multiScreenshot) {
                     return "multiScreenshot";
                 }
-                else if (msgData->fixedStr == userEvents->console) {
+                else if (msgData->fixedStr == sv::userEvents->console) {
                     return "console";
                 }
-                else if (msgData->fixedStr == userEvents->cameraPath) {
+                else if (msgData->fixedStr == sv::userEvents->cameraPath) {
                     return "cameraPath";
                 }
-                else if (msgData->fixedStr == userEvents->tweenMenu) {
+                else if (msgData->fixedStr == sv::userEvents->tweenMenu) {
                     return "tweenMenu";
                 }
-                else if (msgData->fixedStr == userEvents->takeAll) {
+                else if (msgData->fixedStr == sv::userEvents->takeAll) {
                     return "takeAll";
                 }
-                else if (msgData->fixedStr == userEvents->accept) {
+                else if (msgData->fixedStr == sv::userEvents->accept) {
                     return "accept";
                 }
-                else if (msgData->fixedStr == userEvents->cancel) {
+                else if (msgData->fixedStr == sv::userEvents->cancel) {
                     return "cancel";
                 }
-                else if (msgData->fixedStr == userEvents->up) {
+                else if (msgData->fixedStr == sv::userEvents->up) {
                     return "up";
                 }
-                else if (msgData->fixedStr == userEvents->down) {
+                else if (msgData->fixedStr == sv::userEvents->down) {
                     return "down";
                 }
-                else if (msgData->fixedStr == userEvents->left) {
+                else if (msgData->fixedStr == sv::userEvents->left) {
                     return "left";
                 }
-                else if (msgData->fixedStr == userEvents->right) {
+                else if (msgData->fixedStr == sv::userEvents->right) {
                     return "right";
                 }
-                else if (msgData->fixedStr == userEvents->pageUp) {
+                else if (msgData->fixedStr == sv::userEvents->pageUp) {
                     return "pageUp";
                 }
-                else if (msgData->fixedStr == userEvents->pageDown) {
+                else if (msgData->fixedStr == sv::userEvents->pageDown) {
                     return "pageDown";
                 }
-                else if (msgData->fixedStr == userEvents->pick) {
+                else if (msgData->fixedStr == sv::userEvents->pick) {
                     return "pick";
                 }
-                else if (msgData->fixedStr == userEvents->pickNext) {
+                else if (msgData->fixedStr == sv::userEvents->pickNext) {
                     return "pickNext";
                 }
-                else if (msgData->fixedStr == userEvents->pickPrevious) {
+                else if (msgData->fixedStr == sv::userEvents->pickPrevious) {
                     return "pickPrevious";
                 }
-                else if (msgData->fixedStr == userEvents->cursor) {
+                else if (msgData->fixedStr == sv::userEvents->cursor) {
                     return "cursor";
                 }
-                else if (msgData->fixedStr == userEvents->kinect) {
+                else if (msgData->fixedStr == sv::userEvents->kinect) {
                     return "kinect";
                 }
-                else if (msgData->fixedStr == userEvents->sprintStart) {
+                else if (msgData->fixedStr == sv::userEvents->sprintStart) {
                     return "sprintStart";
                 }
-                else if (msgData->fixedStr == userEvents->sprintStop) {
+                else if (msgData->fixedStr == sv::userEvents->sprintStop) {
                     return "sprintStop";
                 }
-                else if (msgData->fixedStr == userEvents->sneakStart) {
+                else if (msgData->fixedStr == sv::userEvents->sneakStart) {
                     return "sneakStart";
                 }
-                else if (msgData->fixedStr == userEvents->sneakStop) {
+                else if (msgData->fixedStr == sv::userEvents->sneakStop) {
                     return "sneakStop";
                 }
-                else if (msgData->fixedStr == userEvents->blockStart) {
+                else if (msgData->fixedStr == sv::userEvents->blockStart) {
                     return "blockStart";
                 }
-                else if (msgData->fixedStr == userEvents->blockStop) {
+                else if (msgData->fixedStr == sv::userEvents->blockStop) {
                     return "blockStop";
                 }
-                else if (msgData->fixedStr == userEvents->blockBash) {
+                else if (msgData->fixedStr == sv::userEvents->blockBash) {
                     return "blockBash";
                 }
-                else if (msgData->fixedStr == userEvents->attackStart) {
+                else if (msgData->fixedStr == sv::userEvents->attackStart) {
                     return "attackStart";
                 }
-                else if (msgData->fixedStr == userEvents->attackPowerStart) {
+                else if (msgData->fixedStr == sv::userEvents->attackPowerStart) {
                     return "attackPowerStart";
                 }
-                else if (msgData->fixedStr == userEvents->reverseDirection) {
+                else if (msgData->fixedStr == sv::userEvents->reverseDirection) {
                     return "reverseDirection";
                 }
-                else if (msgData->fixedStr == userEvents->unequip) {
+                else if (msgData->fixedStr == sv::userEvents->unequip) {
                     return "unequip";
                 }
-                else if (msgData->fixedStr == userEvents->zoomIn) {
+                else if (msgData->fixedStr == sv::userEvents->zoomIn) {
                     return "zoomIn";
                 }
-                else if (msgData->fixedStr == userEvents->zoomOut) {
+                else if (msgData->fixedStr == sv::userEvents->zoomOut) {
                     return "zoomOut";
                 }
-                else if (msgData->fixedStr == userEvents->rotateItem) {
+                else if (msgData->fixedStr == sv::userEvents->rotateItem) {
                     return "rotateItem";
                 }
-                else if (msgData->fixedStr == userEvents->leftStick) {
+                else if (msgData->fixedStr == sv::userEvents->leftStick) {
                     return "leftStick";
                 }
-                else if (msgData->fixedStr == userEvents->prevPage) {
+                else if (msgData->fixedStr == sv::userEvents->prevPage) {
                     return "prevPage";
                 }
-                else if (msgData->fixedStr == userEvents->nextPage) {
+                else if (msgData->fixedStr == sv::userEvents->nextPage) {
                     return "nextPage";
                 }
-                else if (msgData->fixedStr == userEvents->prevSubPage) {
+                else if (msgData->fixedStr == sv::userEvents->prevSubPage) {
                     return "prevSubPage";
                 }
-                else if (msgData->fixedStr == userEvents->nextSubPage) {
+                else if (msgData->fixedStr == sv::userEvents->nextSubPage) {
                     return "nextSubPage";
                 }
-                else if (msgData->fixedStr == userEvents->leftEquip) {
+                else if (msgData->fixedStr == sv::userEvents->leftEquip) {
                     return "leftEquip";
                 }
-                else if (msgData->fixedStr == userEvents->rightEquip) {
+                else if (msgData->fixedStr == sv::userEvents->rightEquip) {
                     return "rightEquip";
                 }
-                else if (msgData->fixedStr == userEvents->toggleFavorite) {
+                else if (msgData->fixedStr == sv::userEvents->toggleFavorite) {
                     return "toggleFavorite";
                 }
-                else if (msgData->fixedStr == userEvents->favorites) {
+                else if (msgData->fixedStr == sv::userEvents->favorites) {
                     return "favorites";
                 }
-                else if (msgData->fixedStr == userEvents->hotkey1) {
+                else if (msgData->fixedStr == sv::userEvents->hotkey1) {
                     return "hotkey1";
                 }
-                else if (msgData->fixedStr == userEvents->hotkey2) {
+                else if (msgData->fixedStr == sv::userEvents->hotkey2) {
                     return "hotkey2";
                 }
-                else if (msgData->fixedStr == userEvents->hotkey3) {
+                else if (msgData->fixedStr == sv::userEvents->hotkey3) {
                     return "hotkey3";
                 }
-                else if (msgData->fixedStr == userEvents->hotkey4) {
+                else if (msgData->fixedStr == sv::userEvents->hotkey4) {
                     return "hotkey4";
                 }
-                else if (msgData->fixedStr == userEvents->hotkey5) {
+                else if (msgData->fixedStr == sv::userEvents->hotkey5) {
                     return "hotkey5";
                 }
-                else if (msgData->fixedStr == userEvents->hotkey6) {
+                else if (msgData->fixedStr == sv::userEvents->hotkey6) {
                     return "hotkey6";
                 }
-                else if (msgData->fixedStr == userEvents->hotkey7) {
+                else if (msgData->fixedStr == sv::userEvents->hotkey7) {
                     return "hotkey7";
                 }
-                else if (msgData->fixedStr == userEvents->hotkey8) {
+                else if (msgData->fixedStr == sv::userEvents->hotkey8) {
                     return "hotkey8";
                 }
-                else if (msgData->fixedStr == userEvents->quickInventory) {
+                else if (msgData->fixedStr == sv::userEvents->quickInventory) {
                     return "quickInventory";
                 }
-                else if (msgData->fixedStr == userEvents->quickMagic) {
+                else if (msgData->fixedStr == sv::userEvents->quickMagic) {
                     return "quickMagic";
                 }
-                else if (msgData->fixedStr == userEvents->quickStats) {
+                else if (msgData->fixedStr == sv::userEvents->quickStats) {
                     return "quickStats";
                 }
-                else if (msgData->fixedStr == userEvents->quickMap) {
+                else if (msgData->fixedStr == sv::userEvents->quickMap) {
                     return "quickMap";
                 }
-                else if (msgData->fixedStr == userEvents->toggleCursor) {
+                else if (msgData->fixedStr == sv::userEvents->toggleCursor) {
                     return "toggleCursor";
                 }
-                else if (msgData->fixedStr == userEvents->wait) {
+                else if (msgData->fixedStr == sv::userEvents->wait) {
                     return "wait";
                 }
-                else if (msgData->fixedStr == userEvents->click) {
+                else if (msgData->fixedStr == sv::userEvents->click) {
                     return "click";
                 }
-                else if (msgData->fixedStr == userEvents->mapLookMode) {
+                else if (msgData->fixedStr == sv::userEvents->mapLookMode) {
                     return "mapLookMode";
                 }
-                else if (msgData->fixedStr == userEvents->equip) {
+                else if (msgData->fixedStr == sv::userEvents->equip) {
                     return "equip";
                 }
-                else if (msgData->fixedStr == userEvents->dropItem) {
+                else if (msgData->fixedStr == sv::userEvents->dropItem) {
                     return "dropItem";
                 }
-                else if (msgData->fixedStr == userEvents->rotate) {
+                else if (msgData->fixedStr == sv::userEvents->rotate) {
                     return "rotate";
                 }
-                else if (msgData->fixedStr == userEvents->nextFocus) {
+                else if (msgData->fixedStr == sv::userEvents->nextFocus) {
                     return "nextFocus";
                 }
-                else if (msgData->fixedStr == userEvents->prevFocus) {
+                else if (msgData->fixedStr == sv::userEvents->prevFocus) {
                     return "prevFocus";
                 }
-                else if (msgData->fixedStr == userEvents->setActiveQuest) {
+                else if (msgData->fixedStr == sv::userEvents->setActiveQuest) {
                     return "setActiveQuest";
                 }
-                else if (msgData->fixedStr == userEvents->placePlayerMarker) {
+                else if (msgData->fixedStr == sv::userEvents->placePlayerMarker) {
                     return "placePlayerMarker";
                 }
-                else if (msgData->fixedStr == userEvents->xButton) {
+                else if (msgData->fixedStr == sv::userEvents->xButton) {
                     return "xButton";
                 }
-                else if (msgData->fixedStr == userEvents->yButton) {
+                else if (msgData->fixedStr == sv::userEvents->yButton) {
                     return "yButton";
                 }
-                else if (msgData->fixedStr == userEvents->chargeItem) {
+                else if (msgData->fixedStr == sv::userEvents->chargeItem) {
                     return "chargeItem";
                 }
-                else if (msgData->fixedStr == userEvents->unk318) {
+                else if (msgData->fixedStr == sv::userEvents->unk318) {
                     return "unk318";
                 }
-                else if (msgData->fixedStr == userEvents->playerPosition) {
+                else if (msgData->fixedStr == sv::userEvents->playerPosition) {
                     return "playerPosition";
                 }
-                else if (msgData->fixedStr == userEvents->localMap) {
+                else if (msgData->fixedStr == sv::userEvents->localMap) {
                     return "localMap";
                 }
-                else if (msgData->fixedStr == userEvents->localMapMoveMode) {
+                else if (msgData->fixedStr == sv::userEvents->localMapMoveMode) {
                     return "localMapMoveMode";
                 }
-                else if (msgData->fixedStr == userEvents->itemZoom) {
+                else if (msgData->fixedStr == sv::userEvents->itemZoom) {
                     return "itemZoom";
                 }
             }
@@ -1484,14 +1473,13 @@ namespace gfuncs {
             return;
         }
 
-        auto* gsvm = RE::SkyrimVM::GetSingleton();
-        if (!gsvm) {
-            logger::error("gsvm* not found");
+        if (!sv::skyrimVm) {
+            logger::error("sv::skyrimVm* not found");
             return;
         }
 
         for (int i = 0; i < max; i++) {
-            gsvm->SendAndRelayEvent(handles[i], &sEvent, args, nullptr);
+            sv::skyrimVm->SendAndRelayEvent(handles[i], &sEvent, args, nullptr);
         }
 
         delete args; //args is created using makeFunctionArguments. Delete as it's no longer needed.

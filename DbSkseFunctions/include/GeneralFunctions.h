@@ -58,6 +58,7 @@ namespace gfuncs {
         t.detach();
     }
 
+    //return difference of time points in seconds as float
     float timePointDiffToFloat(std::chrono::system_clock::time_point end, std::chrono::system_clock::time_point start);
 
     RE::VMHandle GetHandle(RE::TESForm* akForm);

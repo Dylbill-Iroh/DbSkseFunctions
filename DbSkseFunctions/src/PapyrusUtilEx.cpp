@@ -1,5 +1,6 @@
 #include "PapyrusUtilEx.h"
 #include "GeneralFunctions.h"
+#include "SharedVariables.h"
 
 namespace papyrusUtilEx {
     std::string GetFormHandle(RE::StaticFunctionTag*, RE::TESForm* akForm) {
@@ -33,12 +34,12 @@ namespace papyrusUtilEx {
         RE::BSScript::ObjectTypeInfo* info;
     };
 
-    ArrayPropertyData GetArrayProperty(RE::BSScript::Internal::VirtualMachine* vm, RE::VMHandle handle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName) {
+    ArrayPropertyData GetArrayProperty(RE::VMHandle handle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName) {
         ArrayPropertyData returnValue;
 
-        auto it = vm->attachedScripts.find(handle);
-        if (it == vm->attachedScripts.end()) {
-            logger::error("DbSkse: {}: vm->attachedScripts couldn't find handle[{}] scriptName[{}] arrayProperty[{}]",
+        auto it = sv::vm->attachedScripts.find(handle);
+        if (it == sv::vm->attachedScripts.end()) {
+            logger::error("DbSkse: {}: sv::vm->attachedScripts couldn't find handle[{}] scriptName[{}] arrayProperty[{}]",
                 __func__, handle, bsScriptName, bsArrayPropertyName);
             return returnValue;
         }
@@ -97,13 +98,12 @@ namespace papyrusUtilEx {
     bool ResizeArrayProperty(RE::StaticFunctionTag*, std::string sHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName, int size, int fillIndex) {
         RE::VMHandle akHandle = gfuncs::StringToUint64_t(sHandle);
 
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
-            logger::error("couldn't get *vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
+        if (!sv::vm) {
+            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
             return false;
         }
 
-        auto arrayData = GetArrayProperty(vm, akHandle, bsScriptName, bsArrayPropertyName);
+        auto arrayData = GetArrayProperty(akHandle, bsScriptName, bsArrayPropertyName);
 
         if (!arrayData.gotAllData) {
             logger::error("failed to get all property data for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
@@ -117,8 +117,8 @@ namespace papyrusUtilEx {
         }
 
         RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-        vm->CreateArray2(arrayData.arrayPtr->type(), className, size, newArray);
-        //vm->CreateArray(RE::BSScript::TypeInfo{ RE::BSScript::TypeInfo::RawType::kObject }, size, newArray);
+        sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, size, newArray);
+        //sv::vm->CreateArray(RE::BSScript::TypeInfo{ RE::BSScript::TypeInfo::RawType::kObject }, size, newArray);
 
         int i = 0;
         int oldSize = arrayData.arrayPtr->size();
@@ -164,20 +164,19 @@ namespace papyrusUtilEx {
         RE::VMHandle akHandle_A = gfuncs::StringToUint64_t(sHandle_A);
         RE::VMHandle akHandle_B = gfuncs::StringToUint64_t(sHandle_B);
 
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
-            logger::error("couldn't get *vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
+        if (!sv::vm) {
+            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
             return false;
         }
 
-        auto arrayData_A = GetArrayProperty(vm, akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
+        auto arrayData_A = GetArrayProperty(akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
 
         if (!arrayData_A.gotAllData) {
             logger::error("failed to get all property data for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
             return false;
         }
 
-        auto arrayData_B = GetArrayProperty(vm, akHandle_B, bsScriptName_B, bsArrayPropertyName_B);
+        auto arrayData_B = GetArrayProperty(akHandle_B, bsScriptName_B, bsArrayPropertyName_B);
         if (!arrayData_B.gotAllData) {
             logger::error("failed to get all property data for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
             return false;
@@ -213,7 +212,7 @@ namespace papyrusUtilEx {
         int i = 0;
 
         RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSize, newArray);
+        sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSize, newArray);
 
         //this worked to prevent ctd when saving in game
         newArray.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
@@ -244,19 +243,18 @@ namespace papyrusUtilEx {
         RE::VMHandle akHandle_A = gfuncs::StringToUint64_t(sHandle_A);
         RE::VMHandle akHandle_B = gfuncs::StringToUint64_t(sHandle_B);
 
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
-            logger::error("couldn't get *vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
+        if (!sv::vm) {
+            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
             return false;
         }
 
-        auto arrayData_A = GetArrayProperty(vm, akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
+        auto arrayData_A = GetArrayProperty(akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
         if (!arrayData_A.gotAllData) {
             logger::error("failed to get all property data for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
             return false;
         }
 
-        auto arrayData_B = GetArrayProperty(vm, akHandle_B, bsScriptName_B, bsArrayPropertyName_B);
+        auto arrayData_B = GetArrayProperty(akHandle_B, bsScriptName_B, bsArrayPropertyName_B);
         if (!arrayData_B.gotAllData) {
             logger::error("failed to get all property data for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
             return false;
@@ -292,7 +290,7 @@ namespace papyrusUtilEx {
         int i = 0;
 
         RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-        vm->CreateArray2(arrayData_B.arrayPtr->type(), className, sizeA, newArray);
+        sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, sizeA, newArray);
 
         //this worked to prevent ctd when saving in game
         newArray.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
@@ -327,13 +325,12 @@ namespace papyrusUtilEx {
     int CountInArray(RE::StaticFunctionTag*, std::string sHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName, int index) {
         RE::VMHandle akHandle = gfuncs::StringToUint64_t(sHandle);
 
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
-            logger::error("couldn't get *vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
+        if (!sv::vm) {
+            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
             return false;
         }
 
-        auto arrayData = GetArrayProperty(vm, akHandle, bsScriptName, bsArrayPropertyName);
+        auto arrayData = GetArrayProperty(akHandle, bsScriptName, bsArrayPropertyName);
 
         if (!arrayData.gotAllData) {
             logger::error("failed to get all property data for[{}] in script[{}] on Handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
@@ -362,13 +359,12 @@ namespace papyrusUtilEx {
     int RemoveFromArray(RE::StaticFunctionTag*, std::string sHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName, int index, bool removeAll) {
         RE::VMHandle akHandle = gfuncs::StringToUint64_t(sHandle);
 
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
-            logger::error("couldn't get *vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
+        if (!sv::vm) {
+            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
             return 0;
         }
 
-        auto arrayData = GetArrayProperty(vm, akHandle, bsScriptName, bsArrayPropertyName);
+        auto arrayData = GetArrayProperty(akHandle, bsScriptName, bsArrayPropertyName);
 
         if (!arrayData.gotAllData) {
             logger::error("failed to get all property data for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
@@ -413,13 +409,13 @@ namespace papyrusUtilEx {
 
                     newSize = 1;
                     count = -1;
-                    vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
+                    sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
                     newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
                     newArray->data()[0] = arrayData.arraySmartPtr->data()[0]; //must set the 0 entry to a valid entry before setting to none or it will break the array
                     newArray->data()[0].SetNone();
                 }
                 else {
-                    vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
+                    sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
 
                     int oldIndex = 0;
                     int newIndex = 0;
@@ -437,8 +433,8 @@ namespace papyrusUtilEx {
 
         if (!removeAll || count == 1) {
             newSize = (oldSize - 1);
-            vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
-            //vm->CreateArray(RE::BSScript::TypeInfo{ RE::BSScript::TypeInfo::RawType::kObject }, size, newArray);
+            sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
+            //sv::vm->CreateArray(RE::BSScript::TypeInfo{ RE::BSScript::TypeInfo::RawType::kObject }, size, newArray);
 
             if (newSize <= 0) {
                 logger::error("[{}] in script[{}] on handle[{}] is already the minimum size 1",
@@ -483,13 +479,12 @@ namespace papyrusUtilEx {
 
         logger::trace("called");
 
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
-            logger::error("couldn't get *vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
+        if (!sv::vm) {
+            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
             return false;
         }
 
-        auto arrayData = GetArrayProperty(vm, akHandle, bsScriptName, bsArrayPropertyName);
+        auto arrayData = GetArrayProperty(akHandle, bsScriptName, bsArrayPropertyName);
         if (!arrayData.gotAllData) {
             logger::error("failed to get all property data for [{}] in script[{}] on handle[{}]", bsArrayPropertyName, bsScriptName, akHandle);
             return false;
@@ -532,7 +527,7 @@ namespace papyrusUtilEx {
         if (keep) {
             newArraySize = (endIndex - startIndex + 1);
 
-            vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
+            sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
             newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
 
             int i = 0;
@@ -548,7 +543,7 @@ namespace papyrusUtilEx {
 
             int i = 0;
             int ii = 0;
-            vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
+            sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
             newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
 
             //copy the elements between startIndex and endIndex from array to newArray
@@ -579,20 +574,18 @@ namespace papyrusUtilEx {
         RE::VMHandle akHandle_A = gfuncs::StringToUint64_t(sHandle_A);
         RE::VMHandle akHandle_B = gfuncs::StringToUint64_t(sHandle_B);
 
-
-        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
-            logger::error("couldn't get *vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
+        if (!sv::vm) {
+            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
             return false;
         }
 
-        auto arrayData_A = GetArrayProperty(vm, akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
+        auto arrayData_A = GetArrayProperty(akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
         if (!arrayData_A.gotAllData) {
             logger::error("failed to get all property data for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
             return false;
         }
 
-        auto arrayData_B = GetArrayProperty(vm, akHandle_B, bsScriptName_B, bsArrayPropertyName_B);
+        auto arrayData_B = GetArrayProperty(akHandle_B, bsScriptName_B, bsArrayPropertyName_B);
         if (!arrayData_B.gotAllData) {
             logger::trace("failed to get all property data for [{}] in script[{}] on handle[{}]", bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
             return false;
@@ -651,10 +644,10 @@ namespace papyrusUtilEx {
             newSizeA = (endIndex - startIndex + 1);
             newSizeB = (sizeA - newSizeA);
 
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+            sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
             newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+            sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
             newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
             int i = 0;
@@ -685,10 +678,10 @@ namespace papyrusUtilEx {
             newSizeB = (sizeA - newSizeA);
             newSizeB += sizeB;
 
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+            sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
             newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+            sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
             newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
             int i = 0;
@@ -726,10 +719,10 @@ namespace papyrusUtilEx {
             newSizeB = (endIndex - startIndex + 1);
             newSizeA = (sizeA - newSizeB);
 
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+            sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
             newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+            sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
             newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
             int i = 0;
@@ -760,10 +753,10 @@ namespace papyrusUtilEx {
             newSizeA = (sizeA - newSizeB);
             newSizeB += sizeB;
 
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+            sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
             newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+            sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
             newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
             int i = 0;

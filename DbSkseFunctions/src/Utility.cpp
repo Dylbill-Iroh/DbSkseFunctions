@@ -2,6 +2,7 @@
 #include "Utility.h"
 #include "GeneralFunctions.h"
 #include "editorID.hpp"
+#include "SharedVariables.h"
 
 enum logLevel { trace, debug, info, warn, error, critical };
 enum debugLevel { notification, messageBox };
@@ -18,67 +19,51 @@ std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
 //forward dec
 std::string GetDescription(RE::TESForm* akForm, std::string newLineReplacer);
 
-SharedUIVariables sharedVars;
-
 float GetGameHoursPassed(RE::StaticFunctionTag*) {
-    auto* calendar = RE::Calendar::GetSingleton(); 
-    if (!calendar) {
-        logger::error("calendar not found");
+    if (!sv::calendar) {
+        logger::error("sv::calendar not found");
         return 0.0;
     }
-    return calendar->GetHoursPassed();
+    return sv::calendar->GetHoursPassed();
 }
 
 float GameHoursToRealTimeSeconds(RE::StaticFunctionTag*, float gameHours) {
-    auto* calendar = RE::Calendar::GetSingleton();
-    if (!calendar) {
-        logger::error("calendar not found");
+    if (!sv::calendar) {
+        logger::error("sv::calendar not found");
         return 0.0;
     }
-    float timeScale = calendar->GetTimescale(); //timeScale is minutes ratio
+    float timeScale = sv::calendar->GetTimescale(); //timeScale is minutes ratio
     float gameMinutes = gameHours * 60.0;
     float realMinutes = gameMinutes / timeScale;
     return (realMinutes * 60.0);
 }
 
 bool IsGamePaused(RE::StaticFunctionTag*) {
-    auto* ui = RE::UI::GetSingleton();
-    if (!ui) {
+    if (!sv::ui) {
         logger::error("ui not found");
         return false;
     }
-    return ui->GameIsPaused();
+    return sv::ui->GameIsPaused();
 }
 
 bool IsInMenu(RE::StaticFunctionTag*) {
     //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
 
-    auto* ui = RE::UI::GetSingleton();
-    if (ui) {
+    if (sv::ui) {
         //hud menu is always open, unless closed by another mod.
-        if (ui->IsMenuOpen(RE::HUDMenu::MENU_NAME)) {
-            return (ui->menuStack.size() > 1);
+        if (sv::ui->IsMenuOpen(RE::HUDMenu::MENU_NAME)) {
+            return (sv::ui->menuStack.size() > 1);
         }
         else {
-            return (ui->menuStack.size() > 0);
+            return (sv::ui->menuStack.size() > 0);
         }
     }
-    else {
-        bool inMenuMode;
-        sharedVars.read([&](const SharedUIVariables& vars) {
-            inMenuMode = vars.inMenuMode;
-        });
-        return inMenuMode;
-    }
+
+    return false;
 }
 
 std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
-    //std::lock_guard<std::recursive_mutex> lock(openedMenusMutex); 
-    std::string lastMenuOpened;
-    sharedVars.read([&](const SharedUIVariables& vars) {
-        lastMenuOpened = vars.lastMenuOpened;
-    });
-    return lastMenuOpened;
+    return sv::lastMenuOpened;
 }
 
 void RefreshItemMenu(RE::StaticFunctionTag*) {
@@ -86,13 +71,12 @@ void RefreshItemMenu(RE::StaticFunctionTag*) {
 }
 
 RE::TESForm* GetLoadMenuLocation() {
-    auto* ui = RE::UI::GetSingleton();
-    if (!ui) {
+    if (!sv::ui) {
         logger::error("couldn't find ui");
         return nullptr;
     }
 
-    auto loadingMenuGPtr = ui->GetMenu(RE::LoadingMenu::MENU_NAME);
+    auto loadingMenuGPtr = sv::ui->GetMenu(RE::LoadingMenu::MENU_NAME);
     if (!loadingMenuGPtr) {
         logger::error("couldn't find loadingMenu");
         return nullptr;
@@ -622,11 +606,10 @@ std::vector<std::string> GetFormEditorIdsAsStrings(RE::BGSListForm* akFormlist, 
 
 std::vector<std::string> GetLoadedModNamesAsStrings(int sortOption) {
     std::vector<std::string> fileNames;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedModCount();
         for (int i = 0; i < modCount; i++) {
-            auto* file = dataHandler->LookupLoadedModByIndex(i);
+            auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
             if (file) {
                 fileNames.push_back(static_cast<std::string>(file->GetFilename()));
             }
@@ -644,11 +627,10 @@ std::vector<std::string> GetLoadedModNamesAsStrings(int sortOption) {
 
 std::vector<std::string> GetLoadedLightModNamesAsStrings(int sortOption) {
     std::vector<std::string> fileNames;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedLightModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedLightModCount();
         for (int i = 0; i < modCount; i++) {
-            auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+            auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
             if (file) {
                 fileNames.push_back(static_cast<std::string>(file->GetFilename()));
             }
@@ -666,13 +648,12 @@ std::vector<std::string> GetLoadedLightModNamesAsStrings(int sortOption) {
 
 std::vector<std::string> GetLoadedModDescriptionsAsStrings(int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer) {
     std::vector<std::string> sfileDescriptions;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedModCount();
 
         if (newLineReplacer != "" && maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -687,7 +668,7 @@ std::vector<std::string> GetLoadedModDescriptionsAsStrings(int sortOption, int m
         }
         else if (maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     if (description.size() > maxCharacters) {
@@ -699,7 +680,7 @@ std::vector<std::string> GetLoadedModDescriptionsAsStrings(int sortOption, int m
         }
         else if (newLineReplacer != "") {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -710,7 +691,7 @@ std::vector<std::string> GetLoadedModDescriptionsAsStrings(int sortOption, int m
         }
         else {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     sfileDescriptions.push_back(description);
@@ -730,13 +711,12 @@ std::vector<std::string> GetLoadedModDescriptionsAsStrings(int sortOption, int m
 
 std::vector<std::string> GetLoadedModNamesAndDescriptionsAsStrings(int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer) {
     std::vector<std::string> sfileDescriptions;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedModCount();
 
         if (newLineReplacer != "" && maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -751,7 +731,7 @@ std::vector<std::string> GetLoadedModNamesAndDescriptionsAsStrings(int sortOptio
         }
         else if (maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     if (description.size() > maxCharacters) {
@@ -763,7 +743,7 @@ std::vector<std::string> GetLoadedModNamesAndDescriptionsAsStrings(int sortOptio
         }
         else if (newLineReplacer != "") {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -774,7 +754,7 @@ std::vector<std::string> GetLoadedModNamesAndDescriptionsAsStrings(int sortOptio
         }
         else {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     sfileDescriptions.push_back(static_cast<std::string>(file->GetFilename()) + "||" + description);
@@ -794,13 +774,12 @@ std::vector<std::string> GetLoadedModNamesAndDescriptionsAsStrings(int sortOptio
 
 std::vector<std::string> GetLoadedLightModDescriptionsAsStrings(int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer) {
     std::vector<std::string> sfileDescriptions;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedLightModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedLightModCount();
 
         if (newLineReplacer != "" && maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -815,7 +794,7 @@ std::vector<std::string> GetLoadedLightModDescriptionsAsStrings(int sortOption, 
         }
         else if (maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     if (description.size() > maxCharacters) {
@@ -827,7 +806,7 @@ std::vector<std::string> GetLoadedLightModDescriptionsAsStrings(int sortOption, 
         }
         else if (newLineReplacer != "") {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -838,7 +817,7 @@ std::vector<std::string> GetLoadedLightModDescriptionsAsStrings(int sortOption, 
         }
         else {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     sfileDescriptions.push_back(description);
@@ -858,13 +837,12 @@ std::vector<std::string> GetLoadedLightModDescriptionsAsStrings(int sortOption, 
 
 std::vector<std::string> GetLoadedLightModNamesAndDescriptionsAsStrings(int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer) {
     std::vector<std::string> sfileDescriptions;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedLightModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedLightModCount();
 
         if (newLineReplacer != "" && maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -879,7 +857,7 @@ std::vector<std::string> GetLoadedLightModNamesAndDescriptionsAsStrings(int sort
         }
         else if (maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     if (description.size() > maxCharacters) {
@@ -891,7 +869,7 @@ std::vector<std::string> GetLoadedLightModNamesAndDescriptionsAsStrings(int sort
         }
         else if (newLineReplacer != "") {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -902,7 +880,7 @@ std::vector<std::string> GetLoadedLightModNamesAndDescriptionsAsStrings(int sort
         }
         else {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     sfileDescriptions.push_back(static_cast<std::string>(file->GetFilename()) + "||" + description);
@@ -922,14 +900,13 @@ std::vector<std::string> GetLoadedLightModNamesAndDescriptionsAsStrings(int sort
 
 std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer) {
     std::vector<std::string> sfileDescriptions;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedModCount();
-        int lightModCount = dataHandler->GetLoadedLightModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedModCount();
+        int lightModCount = sv::dataHandler->GetLoadedLightModCount();
 
         if (newLineReplacer != "" && maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -943,7 +920,7 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
             }
 
             for (int i = 0; i < lightModCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -958,7 +935,7 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
         }
         else if (maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     if (description.size() > maxCharacters) {
@@ -969,7 +946,7 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
             }
 
             for (int i = 0; i < lightModCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     if (description.size() > maxCharacters) {
@@ -981,7 +958,7 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
         }
         else if (newLineReplacer != "") {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -991,7 +968,7 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
             }
 
             for (int i = 0; i < lightModCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -1002,7 +979,7 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
         }
         else {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     sfileDescriptions.push_back(description);
@@ -1010,7 +987,7 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
             }
 
             for (int i = 0; i < lightModCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     sfileDescriptions.push_back(description);
@@ -1030,16 +1007,15 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
 
 std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer) {
     std::vector<std::string> sfileDescriptions;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedModCount();
-        int lightModCount = dataHandler->GetLoadedLightModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedModCount();
+        int lightModCount = sv::dataHandler->GetLoadedLightModCount();
 
         //sFileNamesAndDescriptions.push_back(static_cast<std::string>(file->GetFilename()) + "||" + description);
 
         if (newLineReplacer != "" && maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -1053,7 +1029,7 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
             }
 
             for (int i = 0; i < lightModCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -1068,7 +1044,7 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
         }
         else if (maxCharacters > 0) {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     if (description.size() > maxCharacters) {
@@ -1079,7 +1055,7 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
             }
 
             for (int i = 0; i < lightModCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     if (description.size() > maxCharacters) {
@@ -1091,7 +1067,7 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
         }
         else if (newLineReplacer != "") {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -1101,7 +1077,7 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
             }
 
             for (int i = 0; i < lightModCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     gfuncs::String_ReplaceAll(description, "\r", newLineReplacer);
@@ -1112,7 +1088,7 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
         }
         else {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     sfileDescriptions.push_back(static_cast<std::string>(file->GetFilename()) + "||" + description);
@@ -1120,7 +1096,7 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
             }
 
             for (int i = 0; i < lightModCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     std::string description = static_cast<std::string>(file->summary);
                     sfileDescriptions.push_back(static_cast<std::string>(file->GetFilename()) + "||" + description);
@@ -1211,19 +1187,18 @@ int CountWhiteSpaces(RE::StaticFunctionTag*, std::string s) {
 bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType) {
     logger::debug("modName[{}] formType[{}]", modName, formType);
 
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (!dataHandler) {
-        logger::error("couldn't get dataHandler");
+    if (!sv::dataHandler) {
+        logger::error("couldn't get sv::dataHandler");
         return false;
     }
 
-    auto* modFile = dataHandler->LookupModByName(modName);
+    auto* modFile = sv::dataHandler->LookupModByName(modName);
     if (!modFile) {
         logger::error("mod [{}] not loaded", modName);
         return false;
     }
 
-    RE::BSTArray<RE::TESForm*>* formArray = &(dataHandler->GetFormArray(static_cast<RE::FormType>(formType)));
+    RE::BSTArray<RE::TESForm*>* formArray = &(sv::dataHandler->GetFormArray(static_cast<RE::FormType>(formType)));
 
     int ic = 0;
     for (RE::BSTArray<RE::TESForm*>::iterator it = formArray->begin(); it != formArray->end() && ic < formArray->size(); it++, ic++) {
@@ -1607,9 +1582,8 @@ std::vector<RE::BSFixedString> GetFormNamesFromList(RE::StaticFunctionTag*, RE::
 
 std::vector<RE::BSFixedString> GetLoadedModNames(RE::StaticFunctionTag*, int sortOption) {
     std::vector<RE::BSFixedString> fileNames;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedModCount();
 
         if (sortOption == 1 || sortOption == 2) {
             std::vector<std::string> sfileNames = GetLoadedModNamesAsStrings(sortOption);
@@ -1617,7 +1591,7 @@ std::vector<RE::BSFixedString> GetLoadedModNames(RE::StaticFunctionTag*, int sor
         }
         else {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedModByIndex(i);
                 if (file) {
                     fileNames.push_back(file->GetFilename());
                 }
@@ -1629,9 +1603,8 @@ std::vector<RE::BSFixedString> GetLoadedModNames(RE::StaticFunctionTag*, int sor
 
 std::vector<RE::BSFixedString> GetLoadedLightModNames(RE::StaticFunctionTag*, int sortOption) {
     std::vector<RE::BSFixedString> fileNames;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        int modCount = dataHandler->GetLoadedLightModCount();
+    if (sv::dataHandler) {
+        int modCount = sv::dataHandler->GetLoadedLightModCount();
 
         if (sortOption == 1 || sortOption == 2) {
             std::vector<std::string> sfileNames = GetLoadedLightModNamesAsStrings(sortOption);
@@ -1639,7 +1612,7 @@ std::vector<RE::BSFixedString> GetLoadedLightModNames(RE::StaticFunctionTag*, in
         }
         else {
             for (int i = 0; i < modCount; i++) {
-                auto* file = dataHandler->LookupLoadedLightModByIndex(i);
+                auto* file = sv::dataHandler->LookupLoadedLightModByIndex(i);
                 if (file) {
                     fileNames.push_back(file->GetFilename());
                 }

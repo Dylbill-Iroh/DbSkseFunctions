@@ -3,10 +3,13 @@
 #include "ConditionFunctions.h"
 #include "GeneralFunctions.h"
 #include "RangeEvents.h"
+#include "SharedVariables.h"
 
 namespace conditions {
-    std::recursive_mutex mutex;
-	std::unordered_map<std::string, RE::TESCondition*> conditionsMap;
+    std::unordered_map<std::string, RE::TESCondition*> conditionsMap;
+    std::mutex mutex;
+    std::condition_variable updateCv;
+    bool isEmpty = true;
 
     std::list<void*> createdConditionParams;
 
@@ -31,6 +34,7 @@ namespace conditions {
                 return "<=";
             }
         }
+        return "";
     } 
     
     struct ConditionChangedEvent;
@@ -38,7 +42,6 @@ namespace conditions {
 
     struct ConditionChangedEvent {
         ConditionChangedEvent(std::string asConditionId, RE::TESCondition* akCondition, RE::TESObjectREFR* akTarget) {
-            std::lock_guard<std::recursive_mutex> lock(mutex);
             if (!akCondition) {
                 deleted = true;
             }
@@ -52,20 +55,24 @@ namespace conditions {
         }
 
         bool ParamsMatch(std::string asConditionId, RE::TESCondition* akCondition, RE::TESObjectREFR* akTarget) {
-            std::lock_guard<std::recursive_mutex> lock(mutex);
-            return (asConditionId == conditionId && akCondition == condition && akTarget == target);
+            mutex.lock();
+            bool result = (asConditionId == conditionId && akCondition == condition && akTarget == target);
+            mutex.unlock();
+            return result;
         }
 
         int GetConditionStatus() {
-            std::lock_guard<std::recursive_mutex> lock(mutex);
+            mutex.lock();
+            int result = -1;
             if (condition && !deleted) {
-                return int(condition->IsTrue(target, nullptr));
+                result = int(condition->IsTrue(target, nullptr));
             }
-            return -1;
+            mutex.unlock();
+            return result;
         }
 
         bool MarkForDelete() {
-            std::lock_guard<std::recursive_mutex> lock(mutex);
+            mutex.lock();
             bool result = false;
             if (!deleted) {
                 condition = nullptr;
@@ -73,37 +80,46 @@ namespace conditions {
                 deleted = true;
                 result = true;
             }
+            mutex.unlock();
             return result;
         }
 
         bool IsDeleted() {
-            std::lock_guard<std::recursive_mutex> lock(mutex);
-            return deleted;
+            mutex.lock();
+            bool result = deleted; 
+            mutex.unlock();
+            return result;
         }
 
         std::string GetConditionId() {
-            std::lock_guard<std::recursive_mutex> lock(mutex);
-            return conditionId;
+            mutex.lock();
+            std::string result = conditionId;
+            mutex.unlock();
+            return result;
         }
 
         //can only set if isPolling is the opposite of set
         bool SetPolling(bool set) {
-            std::lock_guard<std::recursive_mutex> lock(mutex);
+            mutex.lock();
             if (set) {
                 if (!isPolling) {
                     isPolling = true;
+                    mutex.unlock();
                     return true;
                 }
                 else {
+                    mutex.unlock();
                     return false;
                 }
             }
             else {
                 if (isPolling) {
                     isPolling = false;
+                    mutex.unlock();
                     return true;
                 }
                 else {
+                    mutex.unlock();
                     return false;
                 }
             }
@@ -113,8 +129,9 @@ namespace conditions {
         void ListenForConditionEventChangeStart() {
             ListenForConditionEventChange();
         }
-
+        //
         void ListenForConditionEventChange() {
+            isEmpty = false;
             std::thread t([=]() {
                 if (!SetPolling(true)) {
                     logger::trace("already polling");
@@ -122,15 +139,24 @@ namespace conditions {
                 else { //succussfully set polling
 
                     int startStatus = GetConditionStatus();
-                    int status = startStatus;
-
-                    if (status != -1) {
-                        while (startStatus == status) {
-                            //logger::info("while loop");
-                            std::this_thread::sleep_for(std::chrono::milliseconds(eventPollingInterval));
-                            status = GetConditionStatus();
-                        }
+                    {
+                        std::unique_lock<std::mutex> lock(mutex);
+                        // waiting
+                        updateCv.wait(lock, [=] {
+                            int status = -1;
+                            if (condition && !deleted) {
+                                status = int(condition->IsTrue(target, nullptr));
+                            }
+                            if (status == -1) {
+                                return true;
+                            }
+                            else {
+                                return (status != startStatus);
+                            }
+                        });
                     }
+
+                    int status = GetConditionStatus();
 
                     if (status != -1) {
                         HandleConditionChangeEvent(bool(status));
@@ -146,10 +172,9 @@ namespace conditions {
         }
 
         void HandleConditionChangeEvent(bool isTrue) {
-            auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-            if (vm) {
+            if (sv::vm) {
                 auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)target, (bool)isTrue);
-                vm->SendEventAll(sEvent, args);
+                sv::vm->SendEventAll(sEvent, args);
                 delete args;
             }
         }
@@ -165,9 +190,12 @@ namespace conditions {
     std::vector<ConditionChangedEvent*> conditionEvents;
 
     void DeleteConditionEvent(ConditionChangedEvent* conditionEvent) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
         if (conditionEvent) {
+            mutex.unlock(); //MarkForDelete is locked, unlock before calling
             conditionEvent->MarkForDelete(); //ensure condition and target are set to nullptr
+            mutex.lock();
+
             auto it = std::find(conditionEvents.begin(), conditionEvents.end(), conditionEvent);
 
             if (it != conditionEvents.end()) {
@@ -175,23 +203,31 @@ namespace conditions {
             }
             delete conditionEvent;
         }
+        if (conditionEvents.size() == 0) {
+            isEmpty = true;
+        }
+        mutex.unlock();
     }
 
     ConditionChangedEvent* GetConditionEvent(std::string asConditionId, RE::TESObjectREFR* akTarget) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
         auto it = conditionsMap.find(asConditionId);
         if (it != conditionsMap.end()) {
             auto* condition = it->second;
             if (condition) {
-                for (ConditionChangedEvent* conditionEvent : conditionEvents) {
+                for (int i = 0; i < conditionEvents.size(); i++) {
+                    ConditionChangedEvent* conditionEvent = conditionEvents[i];
                     if (conditionEvent) {
+                        mutex.unlock(); //ParamsMatch is locked, unlock before calling
                         if (conditionEvent->ParamsMatch(asConditionId, condition, akTarget)) {
                             return conditionEvent;
                         }
+                        mutex.lock();
                     }
                 }
             }
         }
+        mutex.unlock();
         return nullptr;
     }
 
@@ -200,15 +236,20 @@ namespace conditions {
     }
 
     bool CreateConditionEvent(RE::StaticFunctionTag*, std::string conditionId, RE::TESObjectREFR* akTarget) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
         ConditionChangedEvent* conditionEvent = GetConditionEvent(conditionId, akTarget);
+        mutex.lock();
         if (!conditionEvent) {
             auto it = conditionsMap.find(conditionId);
             if (it != conditionsMap.end()) {
                 auto* condition = it->second;
                 if (condition) {
                     ConditionChangedEvent* newConditionEvent = new ConditionChangedEvent(conditionId, condition, akTarget);
-                    if (!newConditionEvent->IsDeleted()) {
+                    
+                    mutex.unlock(); //isDeleted is locked, unlock before calling to prevent deadlock.
+                    bool deleted = newConditionEvent->IsDeleted();
+                    mutex.lock();
+
+                    if (!deleted) {
                         conditionEvents.push_back(newConditionEvent);
                     }
                     else {
@@ -217,6 +258,8 @@ namespace conditions {
                     }
                     logger::debug("condition event for conditionId[{}] and target[{}] created",
                         conditionId, gfuncs::GetFormNameAndId(akTarget));
+
+                    mutex.unlock();
                     return true;
                 }
                 else {
@@ -231,75 +274,90 @@ namespace conditions {
             logger::debug("condition event for conditionId[{}] and target[{}] already exists", 
                 conditionId, gfuncs::GetFormNameAndId(akTarget));
 
+            mutex.unlock();
             return false;
         }
+        mutex.unlock();
+        return false;
     }
 
     bool DestroyConditionEvent(RE::StaticFunctionTag*, std::string conditionId, RE::TESObjectREFR* akTarget) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
         auto it = conditionsMap.find(conditionId);
         if (it != conditionsMap.end()) {
             auto* condition = it->second;
             if (condition) {
-                for (ConditionChangedEvent* conditionEvent : conditionEvents) {
+                for (int i = 0; i < conditionEvents.size(); i++) {
+                    ConditionChangedEvent* conditionEvent = conditionEvents[i];
                     if (conditionEvent) {
+                        mutex.unlock(); //paramsMatch and MarkForDelete are locked. Unlock before calling to prevent deadlock.
                         if (conditionEvent->ParamsMatch(conditionId, condition, akTarget)) {
                             return conditionEvent->MarkForDelete();
                         }
+                        mutex.lock();
                     }
                 }
             }
         }
 
+        mutex.unlock();
         return false;
     }
     
     int DestroyAllConditionEvents(RE::StaticFunctionTag*, std::string conditionId) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
         int count = 0;
         auto it = conditionsMap.find(conditionId);
         if (it != conditionsMap.end()) {
             auto* condition = it->second;
             if (condition) {
-                for (ConditionChangedEvent* conditionEvent : conditionEvents) {
+                for (int i = 0; i < conditionEvents.size(); i++) {
+                    ConditionChangedEvent* conditionEvent = conditionEvents[i];
                     if (conditionEvent) {
+                        mutex.unlock(); //GetConditionId and MarkForDelete are locked. Unlock before calling to prevent deadlock.
                         if (conditionEvent->GetConditionId() == conditionId) {
                             if (conditionEvent->MarkForDelete()) {
                                 count++;
                             }
                         }
+                        mutex.lock();
                     }
                 }
             }
         }
 
+        mutex.unlock();
         return count;
     }
 
     int CountConditionEvents(RE::StaticFunctionTag*, std::string conditionId) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
         int count = 0;
         auto it = conditionsMap.find(conditionId);
         if (it != conditionsMap.end()) {
             auto* condition = it->second;
             if (condition) {
-                for (ConditionChangedEvent* conditionEvent : conditionEvents) {
+                for (int i = 0; i < conditionEvents.size(); i++) {
+                    ConditionChangedEvent* conditionEvent = conditionEvents[i];
                     if (conditionEvent) {
+                        mutex.unlock(); //GetConditionId and MarkForDelete are locked. Unlock before calling to prevent deadlock.
                         if (conditionEvent->GetConditionId() == conditionId) {
                             if (!conditionEvent->IsDeleted()) {
                                 count++;
                             }
                         }
+                        mutex.lock();
                     }
                 }
             }
         }
 
+        mutex.unlock();
         return count;
     }
 
     void DestroyConditionParameter(RE::TESConditionItem* item, int paramIndex) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
         auto it = std::find(createdConditionParams.begin(), createdConditionParams.end(), item->data.functionData.params[paramIndex]);
 
         if (it != createdConditionParams.end()) {
@@ -308,26 +366,29 @@ namespace conditions {
             createdConditionParams.erase(it);
         }
         item->data.functionData.params[paramIndex] = nullptr;
+        mutex.unlock();
     }
 
     void DestroyConditionCpp(std::string conditionId) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
-
         DestroyAllConditionEvents(nullptr, conditionId);
+        mutex.lock();
 
         logger::trace("conditionId[{}]", conditionId);
 
         auto it = conditionsMap.find(conditionId);
 
         if (it == conditionsMap.end()) {
+            mutex.unlock();
             return;
         }
 
         if (it->second) {
             if (it->second->head) {
+                mutex.unlock();
                 DestroyConditionParameter(it->second->head, 0);
                 DestroyConditionParameter(it->second->head, 1);
                 DestroyConditionParameter(it->second->head, 2);
+                mutex.lock();
 
                 delete it->second->head;
                 it->second->head = nullptr;
@@ -337,6 +398,7 @@ namespace conditions {
         }
 
         conditionsMap.erase(it);
+        mutex.unlock();
     }
 
     void DestroyCondition(RE::StaticFunctionTag*, std::string conditionId) {
@@ -344,8 +406,6 @@ namespace conditions {
     }
 
     void CreateCondition(RE::StaticFunctionTag*, std::string conditionId, int conditionFunction, int comparison, float value) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
-
         if (conditionId == "") {
             logger::warn("Cannot create a condition with an empty conditionId");
             return;
@@ -353,6 +413,8 @@ namespace conditions {
         
         //destroy condition if it exists
         DestroyConditionCpp(conditionId);
+
+        mutex.lock();
 
         logger::trace("conditionId[{}], conditionFunction[{}], comparison[{}], value[{}]",
             conditionId, conditionFunction, comparison, value);
@@ -370,21 +432,23 @@ namespace conditions {
         condition->head = conditionItem;
 
         conditionsMap[conditionId] = condition;
+        mutex.unlock();
     }
 
     bool ConditionExists(RE::StaticFunctionTag*, std::string conditionId) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
         bool result = (conditionsMap.find(conditionId) != conditionsMap.end());
         logger::trace("conditionId[{}] result[{}]", conditionId, result);
-        
+        mutex.unlock();
         return result;
     }
 
     bool SetConditionComparison(RE::StaticFunctionTag*, std::string conditionId, int comparison) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
 
         if (comparison > 5 || comparison < 0) {
             logger::warn("conditionId[{}] comparison[{}] isn't valid. Must be between 0 and 5", conditionId, comparison);
+            mutex.unlock();
             return false;
         } 
 
@@ -392,88 +456,103 @@ namespace conditions {
 
         if (it == conditionsMap.end()) {
             logger::warn("conditionId[{}] not found", conditionId);
+            mutex.unlock();
             return false;
         }
 
         auto* condition = it->second;
         if (!condition) {
             logger::warn("something went wrong. conditionId[{}] condition is nullptr", conditionId);
+            mutex.unlock();
             return false;
         }
 
         auto* head = condition->head;
         if (!head) {
             logger::warn("something went wrong. conditionId[{}] condition->head is nullptr", conditionId);
+            mutex.unlock();
             return false;
         } 
 
         logger::trace("conditionId[{}] comparison[{}]", conditionId, comparison);
         head->data.flags.opCode = static_cast<RE::CONDITION_ITEM_DATA::OpCode>(comparison);
+        mutex.unlock();
         return true;
     }
 
     bool SetConditionValue(RE::StaticFunctionTag*, std::string conditionId, float value) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
 
         auto it = conditionsMap.find(conditionId);
 
         if (it == conditionsMap.end()) {
             logger::warn("conditionId[{}] not found", conditionId);
+            mutex.unlock();
             return false;
         }
 
         auto* condition = it->second;
         if (!condition) {
             logger::warn("something went wrong. conditionId[{}] condition is nullptr", conditionId);
+            mutex.unlock();
             return false;
         }
 
         auto* head = condition->head;
         if (!head) {
             logger::warn("something went wrong. conditionId[{}] condition->head is nullptr", conditionId);
+            mutex.unlock();
             return false;
         }
 
         logger::trace("conditionId[{}] value[{}]", conditionId, value);
         head->data.comparisonValue.f = value;
         
+        mutex.unlock();
         return true;
     }
 
     bool SetConditionParameter(std::string conditionId, void* param, int paramIndex, bool createdParam = true) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
 
         auto it = conditionsMap.find(conditionId);
 
         if (it == conditionsMap.end()) {
             logger::warn("conditionId[{}] not found", conditionId);
+            mutex.unlock();
             return false;
         }
 
         if (paramIndex < 0 || paramIndex > 2) {
             logger::warn("conditionId[{}] paramIndex[{}] not valid. Must be between 0 and 2", conditionId, paramIndex);
+            mutex.unlock();
             return false;
         }
 
         RE::TESCondition* condition = it->second;
         if (!condition) {
             logger::warn("something went wrong. conditionId[{}] condition is nullptr", conditionId);
+            mutex.unlock();
             return false;
         }
 
         RE::TESConditionItem* head = condition->head;
         if (!head) {
             logger::warn("something went wrong. conditionId[{}] condition->head is nullptr", conditionId);
+            mutex.unlock();
             return false;
         }
 
+        mutex.unlock();
         DestroyConditionParameter(head, paramIndex);
+        mutex.lock();
         head->data.functionData.params[paramIndex] = param;
         
         if (createdParam) {
             createdConditionParams.push_back(param);
         }
 
+        mutex.unlock();
         return true;
     }
 
@@ -523,27 +602,28 @@ namespace conditions {
     }
     
     bool EvaluateCondition(RE::StaticFunctionTag*, std::string conditionId, RE::TESObjectREFR* target) {
-        std::lock_guard<std::recursive_mutex> lock(mutex);
+        mutex.lock();
 
         bool result = false;
         auto it = conditionsMap.find(conditionId);
 
         if (it == conditionsMap.end()) {
             logger::warn("conditionId[{}] not found", conditionId);
+            mutex.unlock();
             return result;
         }
 
         auto* condition = it->second;
         if (!condition) {
             logger::warn("something went wrong. conditionId[{}] condition is nullptr", conditionId);
-            
+            mutex.unlock();
             return result;
         }
 
         logger::trace("conditionId[{}]", conditionId);
         result = condition->IsTrue(target, nullptr);
         logger::trace("conditionId[{}] result[{}]", conditionId, result);
-        
+        mutex.unlock();
         return result;
     }
     

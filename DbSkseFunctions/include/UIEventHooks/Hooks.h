@@ -194,11 +194,10 @@ namespace UIEvents {
                                                     }
                                                 }
                                             }
-
+                                            
                                             bool selectFromPlayerInventory = false;
-                                            RE::Actor* playerRef = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
-                                            if (playerRef) {
-                                                selectFromPlayerInventory = (owner == playerRef);
+                                            if (sv::player) {
+                                                selectFromPlayerInventory = (owner == sv::player);
                                             }
 
                                             bool isStolen = false;
@@ -380,21 +379,20 @@ namespace UIEvents {
     }
 
     bool ShouldSkipUIItemEvent() {
-        auto* ui = RE::UI::GetSingleton();
-        if (!ui) {
+        if (!sv::ui) {
             return false;
         }
-        if (ui->closingAllMenus) {
+        if (sv::ui->closingAllMenus) {
             logger::trace("closingAllMenus = true");
             return true;
         }
 
-        if (!ui->menuSystemVisible) {
+        if (!sv::ui->menuSystemVisible) {
             logger::trace("menuSystemVisible = false");
             return true;
         }
 
-        if (!ui->IsItemMenuOpen()) {
+        if (!sv::ui->IsItemMenuOpen()) {
             logger::trace("IsItemMenuOpen = false");
             return true;
         }
@@ -447,9 +445,8 @@ namespace UIEvents {
 
             if (selectedFormData.form) {
                 if (gfuncs::GetIndexInVector(validSelectUserEventStrings, msgData->fixedStr) > -1 || msgData->fixedStr == "À¬") { //"À¬" for unrecognized (enter key)
-                    auto* userEvents = RE::UserEvents::GetSingleton();
-                    if (userEvents) {
-                        if (msgData->fixedStr == userEvents->leftEquip || msgData->fixedStr == userEvents->leftAttack) {
+                    if (sv::userEvents) {
+                        if (msgData->fixedStr == sv::userEvents->leftEquip || msgData->fixedStr == sv::userEvents->leftAttack) {
                             if (menuName == "inventorymenu" || menuName == "favoritesmenu" || menuName == "containermenu" || menuName == "magicmenu") {
                                 SendUISelectionEvents(menuName, selectedFormData, UiEventEnumType_ItemSelected);
                             }
@@ -1319,25 +1316,23 @@ namespace UIEvents {
     }
 
     void Install() {
-        auto* userEvents = RE::UserEvents::GetSingleton();
+        if (sv::userEvents && validSelectUserEventStrings.size() == 0) {
+            validSelectUserEventStrings.push_back(sv::userEvents->rightEquip);
+            validSelectUserEventStrings.push_back(sv::userEvents->leftEquip); 
+            validSelectUserEventStrings.push_back(sv::userEvents->unk318);
+            validSelectUserEventStrings.push_back(sv::userEvents->accept);
+            validSelectUserEventStrings.push_back(sv::userEvents->equip);
+            validSelectUserEventStrings.push_back(sv::userEvents->unequip);
+            validSelectUserEventStrings.push_back(sv::userEvents->rightAttack);
+            validSelectUserEventStrings.push_back(sv::userEvents->leftAttack);
+            validSelectUserEventStrings.push_back(sv::userEvents->click);
+            validSelectUserEventStrings.push_back(sv::userEvents->activate);
 
-        if (userEvents && validSelectUserEventStrings.size() == 0) {
-            validSelectUserEventStrings.push_back(userEvents->rightEquip);
-            validSelectUserEventStrings.push_back(userEvents->leftEquip); 
-            validSelectUserEventStrings.push_back(userEvents->unk318);
-            validSelectUserEventStrings.push_back(userEvents->accept);
-            validSelectUserEventStrings.push_back(userEvents->equip);
-            validSelectUserEventStrings.push_back(userEvents->unequip);
-            validSelectUserEventStrings.push_back(userEvents->rightAttack);
-            validSelectUserEventStrings.push_back(userEvents->leftAttack);
-            validSelectUserEventStrings.push_back(userEvents->click);
-            validSelectUserEventStrings.push_back(userEvents->activate);
+            validDropUserEventStrings.push_back(sv::userEvents->xButton);
+            validDropUserEventStrings.push_back(sv::userEvents->dropItem);
 
-            validDropUserEventStrings.push_back(userEvents->xButton);
-            validDropUserEventStrings.push_back(userEvents->dropItem);
-
-            validFavoriteUserEventStrings.push_back(userEvents->yButton);
-            validFavoriteUserEventStrings.push_back(userEvents->toggleFavorite);
+            validFavoriteUserEventStrings.push_back(sv::userEvents->yButton);
+            validFavoriteUserEventStrings.push_back(sv::userEvents->toggleFavorite);
         }
 
         logger::trace("UI menu hooks initialized");

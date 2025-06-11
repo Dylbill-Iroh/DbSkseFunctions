@@ -1,6 +1,7 @@
 #include "FormVectorGetters.h"
 #include "GeneralFunctions.h"
 #include "Utility.h"
+#include "SharedVariables.h"
 
 std::vector<RE::TESObjectREFR*> GetEnableChildrenRefs(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
     std::vector<RE::TESObjectREFR*> v;
@@ -93,10 +94,9 @@ std::vector<RE::TESQuest*> GetAllActiveQuests(RE::StaticFunctionTag*) {
     logger::debug("called");
 
     std::vector<RE::TESQuest*> questItems;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Quest));
 
         int ic = 0;
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -572,10 +572,9 @@ std::vector<RE::BGSBaseAlias*> GetAllAliasesWithScriptAttached(RE::StaticFunctio
     logger::debug("called");
 
     std::vector<RE::BGSBaseAlias*> questItems;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Quest));
         int ic = 0;
 
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -604,10 +603,9 @@ std::vector<RE::BGSRefAlias*> GetAllRefAliasesWithScriptAttached(RE::StaticFunct
     logger::debug("called");
 
     std::vector<RE::BGSRefAlias*> questItems;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Quest));
 
         int ic = 0;
         if (onlyQuestObjects && onlyFilled) {
@@ -720,10 +718,9 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
     logger::debug("called");
 
     std::vector<RE::BGSRefAlias*> questItems;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Quest));
         int ic = 0;
 
         if (onlyQuestObjects && onlyFilled) {
@@ -856,10 +853,9 @@ std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {
     logger::debug("called");
 
     std::vector<RE::TESObjectREFR*> questItems;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Quest));
         int ic = 0;
 
         for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
@@ -895,7 +891,6 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
     logger::trace("called");
 
     std::vector<RE::TESObjectREFR*> invQuestItems;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
 
     if (!gfuncs::IsFormValid(containerRef)) {
         logger::warn("containerRef doesn't exist");
@@ -909,8 +904,8 @@ std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunction
         return invQuestItems;
     }
 
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+    if (sv::dataHandler) {
+        RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Quest));
         RE::BSTArray<RE::TESForm*>::iterator itrEndType = akArray->end();
 
         //logger::debug("number of quests is {}", akArray->size());
@@ -964,13 +959,12 @@ std::vector<RE::TESObjectREFR*> GetAllObjectRefsInContainer(RE::StaticFunctionTa
 
 std::vector<RE::EnchantmentItem*> GetKnownEnchantments(RE::StaticFunctionTag*) {
     std::vector<RE::EnchantmentItem*> returnValues;
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (!dataHandler) {
-        logger::error("dataHandler* not found");
+    if (!sv::dataHandler) {
+        logger::error("sv::dataHandler* not found");
         return returnValues;
     }
 
-    RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
+    RE::BSTArray<RE::TESForm*>* enchantmentArray = &(sv::dataHandler->GetFormArray(RE::FormType::Enchantment));
 
     logger::debug("enchantmentArray size[{}]", enchantmentArray->size());
     int ic = 0;
@@ -1002,12 +996,11 @@ void AddKnownEnchantmentsToFormList(RE::StaticFunctionTag*, RE::BGSListForm* akL
         return;
     }
 
-    RE::TESDataHandler* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (!dataHandler) {
-        logger::error("dataHandler* not found");
+    if (!sv::dataHandler) {
+        logger::error("sv::dataHandler* not found");
         return;
     }
-    RE::BSTArray<RE::TESForm*>* enchantmentArray = &(dataHandler->GetFormArray(RE::FormType::Enchantment));
+    RE::BSTArray<RE::TESForm*>* enchantmentArray = &(sv::dataHandler->GetFormArray(RE::FormType::Enchantment));
 
     logger::debug("enchantmentArray size[{}]", enchantmentArray->size());
     int ic = 0;

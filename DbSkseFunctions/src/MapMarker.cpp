@@ -1,5 +1,6 @@
 #include "MapMarker.h"
 #include "GeneralFunctions.h"
+#include "SharedVariables.h"
 
 enum logLevel { trace, debug, info, warn, error, critical };
 enum debugLevel { notification, messageBox };
@@ -89,8 +90,7 @@ bool SetCanFastTravelToMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMark
 
 // Get all map markers valid for the current worldspace or interior cell grid
 RE::BSTArray<RE::ObjectRefHandle>* GetPlayerMapMarkers() {
-    auto* player = RE::PlayerCharacter::GetSingleton(); 
-    if (player) {
+    if (sv::player) {
         std::uint32_t offset = 0;
         if (REL::Module::IsAE())
             offset = 0x500;
@@ -98,7 +98,7 @@ RE::BSTArray<RE::ObjectRefHandle>* GetPlayerMapMarkers() {
             offset = 0x4F8;
         else
             offset = 0xAE8;
-        return reinterpret_cast<RE::BSTArray<RE::ObjectRefHandle>*>((uintptr_t)player + offset);
+        return reinterpret_cast<RE::BSTArray<RE::ObjectRefHandle>*>((uintptr_t)sv::player + offset);
     } 
     else {
         RE::BSTArray<RE::ObjectRefHandle> emptyArray;
@@ -578,8 +578,6 @@ bool SetCellOrWorldSpaceOriginForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* 
         return false;
     }
 
-    auto* player = RE::PlayerCharacter::GetSingleton();
-
     auto* originData = ref->extraList.GetByType<RE::ExtraStartingWorldOrCell>();
     if (!originData) {
         logger::warn("originData for ref({}) not found", gfuncs::GetFormDataString(ref));
@@ -588,12 +586,12 @@ bool SetCellOrWorldSpaceOriginForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* 
 
     originData->startingWorldOrCell = cellOrWorldSpace;
 
-    if (player) {
+    if (sv::player) {
         if (IsMapMarker(nullptr, ref)) {
             RE::TESWorldSpace* newOriginWorld = static_cast<RE::TESWorldSpace*>(cellOrWorldSpace);
 
             if (gfuncs::IsFormValid(newOriginWorld)) {
-                RE::TESWorldSpace* currentWorld = player->GetWorldspace();
+                RE::TESWorldSpace* currentWorld = sv::player->GetWorldspace();
                 if (gfuncs::IsFormValid(currentWorld)) {
                     if (newOriginWorld == currentWorld) {
                         auto* mapMarkers = GetPlayerMapMarkers();
