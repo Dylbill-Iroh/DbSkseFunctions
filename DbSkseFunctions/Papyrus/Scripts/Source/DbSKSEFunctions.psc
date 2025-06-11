@@ -1056,3 +1056,4 @@ bool function ArmorAddonHasRace(armorAddon akArmorAddon, race akRace) global nat
 function AddAdditionalRaceToArmorAddon(armorAddon akArmorAddon, race akRace) global native
 function RemoveAdditionalRaceFromArmorAddon(armorAddon akArmorAddon, race akRace) global native
 
+int function TestCv() global native

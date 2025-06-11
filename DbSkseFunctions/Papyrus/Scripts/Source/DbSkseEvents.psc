@@ -371,12 +371,12 @@ EndEvent
 Event OnTranslationCompleteGlobal(ObjectReference ref)
 EndEvent
 
-;Uses polling to detect change. Polling interval determined by the fEventPollingInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
+;Uses frame update function to detect change. Interval determined by the iFrameUpdateInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
 Event OnMusicTypeChangeGlobal(MusicType newMusicType, MusicType oldMusicType)
 EndEvent
 
 ;Be aware that weather changes when going in and out of the map menu.
-;Uses polling to detect change. Polling interval determined by the fEventPollingInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
+;Uses frame update function to detect change. Interval determined by the iFrameUpdateInterval setting in Data/SKSE/Plugins/DbSkseFunctions.ini
 Event OnWeatherChangeGlobal(weather newWeather, weather oldWeather)
 EndEvent
 
