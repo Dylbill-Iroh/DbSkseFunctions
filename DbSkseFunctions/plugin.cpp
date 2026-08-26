@@ -3112,23 +3112,14 @@ MusicChangeEventSink* musicChangeEventSink;
 
 struct WeatherChangeEventSink {
     bool AddEventSink() { 
-		// if (sv::currentRuntimeVersion < sv::maxSkySingletonVersion) {
-			if (!sinkAdded) {
-				sinkAdded = true;
-				logger::debug("");
-				return true;
-			}
-			else {
-				return false;
-			}
-		// }
-		// else {
-		// 	//using auto* sky = RE::Sky::GetSingleton(); causes ctd on latest skyrim version 1.7.99.0
-		// 	//this event requires the sky singleton, so disable it if skyrim version is >= 1.7.99
-		// 	logger::warn("skyrim runtime is [{}], aborting to prevent ctd from using the sky singleton on this version", 
-		// 		sv::currentRuntimeVersion.string());
-		// 	return false;
-		// }
+		if (!sinkAdded) {
+			sinkAdded = true;
+			logger::debug("");
+			return true;
+		}
+		else {
+			return false;
+		}
     }
 
     bool RemoveEventSink() {
@@ -6040,22 +6031,10 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             SetSettingsFromIniFile();
             CreateEventSinks();
             SaveSkillBooks();
-			// maxSkySingletonVersion = REL::Version()
 			
 			UpdateLoop::Start(); 
 			
             logger::trace("kDataLoaded: sent after the data handler has loaded all its forms");
-			
-			sv::currentRuntimeVersion = REL::Module::get().version();
-			  
-			// logger::info("DbSkse Functions Init - XMake build plugin version[{}] runtime version[{} Major({}) Minor({}) Patch({}) Build({})]", 
-			// 	GetThisVersion(nullptr),
-			// 	sv::currentRuntimeVersion.string(),
-			// 	(sv::currentRuntimeVersion.major()),
-			// 	(sv::currentRuntimeVersion.minor()),
-			// 	(sv::currentRuntimeVersion.patch()),
-			// 	(sv::currentRuntimeVersion.build())
-			// ); 
 			
             // RE::ConsoleLog::GetSingleton()->Print("DbSkse Functions Init - XMake build!");
 			

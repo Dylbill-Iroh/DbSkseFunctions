@@ -5,8 +5,6 @@
 
 namespace sv {
 	std::uint32_t record = 'SVr7';
-	REL::Version maxSkySingletonVersion = REL::Version(1, 7, 99, 0);
-	REL::Version currentRuntimeVersion = REL::Version();
 	
 	RE::ScriptEventSourceHolder* eventSourceholder = nullptr;
 	RE::TESDataHandler* dataHandler = nullptr;

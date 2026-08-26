@@ -2,8 +2,6 @@
 
 namespace sv {
 	extern std::uint32_t record;
-	extern REL::Version maxSkySingletonVersion;
-	extern REL::Version currentRuntimeVersion;
 	
 	//singletons
 	extern RE::ScriptEventSourceHolder* eventSourceholder;
