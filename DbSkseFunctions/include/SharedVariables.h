@@ -17,7 +17,6 @@ namespace sv {
 
 	extern RE::PlayerCharacter* player;
 
-	extern int frameUpdateCount;
 	extern int iFrameUpdateInterval;
 	extern std::string lastMenuOpened;
 	extern bool gamePaused;
