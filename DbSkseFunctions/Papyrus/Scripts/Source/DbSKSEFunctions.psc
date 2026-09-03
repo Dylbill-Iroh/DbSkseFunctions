@@ -1,9 +1,29 @@
 Scriptname DbSkseFunctions Hidden 
 ;The .dll file was compiled with CommonLib NG, so should work with Skyrim SE AE and VR
 
+;Get the installed version of this plugin .dll
 Float Function GetVersion() Global Native
 
+;Get the current skyrim version installed. 
+;[0] = Major, [1] = Minor, [2] = patch, [3] = build. E.G SE 1.5.97 returns: 
+;[0] = 1, [1] = 5, [2] = 97, [3] = 0
+int[] Function GetSkyrimVersion() Global Native
+
+;return the current skyrim version as a string. E.G "1.5.97.0"
+string Function GetSkyrimVersionString() Global Native
+
 bool function LoadMostRecentSaveGame() Global Native
+
+;get the script that called this function's name.  
+;eg return "MyScript" if "MyScript" calls this function.
+string function GetThisScriptName() Global Native 
+
+;get the function or event that called this function's name
+;eg return "MyFunction" if you have: 
+;Function MyFunction 
+;	string func = DbSkseFunctions.GetThisFunctionName() ;return "MyFunction"
+;EndFunction
+string function GetThisFunctionName() Global Native 
 
 ;get and set text from system clipboard, for copy / paste functionality
 String Function GetClipBoardText() Global Native
@@ -154,6 +174,8 @@ WorldSpace function GetCellWorldSpace(cell akCell) global native
 
 Location Function GetCellLocation(cell akCell) global native
 
+Location Function GetWorldSpaceLocation(WorldSpace akWorldSpace) global native
+
 bool Function IsCellPublic(cell akCell) global native
 
 Function SetCellPublic(cell akCell, bool bPublic) global native
@@ -226,6 +248,8 @@ bool function SetAliasQuestObjectFlag(alias akAlias, bool set) Global Native
 ;Does the akAlias have the quest obect flag checked?
 bool function IsAliasQuestObjectFlagSet(alias akAlias) Global Native
 
+;Base Projectile functions ===============================================================================================
+
 TextureSet Function GetProjectileBaseDecal(projectile akProjectile) Global Native
 Bool Function SetProjectileBaseDecal(projectile akProjectile, TextureSet decalTextureSet) Global Native
 
@@ -237,6 +261,8 @@ Bool Function SetProjectileBaseCollisionRadius(projectile akProjectile, Float ra
 
 Float Function GetProjectileBaseCollisionConeSpread(projectile akProjectile) Global Native
 Bool Function SetProjectileBaseCollisionConeSpread(projectile akProjectile, Float coneSpread) Global Native
+
+;ObjectReference Projectile functions ===============================================================================================
 
 ;get the type of the projectileRef
 ;projectile types are: 1 = Missile, 2 = Grenade, 3 = Beam, 4 = Flamethrower, 5 = Cone, 6 = Barrier, 7 = Arrow, 0 = unrecognized.
@@ -412,6 +438,8 @@ bool Function IsGamePaused() Global Native
 
 ;returns true if a menu is open, (other than the hud menu which is always open), regardless if the game is paused or not.
 bool Function IsInMenu() Global Native
+
+bool Function IsLocalMapMenuOpen() Global Native
 
 string Function GetLastMenuOpened() Global Native
 
@@ -749,10 +777,28 @@ function UpdateRefLight(ObjectReference ref) global native
 ;[0] = x, [1] = y, [2] = z
 float[] function GetRefLinearVelocity(ObjectReference ref) global native
 
+;Get teleport marker position and rotation for the doorRef. doorRef must have teleport data.
+;This is in the dooRef's linked door's cell. 
+;To get the linked teleport door objectReference use papyrus extender: PO3_SkseFunctions.GetDoorDestination(doorRef)
+;[0] = positionX, [1] = positionY, [2] = positionZ [3] = rotationX, [4] = rotationY, [5] = rotationZ
+float[] function GetDoorTeleportMarkerPositionAndRotation(ObjectReference doorRef) global native
+
 String Function GetKeywordString(keyword akKeyword) Global Native
 
-;doesn't carry over between saves. Use load game event for maintenace
+;doesn't carry over between saves. Use load game event for maintenace.
 function SetKeywordString(keyword akKeyword, string keywordString) Global Native
+
+;get all keywords that match the keywordString.
+;Keyword.GetKeyword only returns the first it finds. 
+;This gets all keywords that match in case there are duplicates in different mods.
+Keyword[] function GetKeywordsForString(string keywordString) Global Native
+
+;get all keywords on all forms in the passed in form[] array.
+Keyword[] function GetKeywordsOnArrayForms(form[] forms) Global Native
+
+;get all keywords on all forms in the passed in formlist.
+;if getNested is true, checks for nested formlists and gets all keywords for those forms as well.
+Keyword[] function GetKeywordsOnListForms(formlist akList, bool getNested) Global Native
 
 ;create new forms of these types at runtime.
 ;carefull with these. Using these functions are like using PlaceAtMe to create permanent references. 
@@ -940,6 +986,17 @@ bool function SetMapMarkerVisible(ObjectReference MapMarker, bool visible) Globa
 ;Get is the vanilla ObjectReference function mapMarker.CanFastTravelToMarker()
 bool function SetCanFastTravelToMarker(ObjectReference MapMarker, bool canTravelTo) Global Native
 
+;Is the ref currently visible on the local map? Only works if the local map menu is open.
+;Use the OnLocalMapOpenedGlobal event from DbSkseEvents. 
+bool function IsRefVisibleOnLocalMap(ObjectReference ref) Global Native
+
+;Get all refs currently visible on the local map. Only works if the local map menu is open.
+;Use the OnLocalMapOpenedGlobal event from DbSkseEvents. 
+ObjectReference[] function GetRefsVisibleOnTheLocalMap() Global Native
+
+;Find all load doors with teleport data near the centerRef within the radius.
+ObjectReference[] Function FindLoadDoorsNearRef(ObjectReference centerRef, float radius) global native
+
 Form function GetCellOrWorldSpaceOriginForRef(ObjectReference ref) Global Native
 
 ;This function is usefull if you have to move a map marker from one worldspace to another using MoveTo and have it display on the world map.
@@ -1095,4 +1152,4 @@ bool function ArmorAddonHasRace(armorAddon akArmorAddon, race akRace) global nat
 function AddAdditionalRaceToArmorAddon(armorAddon akArmorAddon, race akRace) global native
 function RemoveAdditionalRaceFromArmorAddon(armorAddon akArmorAddon, race akRace) global native
 
-int function TestCv() global native
+int function TestCv() global native 

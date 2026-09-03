@@ -44,6 +44,14 @@ namespace gfuncs {
 
     std::string GetFormDataString(RE::TESForm* akForm, std::string nullString = "null", std::string noNameString = "No Name");
 
+	std::string GetCallingScriptName(RE::BSScript::Internal::VirtualMachine* vm, RE::VMStackID stackID, RE::BSFixedString functionScriptName);
+	
+	std::string GetCallingScriptFunction(RE::BSScript::Internal::VirtualMachine* vm, RE::VMStackID stackID, RE::BSFixedString functionScriptName);
+	
+	RE::VMHandle GetCallingScriptHandle(RE::BSScript::Internal::VirtualMachine* vm, RE::VMStackID stackID, RE::BSFixedString functionScriptName);
+	
+	RE::TESForm* GetCallingScriptForm(RE::BSScript::Internal::VirtualMachine* vm, RE::VMStackID stackID, RE::BSFixedString functionScriptName);
+	
     RE::TESFile* GetFileForForm(RE::TESForm* akForm);
 
     RE::TESFile* GetFileForRawFormId(RE::FormID rawFormID, RE::TESFile* file);
@@ -63,6 +71,10 @@ namespace gfuncs {
     //return difference of time points in seconds as float
     float timePointDiffToFloat(std::chrono::system_clock::time_point end, std::chrono::system_clock::time_point start);
 
+	float RadiansToDegrees(float radians);
+	
+	RE::RefHandle GetRefHandle(RE::TESObjectREFR* ref);
+	
     RE::VMHandle GetHandle(RE::TESForm* akForm);
 
     RE::VMHandle GetHandle(RE::BGSBaseAlias* akAlias);
@@ -131,6 +143,11 @@ namespace gfuncs {
 
     bool StringContainsStringInVector(std::vector<std::string>& v, std::string value);
 
+    template <typename T>
+	bool VectorContains(const std::vector<T*>& vec, T* value) {
+		return std::find(vec.begin(), vec.end(), value) != vec.end();
+	}
+	
     int GetIndexInVector(std::vector<uint32_t>& v, uint32_t& element);
 
     int GetIndexInVector(std::vector<RE::TESForm*>& v, RE::TESForm* element);
@@ -167,6 +184,15 @@ namespace gfuncs {
 
     void RemoveDuplicates(std::vector<RE::TESForm*>& vec);
 
+	void RemoveDuplicates(std::vector<RE::BGSKeyword*>& vec);
+	
+	//add the elements of vecB to the end of vecA
+    template< typename T >
+	void PushbackVector(std::vector<T*>& vecA, std::vector<T*>& vecB){
+		vecA.reserve(vecA.size() + vecB.size()); 
+		vecA.insert(vecA.end(), vecB.begin(), vecB.end());
+	}
+	
     void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& formHandles);
 
     void SendEvents(std::vector<RE::VMHandle> handles, RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args);

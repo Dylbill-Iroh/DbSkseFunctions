@@ -2,6 +2,7 @@
 #include <format>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <stdarg.h>
+#include <vector>
 #include <winbase.h>
 #include <iostream>
 #include <stdio.h>
@@ -17,7 +18,10 @@
 #include <any>
 #include <xbyak/xbyak.h>
 #include "RE/B/BSIMusicType.h"
+#include "RE/I/InputEvent.h"
 #include "RE/T/TESObjectREFR.h"
+#include "RE/U/UserEvents.h"
+#include "REL/Module.h"
 #include "lib/commonlibsse-ng/include/REL/Version.h"
 #include "mini/ini.h"
 #include "logger.h"
@@ -195,7 +199,33 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/* RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID,  */RE::StaticFunctionTag* functionTag) {
-    return float(10.3);
+    return float(10.5); 
+}
+
+std::vector<int> GetSkyrimVersion(RE::StaticFunctionTag*){
+	auto& mod = REL::Module::get();
+	auto version = mod.version();
+	std::vector<int> v = {
+		version.major(),
+		version.minor(),
+		version.patch(),
+		version.build()
+	};
+	
+	return v;
+}
+
+std::string GetSkyrimVersionString(RE::StaticFunctionTag*){
+	auto& mod = REL::Module::get();
+	auto version = mod.version();
+	std::string s = (
+		 std::to_string(version.major()) + '.' + 
+		 std::to_string(version.minor()) + '.' +
+		 std::to_string(version.patch()) + '.' +
+		 std::to_string(version.build())
+	); 
+	
+	return s;
 }
 
 void AttachDbSksePersistentVariablesScript() {
@@ -332,8 +362,12 @@ enum EventsEnum {
     EventEnum_OnTranslationFailed,
     EventEnum_OnTranslationAlmostComplete,
     EventEnum_OnTranslationComplete,
+    EventEnum_OnMenuSystemOpened,
+    EventEnum_OnMenuSystemClosed,
+    EventEnum_OnLocalMapMenuOpened,
+    EventEnum_OnLocalMapMenuClosed,
     EventEnum_First = EventEnum_OnLoadGame,
-    EventEnum_Last = EventEnum_OnTranslationComplete
+    EventEnum_Last = EventEnum_OnLocalMapMenuClosed
 };
 
 struct EventData {
@@ -3035,7 +3069,7 @@ struct ObjectREFRTranslationEventSink : public RE::BSTEventSink<RE::TESObjectREF
                 auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)refr);
                 gfuncs::SendEvents(handles, sEvent, args);
             }
-        }
+        } 
         return RE::BSEventNotifyControl::kContinue;
     }
 };
@@ -3153,7 +3187,7 @@ struct WeatherChangeEventSink {
 
         logger::debug("oldWeather[{}] newWeather[{}]",
             gfuncs::GetFormDataString(oldWeather), gfuncs::GetFormDataString(newWeather));
-
+		
         std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnWeatherChange]->GetHandles(
             { newWeather, oldWeather });
 
@@ -3167,6 +3201,144 @@ struct WeatherChangeEventSink {
 };
 
 WeatherChangeEventSink* weatherChangeEventSink;
+
+//detect when the player interacts with the local map.
+namespace LocalMapMenuEvent {
+	bool localMapInputHookInstalled = false;
+	bool isLocalMapOpen = false;
+	
+	void HandleInputEvent(RE::MenuEventHandler* handler, RE::ButtonEvent* event){
+		if (event && event->IsDown()) {
+			bool open = IsLocalMapMenuOpen(nullptr);
+			if (open != isLocalMapOpen){
+				isLocalMapOpen = open;
+				logger::debug("local map opened = [{}]", isLocalMapOpen);
+			}
+		}
+	}
+	
+	struct LocalMapInputHookVr {
+		inline static constexpr auto VTABLE = RE::VTABLE_LocalMapMenu__InputHandler;
+
+		static bool thunk(RE::MenuEventHandler* handler, RE::ButtonEvent* event) {
+			const bool result = func(handler, event);
+			HandleInputEvent(handler, event);
+			return result;
+		}
+
+		static inline std::uint32_t idx = 0x8;
+		static inline REL::Relocation<decltype(thunk)> func;
+	}; 
+	
+	struct LocalMapInputHookSeAe {
+		inline static constexpr auto VTABLE = RE::VTABLE_LocalMapMenu__InputHandler;
+
+		static bool thunk(RE::MenuEventHandler* handler, RE::ButtonEvent* event) {
+			const bool result = func(handler, event);
+			logger::info("local map input event");
+			HandleInputEvent(handler, event);
+			return result;
+		}
+
+		static inline std::uint32_t idx = 0x5;
+		static inline REL::Relocation<decltype(thunk)> func;
+	}; 
+	
+	void Install() {
+		if (localMapInputHookInstalled) { 
+			return; 
+		}
+		
+		localMapInputHookInstalled = true;
+		
+		if (REL::Module::IsVR()){
+			stl::write_vfunc<0, LocalMapInputHookVr>();
+			logger::debug("installing local map input hook for VR");
+		}
+		else {
+			stl::write_vfunc<0, LocalMapInputHookSeAe>();
+			logger::debug("installing local map input hook for SE / AE");
+		}
+	}
+}
+
+struct LocalMenuOpenCloseEventSink {
+    bool AddEventSink() {
+        if (!sinkAdded) {
+            sinkAdded = true;
+            logger::debug("");
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    bool RemoveEventSink() {
+        if (sinkAdded) {
+            sinkAdded = false; 
+            logger::debug("");
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    bool IsSinkAdded() {
+        return sinkAdded;
+    }
+	
+    void HandleLocalMenuOpenCloseEvent(bool menuOpened) {
+        logger::debug("open[{}]", menuOpened);
+		
+		int eventIndex = menuOpened ? EventEnum_OnLocalMapMenuOpened : EventEnum_OnLocalMapMenuClosed;
+		
+		if (eventDataPtrs[eventIndex]->sinkAdded) {
+			std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
+
+			if (handles.size() > 0) {
+				auto* args = RE::MakeFunctionArguments();
+				gfuncs::SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
+			}
+		}
+    }
+
+	void CheckForMenuStateChange() {
+		if (!sv::ui){
+			logger::warn("sv::ui not found");
+			return;
+		} 
+		
+		bool open = localMenuOpen;
+	
+		if (open) { 
+			if (!sv::ui->IsMenuOpen(RE::MapMenu::MENU_NAME)) {
+				open = false;
+			} 
+			else if (!IsLocalMapMenuOpen(nullptr)){
+				open = false;
+			}
+		} 
+		else {
+			if (sv::ui->IsMenuOpen(RE::MapMenu::MENU_NAME)) {
+				if (IsLocalMapMenuOpen(nullptr)){
+					open = true;
+				}
+			} 
+		}
+		
+		if (open != localMenuOpen) {
+			localMenuOpen = open;
+			HandleLocalMenuOpenCloseEvent(open);
+		}
+	}
+	
+    bool sinkAdded = false;
+	bool localMenuOpen = false;
+};
+
+LocalMenuOpenCloseEventSink* localMenuOpenCloseEventSink;
 
 namespace ActiveEffectEvents {
     std::unordered_map<RE::ActiveEffect*, std::pair<std::chrono::system_clock::time_point, float>> activeEffectStartTimeMap;
@@ -3681,7 +3853,7 @@ public:
                     }
                 }
             }
-        }
+        } 
 
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -3722,11 +3894,14 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
 
     bool notifyCv = false;
 
+	int eventIndex = -1; 
+	
     if (opening) {
-        if (!sv::inMenuMode) { //opened menu
+        if (!sv::inMenuMode) { //opened menu 
             sv::inMenuMode = true;
             notifyCv = true;
             sv::lastTimeMenuWasOpened = (std::chrono::system_clock::now());
+			eventIndex = EventEnum_OnMenuSystemOpened;
             logger::trace("inMenuMode = true");
         } 
 
@@ -3793,6 +3968,7 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
             if (!IsInMenu(nullptr) && sv::inMenuMode) { //closed all menus
                 sv::inMenuMode = false;
                 notifyCv = true;
+				eventIndex = EventEnum_OnMenuSystemClosed;
 
                 //old way, now uses condition variable
                 /*auto now = std::chrono::system_clock::now();
@@ -3800,7 +3976,7 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
                 timers::UpdateNoMenuModeTimers(timePointDiff);
                 std::thread tUpdateNoMenuModeTimers(timers::UpdateNoMenuModeTimers, timePointDiff);
                 tUpdateNoMenuModeTimers.detach();*/
-
+				
                 FirstLoad();
                 logger::trace("inMenuMode = false");
             }
@@ -3820,7 +3996,19 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
     if (notifyCv) {
         std::lock_guard<std::mutex> lock(sv::updateMutex);
         sv::updateCv.notify_all();
-    }
+    } 
+	
+	//OnMenuSystemOpened or OnMenuSystemClosed 
+	if (eventIndex != -1){
+		if (eventDataPtrs[eventIndex]->sinkAdded){
+			std::vector<RE::VMHandle> handles = eventDataPtrs[eventIndex]->globalHandles;
+			gfuncs::RemoveDuplicates(handles);
+			if (handles.size() > 0) {
+				auto* args = RE::MakeFunctionArguments((std::string)sMenuName);
+				gfuncs::SendEvents(handles, eventDataPtrs[eventIndex]->sEvent, args);
+			}
+		}
+	}
 }
 
 struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
@@ -3828,8 +4016,6 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
 
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*/*source*/) {
         //this sink is for managing timers and GetCurrentMenuOpen function.
-        
-		
         if (!bMenuOpenCloseEventSinkEnabled) {
             if (sv::ui) {
                 sinkAdded = false;
@@ -4476,7 +4662,26 @@ void AddSink(int index) {
             logger::debug("EventEnum_OnTranslation{} sink added", eventName);
         }
         break;
-    }
+	
+	case EventEnum_OnMenuSystemOpened:
+    case EventEnum_OnMenuSystemClosed:
+		if (!eventDataPtrs[index]->isEmpty()){
+            eventDataPtrs[index]->sinkAdded = true;
+            logger::debug("{} sink added", eventName);
+		}
+		break;
+		
+	case EventEnum_OnLocalMapMenuOpened:
+    case EventEnum_OnLocalMapMenuClosed:
+		if (!eventDataPtrs[index]->isEmpty()){
+            eventDataPtrs[index]->sinkAdded = true;
+			if (!localMenuOpenCloseEventSink->sinkAdded){
+				localMenuOpenCloseEventSink->sinkAdded = true;
+				localMenuOpenCloseEventSink->localMenuOpen = IsLocalMapMenuOpen(nullptr);
+			}
+		}
+		break;
+    } 
 }
 
 void RemoveSink(int index) {
@@ -4986,6 +5191,26 @@ void RemoveSink(int index) {
             logger::debug("EventEnum_OnTranslation{} sink removed", eventName);
         }
         break;
+		
+	case EventEnum_OnMenuSystemOpened:
+    case EventEnum_OnMenuSystemClosed:
+		if (eventDataPtrs[index]->isEmpty()){
+            eventDataPtrs[index]->sinkAdded = false;
+            logger::debug("{} sink removed", eventName);
+		}
+		break;
+		
+	case EventEnum_OnLocalMapMenuOpened:
+    case EventEnum_OnLocalMapMenuClosed:
+		if (eventDataPtrs[index]->isEmpty()){
+            eventDataPtrs[index]->sinkAdded = false;
+			if (localMenuOpenCloseEventSink->sinkAdded) {
+				if (eventDataPtrs[EventEnum_OnLocalMapMenuOpened]->isEmpty() && eventDataPtrs[EventEnum_OnLocalMapMenuClosed]->isEmpty()){
+					localMenuOpenCloseEventSink->sinkAdded = false;
+				}
+			}
+		}
+		break;
     }
 }
 
@@ -5561,9 +5786,13 @@ void CreateEventSinks() {
         eventDataPtrs[EventEnum_OnTranslationFailed] = new EventData("OnTranslationFailedGlobal", EventEnum_OnTranslationFailed, 1, 'OTr0');
         eventDataPtrs[EventEnum_OnTranslationAlmostComplete] = new EventData("OnTranslationAlmostCompleteGlobal", EventEnum_OnTranslationAlmostComplete, 1, 'OTr1');
         eventDataPtrs[EventEnum_OnTranslationComplete] = new EventData("OnTranslationCompleteGlobal", EventEnum_OnTranslationComplete, 1, 'OTr2');
+        eventDataPtrs[EventEnum_OnMenuSystemOpened] = new EventData("OnMenuSystemOpenedGlobal", EventEnum_OnMenuSystemOpened, 0, 'OMs0');
+        eventDataPtrs[EventEnum_OnMenuSystemClosed] = new EventData("OnMenuSystemClosedGlobal", EventEnum_OnMenuSystemClosed, 0, 'OMs1');
+        eventDataPtrs[EventEnum_OnLocalMapMenuOpened] = new EventData("OnLocalMapMenuOpenedGlobal", EventEnum_OnLocalMapMenuOpened, 0, 'LMo0');
+        eventDataPtrs[EventEnum_OnLocalMapMenuClosed] = new EventData("OnLocalMapMenuClosedGlobal", EventEnum_OnLocalMapMenuClosed, 0, 'LMo1');
     }
-    
-    if (!combatEventSink) { combatEventSink = new CombatEventSink(); }
+	
+    if (!combatEventSink) { combatEventSink = new CombatEventSink(); } 
     if (!furnitureEventSink) { furnitureEventSink = new FurnitureEventSink(); }
     if (!activateEventSink) { activateEventSink = new ActivateEventSink(); }
     if (!hitEventSink) { hitEventSink = new HitEventSink(); }
@@ -5598,9 +5827,10 @@ void CreateEventSinks() {
     if (!packageEventSink) { packageEventSink = new PackageEventSink(); }
     if (!destructionStageChangedEventSink) { destructionStageChangedEventSink = new DestructionStageChangedEventSink(); }
     if (!objectREFRTranslationEventSink) { objectREFRTranslationEventSink = new ObjectREFRTranslationEventSink(); }
-
+    if (!localMenuOpenCloseEventSink) { localMenuOpenCloseEventSink = new LocalMenuOpenCloseEventSink(); }
+    
     if (!activateEventSink->sinkAdded && bActivateEventSinkEnabledByDefault) {
-        if (sv::eventSourceholder) {
+        if (sv::eventSourceholder) { 
             //always active to track lastPlayerActivatedRef
             activateEventSink->sinkAdded = true;
             sv::eventSourceholder->AddEventSink(activateEventSink);
@@ -5639,11 +5869,10 @@ void CreateEventSinks() {
     }
 
     UIEvents::Install();
-
+	// LocalMapMenuEvent::Install();
+	
     logger::trace("Event Sinks Created");
 }
-
-
 
 bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     // vm->RegisterFunction("MyNativeFunction", "DbSkseFunctions", MyNativeFunction);
@@ -5655,7 +5884,12 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
 
     //functions 
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
+    vm->RegisterFunction("GetSkyrimVersion", "DbSkseFunctions", GetSkyrimVersion);
+    vm->RegisterFunction("GetSkyrimVersionString", "DbSkseFunctions", GetSkyrimVersionString);
 
+    vm->RegisterFunction("GetThisScriptName", "DbSkseFunctions", GetThisScriptName);
+    vm->RegisterFunction("GetThisFunctionName", "DbSkseFunctions", GetThisFunctionName);
+	
     vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
     vm->RegisterFunction("SetClipBoardText", "DbSkseFunctions", SetClipBoardText);
     vm->RegisterFunction("IsWhiteSpace", "DbSkseFunctions", IsWhiteSpace);
@@ -5680,6 +5914,9 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
     vm->RegisterFunction("GetEnableChildrenRefs", "DbSkseFunctions", GetEnableChildrenRefs);
     vm->RegisterFunction("GetAllContainerRefsThatContainForm", "DbSkseFunctions", GetAllContainerRefsThatContainForm);
+    
+	vm->RegisterFunction("FindLoadDoorsNearRef", "DbSkseFunctions", FindLoadDoorsNearRef);
+	
     vm->RegisterFunction("GetAllFormsThatUseTextureSet", "DbSkseFunctions", GetAllFormsThatUseTextureSet);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
     vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
@@ -5736,30 +5973,13 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GameHoursToRealTimeSeconds", "DbSkseFunctions", GameHoursToRealTimeSeconds);
     vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused);
     vm->RegisterFunction("IsInMenu", "DbSkseFunctions", IsInMenu);
+    vm->RegisterFunction("IsLocalMapMenuOpen", "DbSkseFunctions", IsLocalMapMenuOpen);
     vm->RegisterFunction("GetLastMenuOpened", "DbSkseFunctions", GetLastMenuOpened);
     vm->RegisterFunction("RefreshItemMenu", "DbSkseFunctions", RefreshItemMenu);
     vm->RegisterFunction("IsItemMenuOpen", "DbSkseFunctions", IsItemMenuOpenNative);
-	
-    vm->RegisterFunction("GetHighlightedMapMarker", "DbSkseFunctions", GetHighlightedMapMarker);
-    vm->RegisterFunction("CreateMapMarker", "DbSkseFunctions", CreateMapMarker);
-    vm->RegisterFunction("DestroyMapMarker", "DbSkseFunctions", DestroyMapMarker);
-	
-    vm->RegisterFunction("SetMapMarkerName", "DbSkseFunctions", SetMapMarkerName);
-    vm->RegisterFunction("GetMapMarkerName", "DbSkseFunctions", GetMapMarkerName);
-    vm->RegisterFunction("SetMapMarkerIconType", "DbSkseFunctions", SetMapMarkerIconType);
-    vm->RegisterFunction("GetMapMarkerIconType", "DbSkseFunctions", GetMapMarkerIconType);
-    vm->RegisterFunction("IsMapMarker", "DbSkseFunctions", IsMapMarker);
-    vm->RegisterFunction("SetMapMarkerVisible", "DbSkseFunctions", SetMapMarkerVisible);
-    vm->RegisterFunction("SetCanFastTravelToMarker", "DbSkseFunctions", SetCanFastTravelToMarker);
-    vm->RegisterFunction("GetAllMapMarkerRefs", "DbSkseFunctions", GetAllMapMarkerRefs);
-    vm->RegisterFunction("GetCurrentMapMarkerRefs", "DbSkseFunctions", GetCurrentMapMarkerRefs);
-    vm->RegisterFunction("GetCellOrWorldSpaceOriginForRef", "DbSkseFunctions", GetCellOrWorldSpaceOriginForRef);
-    vm->RegisterFunction("SetCellOrWorldSpaceOriginForRef", "DbSkseFunctions", SetCellOrWorldSpaceOriginForRef);
     vm->RegisterFunction("LoadMostRecentSaveGame", "DbSkseFunctions", LoadMostRecentSaveGame);
-	
     vm->RegisterFunction("ExecuteConsoleCommand", "DbSkseFunctions", ExecuteConsoleCommand);
     vm->RegisterFunction("GetConsoleSelectedRef", "DbSkseFunctions", GetConsoleSelectedRef);
-	 
     vm->RegisterFunction("GetCurrentMusicType", "DbSkseFunctions", GetCurrentMusicType);
     vm->RegisterFunction("GetNumberOfTracksInMusicType", "DbSkseFunctions", GetNumberOfTracksInMusicType);
     vm->RegisterFunction("GetMusicTypeTrackIndex", "DbSkseFunctions", GetMusicTypeTrackIndex);
@@ -5863,10 +6083,18 @@ int GetActiveMagicEffectConditionStatus(RE::ActiveEffect* akEffect) {
 
 namespace UpdateLoop {
     inline std::atomic<bool> running{ false };
-
-    void PollGameState() {   // main thread -- RE:: is safe here
-		sv::frameUpdateCount = 0; 
-
+	inline std::atomic<int> numOfTasks = 0;
+	
+	struct TaskGuard {
+		~TaskGuard() { 
+			numOfTasks--;
+			// logger::debug("frame update"); 
+		}
+	};
+	
+    void PollGameState() { // main thread -- RE:: is safe here 
+		TaskGuard guard; // decrements on any exit path, including an exception
+		
 		bool notifyCv = false;
 		if (!noMenuModeTimersEmpty || !timersEmpty) {
 			std::lock_guard<std::mutex> lock(sv::updateMutex);
@@ -5909,6 +6137,10 @@ namespace UpdateLoop {
 		
 		if (weatherChangeEventSink->sinkAdded) {
 			UpdateWeather();
+		} 
+		
+		if (localMenuOpenCloseEventSink->sinkAdded){
+			localMenuOpenCloseEventSink->CheckForMenuStateChange();
 		}
     }
 
@@ -5916,8 +6148,8 @@ namespace UpdateLoop {
         if (running.exchange(true)) { 
 			return; 
 		}
-		
-        std::thread([] {  
+	
+        std::thread([] {
 			//iFrameUpdateInterval was used as frames to update in previous hook version, set from the ini file
 			//convert to approx fps in milliseconds
 			int millisecondsFps = 1000 / 60; 
@@ -5926,20 +6158,12 @@ namespace UpdateLoop {
 			
             while (running.load(std::memory_order_acquire)) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(tick));
-
-                bool notify = false;
-                if (!noMenuModeTimersEmpty || !timersEmpty) {
-                    std::lock_guard lock(sv::updateMutex);
-                    sv::currentTimePoint = std::chrono::system_clock::now();
-                    notify = true;
-                }
-                if (notify)                      { sv::updateCv.notify_all(); }
-                if (!conditions::isEmpty)        { conditions::updateCv.notify_all(); }
-                if (!rangeEvents::isEmpty)       { rangeEvents::updateCv.notify_all(); }
-
-                if (auto* task = SKSE::GetTaskInterface()) {
-                    task->AddTask([] { PollGameState(); });
-                }
+                if (numOfTasks == 0){
+					if (auto* task = SKSE::GetTaskInterface()) {
+						numOfTasks++;
+						task->AddTask([] { PollGameState(); });
+					}
+				}
             }
         }).detach();
     }
@@ -6027,7 +6251,8 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             papyrusInterface->Register(papyrusUtilEx::BindPapyrusFunctions);
             papyrusInterface->Register(conditions::BindPapyrusFunctions);
             papyrusInterface->Register(rangeEvents::BindPapyrusFunctions);
-
+            papyrusInterface->Register(MapMarker::BindPapyrusFunctions);
+			
             SetSettingsFromIniFile();
             CreateEventSinks();
             SaveSkillBooks();

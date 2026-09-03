@@ -23,6 +23,17 @@ namespace cell {
         }
 
         return nullptr;
+    } 
+	
+	RE::BGSLocation* GetWorldSpaceLocation(RE::StaticFunctionTag*, RE::TESWorldSpace* akWorldSpace) {
+        if (gfuncs::IsFormValid(akWorldSpace)) {
+            RE::BGSLocation* location = akWorldSpace->location;
+            if (gfuncs::IsFormValid(location)) {
+                return location;
+            }
+        }
+
+        return nullptr;
     }
 
     bool IsCellPublic(RE::StaticFunctionTag*, RE::TESObjectCELL* akCell) {
@@ -62,6 +73,7 @@ namespace cell {
     bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("GetCellWorldSpace", "DbSkseFunctions", GetCellWorldSpace);
         vm->RegisterFunction("GetCellLocation", "DbSkseFunctions", GetCellLocation);
+        vm->RegisterFunction("GetWorldSpaceLocation", "DbSkseFunctions", GetWorldSpaceLocation);
         vm->RegisterFunction("SetCellPublic", "DbSkseFunctions", SetCellPublic);
         vm->RegisterFunction("IsCellPublic", "DbSkseFunctions", IsCellPublic);
         vm->RegisterFunction("IsCellOffLimits", "DbSkseFunctions", IsCellOffLimits);

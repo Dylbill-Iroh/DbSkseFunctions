@@ -1,7 +1,14 @@
 #include "MapMarker.h"
 #include "GeneralFunctions.h"
+#include "RE/E/ExtraTeleport.h"
+#include "RE/L/LocalMapCamera.h"
+#include "RE/N/NiPoint3.h"
+#include "RE/T/TESFullName.h"
+#include "UIGfx.h"
 #include "RE/B/BSCoreTypes.h"
 #include "RE/B/BSPointerHandle.h"
+#include "RE/H/HUDNotifications.h"
+#include "RE/L/LocalMapMenu.h"
 #include "RE/M/MapMenuMarker.h"
 #include "RE/T/TESObjectREFR.h"
 #include "RE/T/TESWorldSpace.h"
@@ -9,9 +16,7 @@
 #include "SharedVariables.h"
 #include "Serialization.h"
 #include <cstddef>
-
-enum logLevel { trace, debug, info, warn, error, critical };
-enum debugLevel { notification, messageBox };
+#include <format>
 
 bool IsMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     logger::trace("function called");
@@ -61,6 +66,144 @@ bool SetMapMarkerVisible(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, b
     }
 
     return false;
+}
+
+bool IsRefVisibleOnLocalMap(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+	if (!gfuncs::IsFormValid(ref)) {
+		logger::warn("ref doesn't exist");
+		return false;
+	}
+	
+	if (!sv::ui) {
+		logger::warn("ui doesn't exist");
+		return false;
+	}
+	
+	RE::GPtr<RE::MapMenu> menu = sv::ui->GetMenu<RE::MapMenu>();
+	if (!menu) {
+		logger::warn("MapMenu not found");
+		return false;
+	}
+	
+	int size = 0;
+	RE::BSTArray<RE::MapMenuMarker>* markers = nullptr;
+	
+	if (REL::Module::IsVR()) {
+		auto* data = menu->GetVRRuntimeData();
+		if (data){
+			RE::LocalMapMenu* localMapMenu = &data->localMapMenu; 
+			if (localMapMenu){ 
+				auto* localData = &localMapMenu->GetRuntimeData();
+				if (localData){
+					markers = &localMapMenu->mapMarkers;  
+					if (markers){
+						size = markers->size();
+					}
+				}
+			} 
+		}
+	} 
+	else { 
+		auto* data = menu->GetRuntimeData();
+		if (data){
+			RE::LocalMapMenu* localMapMenu = &data->localMapMenu; 
+			if (localMapMenu){ 
+				auto* localData = &localMapMenu->GetRuntimeData();
+				if (localData){
+					markers = &localMapMenu->mapMarkers;  
+					if (markers){
+						size = markers->size();
+					}
+				}
+			} 
+		}
+	}
+
+	logger::debug("markers size[{}]", size);
+	
+	if (size == 0 || !markers) {
+		return false;   // local markers not found
+	}
+	
+	//int32_t
+	for (std::size_t i = 0; i < markers->size(); i++) {
+		RE::RefHandle handle = (*markers)[(int32_t)i].ref; 
+		
+		RE::TESObjectREFR* akRef = gfuncs::GetRefFromHandle(handle);
+		if (gfuncs::IsFormValid(akRef)){
+			if (akRef == ref){
+				return true;
+			}
+		}
+	}
+	
+	return false;
+} 
+
+std::vector<RE::TESObjectREFR*> GetRefsVisibleOnTheLocalMap(RE::StaticFunctionTag*) {
+	std::vector<RE::TESObjectREFR*> refs; 
+	
+	if (!sv::ui) {
+		logger::warn("ui doesn't exist");
+		return refs;
+	}
+	
+	RE::GPtr<RE::MapMenu> menu = sv::ui->GetMenu<RE::MapMenu>();
+	if (!menu) {
+		logger::warn("MapMenu not found");
+		return refs;
+	}
+	
+	int size = 0;
+	RE::BSTArray<RE::MapMenuMarker>* markers = nullptr;
+	
+	if (REL::Module::IsVR()) {
+		auto* data = menu->GetVRRuntimeData();
+		if (data){
+			RE::LocalMapMenu* localMapMenu = &data->localMapMenu; 
+			if (localMapMenu){ 
+				auto* localData = &localMapMenu->GetRuntimeData();
+				if (localData){
+					markers = &localMapMenu->mapMarkers;  
+					if (markers){
+						size = markers->size();
+					}
+				}
+			} 
+		}
+	} 
+	else { 
+		auto* data = menu->GetRuntimeData();
+		if (data){
+			RE::LocalMapMenu* localMapMenu = &data->localMapMenu; 
+			if (localMapMenu){ 
+				auto* localData = &localMapMenu->GetRuntimeData();
+				if (localData){
+					markers = &localMapMenu->mapMarkers;  
+					if (markers){
+						size = markers->size();
+					}
+				}
+			} 
+		}
+	}
+
+	logger::debug("markers size[{}]", size);
+	
+	if (size == 0 || !markers) {
+		return refs;   // local markers not found
+	}
+	
+	for (std::size_t i = 0; i < markers->size(); i++) {
+		RE::RefHandle handle = (*markers)[(int32_t)i].ref; 
+		
+		RE::TESObjectREFR* akRef = gfuncs::GetRefFromHandle(handle);
+		if (gfuncs::IsFormValid(akRef)){
+			refs.push_back(akRef);
+		}
+	}
+	
+	return refs;
 }
 
 bool SetCanFastTravelToMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, bool canTravelTo) {
@@ -526,19 +669,6 @@ std::vector<RE::TESObjectREFR*> GetCurrentMapMarkerRefs(RE::StaticFunctionTag*, 
     return allMapMarkers;
 }
 
-bool LoadMostRecentSaveGame(RE::StaticFunctionTag*) {
-    //auto manager = RE::UISaveLoadManager::ProcessEvent();
-    auto* manager = RE::BGSSaveLoadManager::GetSingleton();
-    if (!manager) {
-        logger::error("BGSSaveLoadManager not found");
-        return false;
-    }
-
-    logger::trace("loading most recent save");
-
-    return manager->LoadMostRecentSaveGame();
-}
-
 RE::TESForm* GetRefWorldSpaceOrCell(RE::TESObjectREFR* ref) {
     RE::TESForm* form = ref->GetWorldspace();
     if (!gfuncs::IsFormValid(form)) {
@@ -749,37 +879,102 @@ bool ShouldAddToPlayerMapMarkers(RE::TESObjectREFR* objRef) {
 	return false;
 }
 
+std::string GetNiPoint3String(RE::NiPoint3 point){
+	return std::format("x [{}] y[{}] z[{}]",
+		point.x,
+		point.y,
+		point.z
+	);
+}
+
 // get the map marker currently highlighted in the map menu, if any.
 // will return none if the "do you want to fast travel" menu is open.
 RE::TESObjectREFR* GetHighlightedMapMarker(RE::StaticFunctionTag*) {
-    if (!sv::ui || !sv::ui->IsMenuOpen(RE::MapMenu::MENU_NAME)) {
+    if (!sv::ui) {
         return nullptr;
     }
-
+	
+	if (!sv::ui->IsMenuOpen(RE::MapMenu::MENU_NAME) ){
+		return nullptr;
+	}
+	
     RE::GPtr<RE::MapMenu> menu = sv::ui->GetMenu<RE::MapMenu>();
     if (!menu) {
         return nullptr;
     }
-
+	
     std::int32_t index = -1;
+	int size = 0;
     RE::BSTArray<RE::MapMenuMarker>* markers = nullptr;
+	bool localMapOpen = false;
+	
+	if (REL::Module::IsVR()) {
+		auto* data = menu->GetVRRuntimeData();
+		if (data){
+			RE::LocalMapMenu* localMapMenu = &data->localMapMenu; 
+			if (localMapMenu){ 
+				auto* localData = &localMapMenu->GetRuntimeData();
+				if (localData){
+					if (localData->showingMap){
+						localMapOpen = true;
+						index = localData->selectedMarker;
+						markers = &localMapMenu->mapMarkers;  
+						if (markers){
+							size = markers->size();
+						}
+						// logger::info("localMapMenu showing. Index[{}] markers size[{}]", index, size);
+					}
+				}
+			} 
+		}
+		
+		if (!localMapOpen){
+			if (auto* rd = menu->GetRuntimeData2()) {
+				index = rd->selectedMarker;
+				markers = &rd->mapMarkers;
+				if (markers){
+					size = markers->size();
+				}
+				// logger::info("localMapMenu not showing. Index[{}] markers size[{}]", index, size);
+			}
+		}
+	} 
+	else { 
+		auto* data = menu->GetRuntimeData();
+		if (data){
+			RE::LocalMapMenu* localMapMenu = &data->localMapMenu; 
+			if (localMapMenu){ 
+				auto* localData = &localMapMenu->GetRuntimeData();
+				if (localData){
+					if (localData->showingMap){
+						localMapOpen = true;
+						index = localData->selectedMarker;
+						markers = &localMapMenu->mapMarkers;  
+						if (markers){
+							size = markers->size();
+						}
+						// logger::info("localMapMenu showing. Index[{}] markers size[{}]", index, size);
+					}
+				}
+			} 
+		}
+		
+		if (!localMapOpen){
+			if (auto* rd = menu->GetRuntimeData2()) {
+				index = rd->selectedMarker;
+				markers = &rd->mapMarkers;
+				if (markers){
+					size = markers->size();
+				}
+				// logger::info("localMapMenu not showing. Index[{}] markers size[{}]", index, size);
+			}
+		}
+	}
 
-    if (REL::Module::IsVR()) {
-        if (auto* rd = menu->GetVRRuntimeData2()) {
-            index = rd->selectedMarker;
-            markers = &rd->mapMarkers;
-        }
-    } else {
-        if (auto* rd = menu->GetRuntimeData2()) {
-            index = rd->selectedMarker;
-            markers = &rd->mapMarkers;
-        }
-    }
-
-    if (!markers || index < 0 || static_cast<std::uint32_t>(index) >= markers->size()) {
+    if (size == 0 || index < 0 || index >= size) {
         return nullptr;   // nothing selected
     }
-
+	
 	RE::RefHandle handle = (*markers)[index].ref; 
 	if (handle){
 		RE::TESObjectREFR* ref = gfuncs::GetRefFromHandle(handle);
@@ -790,6 +985,7 @@ RE::TESObjectREFR* GetHighlightedMapMarker(RE::StaticFunctionTag*) {
 	
 	return nullptr;
 }
+
 
 bool CreateMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef, std::string name, int iconType, bool visible, bool canTravelTo) {
     if (!gfuncs::IsFormValid(objRef)) {
@@ -915,3 +1111,25 @@ bool DestroyMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef) {
 	
     return objRef->extraList.RemoveByType(RE::ExtraDataType::kMapMarker); ;
 } 
+
+namespace MapMarker {
+	bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
+    	vm->RegisterFunction("IsMapMarker", "DbSkseFunctions", IsMapMarker);
+    	vm->RegisterFunction("IsRefVisibleOnLocalMap", "DbSkseFunctions", IsRefVisibleOnLocalMap);
+    	vm->RegisterFunction("GetRefsVisibleOnTheLocalMap", "DbSkseFunctions", GetRefsVisibleOnTheLocalMap);
+		vm->RegisterFunction("GetHighlightedMapMarker", "DbSkseFunctions", GetHighlightedMapMarker);
+		vm->RegisterFunction("CreateMapMarker", "DbSkseFunctions", CreateMapMarker);
+		vm->RegisterFunction("DestroyMapMarker", "DbSkseFunctions", DestroyMapMarker);
+		vm->RegisterFunction("SetMapMarkerName", "DbSkseFunctions", SetMapMarkerName);
+		vm->RegisterFunction("GetMapMarkerName", "DbSkseFunctions", GetMapMarkerName);
+		vm->RegisterFunction("SetMapMarkerIconType", "DbSkseFunctions", SetMapMarkerIconType);
+		vm->RegisterFunction("GetMapMarkerIconType", "DbSkseFunctions", GetMapMarkerIconType);
+		vm->RegisterFunction("SetMapMarkerVisible", "DbSkseFunctions", SetMapMarkerVisible);
+		vm->RegisterFunction("SetCanFastTravelToMarker", "DbSkseFunctions", SetCanFastTravelToMarker);
+		vm->RegisterFunction("GetAllMapMarkerRefs", "DbSkseFunctions", GetAllMapMarkerRefs);
+		vm->RegisterFunction("GetCurrentMapMarkerRefs", "DbSkseFunctions", GetCurrentMapMarkerRefs);
+		vm->RegisterFunction("GetCellOrWorldSpaceOriginForRef", "DbSkseFunctions", GetCellOrWorldSpaceOriginForRef);
+		vm->RegisterFunction("SetCellOrWorldSpaceOriginForRef", "DbSkseFunctions", SetCellOrWorldSpaceOriginForRef);
+        return true;
+    }
+}

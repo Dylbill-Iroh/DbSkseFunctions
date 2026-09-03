@@ -1,5 +1,6 @@
 #include "FormVectorGetters.h"
 #include "GeneralFunctions.h"
+#include "RE/T/TESObjectREFR.h"
 #include "Utility.h"
 #include "SharedVariables.h"
 
@@ -43,6 +44,39 @@ std::vector<RE::TESObjectREFR*> GetAllContainerRefsThatContainForm(RE::StaticFun
     }
     return v;
 }
+
+std::vector<RE::TESObjectREFR*> FindLoadDoorsNearRef(RE::StaticFunctionTag*, RE::TESObjectREFR* centerRef, float radius) {
+    std::vector<RE::TESObjectREFR*> refs;
+	logger::info("called");
+	
+	if (!gfuncs::IsFormValid(centerRef)) {
+        logger::warn("centerRef doesn't exist");
+        return refs;
+    }
+	
+	const auto centerRefPosition = centerRef->GetPosition();
+	
+    const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+    for (auto& [id, form] : *allForms) {
+		if (gfuncs::IsFormValid(form, false, false)) {
+			// auto* ref = form->AsReference();
+			RE::TESObjectREFR* ref = skyrim_cast<RE::TESObjectREFR*>(form);
+			if (gfuncs::IsFormValid(ref)) {
+				RE::ExtraTeleport* extraTeleport = ref->extraList.GetByType<RE::ExtraTeleport>();
+				if (extraTeleport) {
+					if (extraTeleport->teleportData) { 
+						if (centerRefPosition.GetDistance((ref->GetPosition())) <= radius){
+							refs.push_back(ref);
+						}
+					}
+				}
+			}
+		}
+    }
+
+    return refs;
+}
+
 
 std::vector<RE::TESForm*> GetAllFormsThatUseTextureSet(RE::StaticFunctionTag*, RE::BGSTextureSet* akTextureSet, std::string modName) {
     std::vector<RE::TESForm*> v;

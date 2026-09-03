@@ -1,5 +1,6 @@
 #include "ObjectReference.h"
 #include "GeneralFunctions.h"
+#include "SharedVariables.h"
 
 namespace objectRef {
     RE::TESObjectREFR* GetAshPileLinkedRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
@@ -115,6 +116,34 @@ namespace objectRef {
         return v;
     } 
 
+	std::vector<float> GetDoorTeleportMarkerPositionAndRotation(RE::StaticFunctionTag*, RE::TESObjectREFR* ref){
+		std::vector<float> v(6); 
+		if (!gfuncs::IsFormValid(ref)) {
+            logger::warn("error, ref doesn't exist");
+            return v;
+        } 
+		
+		RE::ExtraTeleport* extraTeleport = ref->extraList.GetByType<RE::ExtraTeleport>();
+		if (!extraTeleport){
+			logger::warn("extraTeleport for ref[{}] not found", gfuncs::GetFormNameAndId(ref));
+			return v;
+		} 
+		
+		if (!extraTeleport->teleportData){
+			logger::warn("extraTeleport->teleportData for ref[{}] not found", gfuncs::GetFormNameAndId(ref));
+			return v;
+		}
+		
+		v[0] = extraTeleport->teleportData->position.x;
+		v[1] = extraTeleport->teleportData->position.y;
+		v[2] = extraTeleport->teleportData->position.z;
+		v[3] = gfuncs::RadiansToDegrees(extraTeleport->teleportData->rotation.x);
+		v[4] = gfuncs::RadiansToDegrees(extraTeleport->teleportData->rotation.y);
+		v[5] = gfuncs::RadiansToDegrees(extraTeleport->teleportData->rotation.z);
+		
+		return v;
+	}
+	
     bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("GetAshPileLinkedRef", "DbSkseFunctions", GetAshPileLinkedRef);
         vm->RegisterFunction("GetClosestObjectFromRef", "DbSkseFunctions", GetClosestObjectFromRef);
@@ -122,6 +151,7 @@ namespace objectRef {
         vm->RegisterFunction("HasCollision", "DbSkseFunctions", HasCollision);
         vm->RegisterFunction("UpdateRefLight", "DbSkseFunctions", UpdateRefLight);
         vm->RegisterFunction("GetRefLinearVelocity", "DbSkseFunctions", GetRefLinearVelocity);
+        vm->RegisterFunction("GetDoorTeleportMarkerPositionAndRotation", "DbSkseFunctions", GetDoorTeleportMarkerPositionAndRotation);
         return true;
     }
 }

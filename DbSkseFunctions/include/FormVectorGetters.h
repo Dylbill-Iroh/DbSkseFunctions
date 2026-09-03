@@ -3,6 +3,8 @@ std::vector<RE::TESObjectREFR*> GetEnableChildrenRefs(RE::StaticFunctionTag*, RE
 
 std::vector<RE::TESObjectREFR*> GetAllContainerRefsThatContainForm(RE::StaticFunctionTag*, RE::TESForm* akForm);
 
+std::vector<RE::TESObjectREFR*> FindLoadDoorsNearRef(RE::StaticFunctionTag*, RE::TESObjectREFR* centerRef, float radius);
+
 std::vector<RE::TESForm*> GetAllFormsThatUseTextureSet(RE::StaticFunctionTag*, RE::BGSTextureSet* akTextureSet, std::string modName);
 
 std::vector<RE::TESQuest*> GetAllActiveQuests(RE::StaticFunctionTag*);

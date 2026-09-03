@@ -39,11 +39,15 @@ bool IsGamePaused(RE::StaticFunctionTag*);
 
 bool IsInMenu(RE::StaticFunctionTag*);
 
+bool IsLocalMapMenuOpen(RE::StaticFunctionTag*);
+
 std::string GetLastMenuOpened(RE::StaticFunctionTag*);
 
 void RefreshItemMenu(RE::StaticFunctionTag*);
 
 RE::TESForm* GetLoadMenuLocation();
+
+bool LoadMostRecentSaveGame(RE::StaticFunctionTag*);
 
 std::vector<std::string> GetFormDescriptionsAsStrings(std::vector<RE::TESForm*> akForms, int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer, int noneStringType, std::string nullFormString);
 
@@ -76,6 +80,10 @@ std::vector<std::string> GetLoadedLightModNamesAndDescriptionsAsStrings(int sort
 std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer);
 
 std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer);
+
+std::string GetThisScriptName(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag);
+
+std::string GetThisFunctionName(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag);
 
 std::string GetClipBoardText(RE::StaticFunctionTag*);
 

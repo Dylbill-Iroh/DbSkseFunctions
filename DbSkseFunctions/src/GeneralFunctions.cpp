@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <cmath>
 #include "GeneralFunctions.h"
+#include "RE/B/BGSKeyword.h"
+#include "RE/B/BSCoreTypes.h"
+#include "RE/T/TESForm.h"
+#include "RE/T/TESObjectREFR.h"
 #include "REL/Version.h"
 #include "editorID.hpp"
 #include "SharedVariables.h"
@@ -339,6 +343,127 @@ namespace gfuncs {
         return dataString;
     }
 
+	//Specifically for functions bound to papyrus, to find which script called a function. 
+	//functionScriptName is the papyrus script name that the papyrus native function is defined in. 
+	//EG GetThisScriptName function in Utility.cpp is bound to GetThisScriptName in DbSkseFunctions.psc. 
+	//So, you would use gfuncs::GetCallingScriptName(vm, stackID, "DbSkseFunctions"); and it would return "MyScript" 
+	//if DbSkseFunctions.GetThisScriptName() was called from MyScript.psc
+	std::string GetCallingScriptName(RE::BSScript::Internal::VirtualMachine* vm, RE::VMStackID stackID, RE::BSFixedString functionScriptName) {
+		if (!vm) { return ""; }
+
+		RE::BSSpinLockGuard lock(vm->runningStacksLock);
+
+		auto it = vm->allRunningStacks.find(stackID);
+		if (it == vm->allRunningStacks.end() || !it->second) { return ""; }
+
+		auto* frame = it->second->top;
+
+		// walk outward past our own frames to the first real caller
+		while (frame) {
+			if (frame->owningFunction) {
+				const auto owner = frame->owningFunction->GetObjectTypeName();
+				if (owner != functionScriptName && !owner.empty()) {
+					// RE::TESForm* callingForm = frame->self.Unpack<RE::TESForm*>(); //get the form that the calling script is attached to.
+					// logger::info("calling form[{}]", gfuncs::GetFormNameAndId(callingForm));
+					return std::string(owner);
+				}
+			}
+			frame = frame->previousFrame;
+		}
+		return "";
+	} 
+	
+	//Specifically for functions bound to papyrus, to find which papyrus function called a function. 
+	//functionScriptName is the papyrus script name that the papyrus native function is defined in. 
+	//EG GetThisFunctionName function in Utility.cpp is bound to GetThisFunctionName in DbSkseFunctions.psc. 
+	//So, you would use gfuncs::GetCallingScriptName(vm, stackID, "DbSkseFunctions"); and it would return "MyPapyrusFunction" 
+	//Papyrus: 
+	//Function MyPapyrusFunction
+	//	string func = DbSkseFunctions.GetThisFunctionName() ;returns "MyPapyrusFunction"
+	//EndFunction
+	std::string GetCallingScriptFunction(RE::BSScript::Internal::VirtualMachine* vm, RE::VMStackID stackID, RE::BSFixedString functionScriptName) {
+		if (!vm) { return ""; }
+
+		RE::BSSpinLockGuard lock(vm->runningStacksLock);
+
+		auto it = vm->allRunningStacks.find(stackID);
+		if (it == vm->allRunningStacks.end() || !it->second) { return ""; }
+
+		auto* frame = it->second->top;
+
+		// walk outward past our own frames to the first real caller
+		while (frame) {
+			if (frame->owningFunction) {
+				const auto owner = frame->owningFunction->GetObjectTypeName();
+				if (owner != functionScriptName && !owner.empty()) {
+					// RE::TESForm* callingForm = frame->self.Unpack<RE::TESForm*>(); //get the form that the calling script is attached to.
+					// logger::info("calling form[{}]", gfuncs::GetFormNameAndId(callingForm));
+					return std::string(frame->owningFunction->GetName());
+				}
+			}
+			frame = frame->previousFrame;
+		}
+		return "";
+	} 
+	
+	RE::VMHandle GetCallingScriptHandle(RE::BSScript::Internal::VirtualMachine* vm, RE::VMStackID stackID, RE::BSFixedString functionScriptName) {
+		RE::VMHandle handle = 0; 
+		
+		if (!vm) { return handle; }
+
+		RE::BSSpinLockGuard lock(vm->runningStacksLock);
+
+		auto it = vm->allRunningStacks.find(stackID);
+		if (it == vm->allRunningStacks.end() || !it->second) { return handle; }
+
+		auto* frame = it->second->top;
+
+		// walk outward past our own frames to the first real caller
+		while (frame) {
+			if (frame->owningFunction) {
+				const auto owner = frame->owningFunction->GetObjectTypeName();
+				if (owner != functionScriptName && !owner.empty()) {
+					auto obj = frame->self.GetObject(); 
+					if (obj){
+						return obj->GetHandle();
+					}
+				}
+			}
+			frame = frame->previousFrame;
+		}
+		
+		return handle;
+	} 
+	
+	RE::TESForm* GetCallingScriptForm(RE::BSScript::Internal::VirtualMachine* vm, RE::VMStackID stackID, RE::BSFixedString functionScriptName) {
+		RE::TESForm* akForm = nullptr; 
+		
+		if (!vm) { return akForm; }
+
+		RE::BSSpinLockGuard lock(vm->runningStacksLock);
+
+		auto it = vm->allRunningStacks.find(stackID);
+		if (it == vm->allRunningStacks.end() || !it->second) { return akForm; }
+
+		auto* frame = it->second->top;
+
+		// walk outward past our own frames to the first real caller
+		while (frame) {
+			if (frame->owningFunction) {
+				const auto owner = frame->owningFunction->GetObjectTypeName();
+				if (owner != functionScriptName && !owner.empty()) {
+					akForm = frame->self.Unpack<RE::TESForm*>();
+					if (!IsFormValid(akForm)){
+						akForm = nullptr;
+					}
+				}
+			}
+			frame = frame->previousFrame;
+		}
+		
+		return akForm;
+	} 
+	
     RE::TESFile* GetFileForForm(RE::TESForm* akForm) {
         if (!gfuncs::IsFormValid(akForm)) {
             return nullptr;
@@ -422,12 +547,28 @@ namespace gfuncs {
         }
     }
 
+	constexpr float PI = 3.14159265358979323846f;
+
+	float RadiansToDegrees(float radians) {
+		return radians * 180.0 / PI;
+	}
+	
     //return difference of time points in seconds as float
     float timePointDiffToFloat(std::chrono::system_clock::time_point end, std::chrono::system_clock::time_point start) {
         auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
         return float(milliseconds.count()) * 0.001;
     }
 
+	RE::RefHandle GetRefHandle(RE::TESObjectREFR* ref) {
+		if (!IsFormValid(ref)) {
+            logger::warn("ref doesn't exist or isn't valid");
+            return NULL;
+        } 
+		
+		RE::ObjectRefHandle handle = ref->GetHandle();     // BSPointerHandle<TESObjectREFR>
+		return handle.native_handle();        // the packed uint32
+	}
+	
     RE::VMHandle GetHandle(RE::TESForm* akForm) {
         if (!IsFormValid(akForm)) {
             logger::warn("akForm doesn't exist or isn't valid");
@@ -635,7 +776,7 @@ namespace gfuncs {
             return false;
         }
 
-        RE::VMHandle handle = GetHandle(ref);
+        RE::VMHandle handle = GetRefHandle(ref);
         return IsScriptAttachedToHandle(handle, sScriptName);
     }
 
@@ -1517,6 +1658,12 @@ namespace gfuncs {
         vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
     }
 
+	void RemoveDuplicates(std::vector<RE::BGSKeyword*>& vec)
+    {
+        std::sort(vec.begin(), vec.end());
+        vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
+    }
+	
     void CombineEventHandles(std::vector<RE::VMHandle>& handles, RE::TESForm* akForm, std::map<RE::TESForm*, std::vector<RE::VMHandle>>& formHandles) {
         if (formHandles.size() == 0) {
             return;

@@ -8,6 +8,24 @@ scriptname PapyrusUtilEx hidden
 ;so use the GetHandle functions each time before using the other functions in this script.
 ;See the PapyrusUtilEx_Example.psc script for examples of how to use these functions.
 
+;UPDATE!!! 
+;As of version 10.5, if you pass in an empty string for any akHandle or sScriptname parameters, it will automatically get the handle or scriptname for the calling script. 
+;Example 
+;/ 
+	scriptname MyScript extends Quest 
+	
+	MiscObject[] property miscObjects auto
+	
+	Event OnInit() 
+		;must init the array first 
+		miscObjects = new MiscObject[1] 
+		
+		;resize the miscObjects to 200 size. 
+		;No need to pass in the akHandle or sScriptName params as miscObjects are defined in this script.
+		PapyrusUtilEx.ResizeArray("", "", "miscObjects", 200)
+	EndEvent
+ /;
+
 string Function GetFormHandle(Form akForm) Global Native
 string Function GetAliasHandle(Alias akAlias) Global Native
 string Function GetActiveEffectHandle(ActiveMagicEffect akActiveEffect) Global Native

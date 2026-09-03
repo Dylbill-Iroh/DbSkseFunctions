@@ -1,6 +1,7 @@
 #include <Windows.h>
 #include "Utility.h"
 #include "GeneralFunctions.h"
+#include "RE/B/BSCoreTypes.h"
 #include "editorID.hpp"
 #include "SharedVariables.h"
 
@@ -8,13 +9,6 @@ enum logLevel { trace, debug, info, warn, error, critical };
 enum debugLevel { notification, messageBox };
 
 std::vector<std::string> magicDescriptionTags = { "<mag>", "<dur>", "<area>" };
-
-//std::recursive_mutex openedMenusMutex; 
-
-//tst::TSWrapper<bool> inMenuMode = false;
-//tst::TSWrapper<std::string> lastMenuOpened;
-//tst::TSWrapper <std::chrono::system_clock::time_point> lastTimeMenuWasOpened;
-//tst::TSWrapper <std::chrono::system_clock::time_point> lastTimeGameWasPaused;
 
 //forward dec
 std::string GetDescription(RE::TESForm* akForm, std::string newLineReplacer);
@@ -62,6 +56,49 @@ bool IsInMenu(RE::StaticFunctionTag*) {
     return false;
 }
 
+bool IsLocalMapMenuOpen(RE::StaticFunctionTag*) {
+    if (!sv::ui) {
+        return false;
+    }
+	
+	if (!sv::ui->IsMenuOpen(RE::MapMenu::MENU_NAME) ){
+		return false;
+	}
+	
+    RE::GPtr<RE::MapMenu> menu = sv::ui->GetMenu<RE::MapMenu>();
+    if (!menu) {
+        return false;
+    }
+	
+	RE::LocalMapMenu* localMapMenu = nullptr;
+	
+	if (REL::Module::IsVR()) {
+		auto* data = menu->GetVRRuntimeData();
+		if (data){
+			localMapMenu = &data->localMapMenu; 
+		}
+	} 
+	else { 
+		auto* data = menu->GetRuntimeData();
+		if (data){
+			localMapMenu = &data->localMapMenu; 
+		}
+	}
+	
+	if (!localMapMenu){
+		return false;
+	}
+	
+	auto* runtimeData = &localMapMenu->GetRuntimeData();
+	if (!runtimeData){
+		return false;
+	}
+	
+	// logger::trace("showingMap[{}]", runtimeData->showingMap);
+	
+	return runtimeData->showingMap;
+}
+
 std::string GetLastMenuOpened(RE::StaticFunctionTag*) {
     return sv::lastMenuOpened;
 }
@@ -101,6 +138,19 @@ RE::TESForm* GetLoadMenuLocation() {
     else {
         return nullptr;
     }
+}
+
+bool LoadMostRecentSaveGame(RE::StaticFunctionTag*) {
+    //auto manager = RE::UISaveLoadManager::ProcessEvent();
+    auto* manager = RE::BGSSaveLoadManager::GetSingleton();
+    if (!manager) {
+        logger::error("BGSSaveLoadManager not found");
+        return false;
+    }
+
+    logger::trace("loading most recent save");
+
+    return manager->LoadMostRecentSaveGame();
 }
 
 std::vector<std::string> GetFormDescriptionsAsStrings(std::vector<RE::TESForm*> akForms, int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer, int noneStringType, std::string nullFormString) {
@@ -1114,6 +1164,14 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
     return sfileDescriptions;
 }
 
+std::string GetThisScriptName(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
+	return gfuncs::GetCallingScriptName(vm, stackID, "DbSkseFunctions");
+} 
+
+std::string GetThisFunctionName(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {
+	return gfuncs::GetCallingScriptFunction(vm, stackID, "DbSkseFunctions");
+} 
+
 std::string GetClipBoardText(RE::StaticFunctionTag*) {
     // Try opening the clipboard
     if (!OpenClipboard(nullptr)) {
@@ -1375,17 +1433,19 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
 
 std::vector<RE::TESForm*> FormListToArray(RE::StaticFunctionTag*, RE::BGSListForm* akFormlist, int sortOption) {
     std::vector<RE::TESForm*> returnForms;
-    if (!akFormlist) {
+    if (!gfuncs::IsFormValid(akFormlist)) {
         logger::warn("akFormlist doesn't exist");
         return returnForms;
     }
 
-    akFormlist->ForEachForm([&](auto* form) {
-        //auto* form = &akForm;
-        returnForms.push_back(form);
+    akFormlist->ForEachForm([&](RE::TESForm* form) {
+		if (gfuncs::IsFormValid(form, false, false)){
+			returnForms.push_back(form);
+		}
+        
         return RE::BSContainer::ForEachResult::kContinue;
-        });
-
+	});
+	
     if (sortOption >= 1 && sortOption <= 6) {
         return SortFormArray(nullptr, returnForms, sortOption);
     }

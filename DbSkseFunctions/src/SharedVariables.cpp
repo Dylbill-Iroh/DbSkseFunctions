@@ -19,7 +19,6 @@ namespace sv {
 
 	RE::PlayerCharacter* player = nullptr;
 
-	int frameUpdateCount = 0;
 	int iFrameUpdateInterval = 1;
 	std::string lastMenuOpened = "";
 	bool gamePaused = false;

@@ -380,6 +380,22 @@ EndEvent
 Event OnWeatherChangeGlobal(weather newWeather, weather oldWeather)
 EndEvent
 
+;Event triggered when the first menu is opened when no menus are currently open. E.G going from no menus open to one menu open. 
+;Requires the bMenuOpenCloseEventSinkEnabled setting to be true in the ini file
+Event OnMenuSystemOpenedGlobal(string menu)
+EndEvent
+
+;Event triggered when the last menu is closed after at least one menu was opened. E.G no more menus are open.
+;Requires the bMenuOpenCloseEventSinkEnabled setting to be true in the ini file
+Event OnMenuSystemClosedGlobal(string menu)
+EndEvent
+
+Event OnLocalMapMenuOpenedGlobal()
+EndEvent
+
+Event OnLocalMapMenuClosedGlobal()
+EndEvent
+
 ;UI Item Menu Events ========================================================================================================================
 
 ;register the eventReceiver to receive the OnUiItemMenuEvent from UI item menus.
