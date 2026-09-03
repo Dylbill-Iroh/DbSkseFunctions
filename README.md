@@ -1,10 +1,9 @@
-# Skypal NG
-
-I rebuilt the Skypal .dll using CommonLib NG so that it should work on SE, AE or VR.
-[Get it on Nexus mods](https://www.nexusmods.com/skyrimspecialedition/mods/101817)
+# DbSkseFunctions
 
 # What does it do?
-Adds native functions to papyrus, mostly to get and filter object references.
+
+Adds native functions and events to papyrus. Official Nexus Mods Page: 
+[Dylbill's Papyrus Functions](https://www.nexusmods.com/skyrimspecialedition/mods/65410)
 
 # CommonLibSSE NG
 
