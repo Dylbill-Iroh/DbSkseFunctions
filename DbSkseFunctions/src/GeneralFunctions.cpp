@@ -65,7 +65,39 @@ namespace gfuncs {
     void ConvertToLowerCase(std::string& s) {
         transform(s.begin(), s.end(), s.begin(), ::tolower);
     }
+	
+	std::vector<std::string> StringSplit(std::string s, std::string delim) {
+		std::vector<std::string> v;
+		
+		// Handle empty delimiter edge case to prevent an infinite loop
+		if (delim.empty() || s.empty()) {
+			v.push_back(s);
+			return v;
+		}
 
+		size_t start = 0;
+		size_t end = s.find(delim);
+
+		while (end != std::string::npos) {
+			v.push_back(s.substr(start, end - start));
+			start = end + delim.length();
+			end = s.find(delim, start);
+		}
+
+		// Add the remaining part of the string after the last delimiter
+		v.push_back(s.substr(start));
+
+		return v;
+	}
+	
+	std::string RemoveWhiteSpace(std::string s){
+		s.erase(std::remove_if(s.begin(), s.end(), [](unsigned char c) {
+			return std::isspace(c);
+		}), s.end());
+		
+		return s;
+	}
+	
     std::string uint32_to_string(uint32_t value) {
         std::array<char, 4> r;
         r[0] = static_cast<char>((value >> 24) & 0xFF);
@@ -101,6 +133,48 @@ namespace gfuncs {
         return(std::all_of(s.begin(), s.end(), ::isdigit));
     }
 
+	int FindNextWhiteSpaceIndexInString(std::string s, int startIndex, bool searchBackwards = false){
+		int length = s.length();
+		if (!searchBackwards){
+			for (int i = startIndex; i < length; i++){
+				char c = s.at(i);
+				if (std::isspace(c)){
+					return i;
+				}
+			}
+		}	
+		else {
+			for (int i = length; i >= 0; i--){
+				char c = s.at(i);
+				if (std::isspace(c)){
+					return i;
+				}
+			}
+		}	
+		return -1;
+	}
+	
+	int FindNextNonWhiteSpaceIndexInString(std::string s, int startIndex, bool searchBackwards = false){
+		int length = s.length();
+		if (!searchBackwards){
+			for (int i = startIndex; i < length; i++){
+				char c = s.at(i);
+				if (!std::isspace(c)){
+					return i;
+				}
+			}
+		}	
+		else {
+			for (int i = length; i >= 0; i--){
+				char c = s.at(i);
+				if (!std::isspace(c)){
+					return i;
+				}
+			}
+		}	
+		return -1;
+	}
+	
     std::string IntToHex(int i) {
         std::stringstream stream;
         stream << "0x"

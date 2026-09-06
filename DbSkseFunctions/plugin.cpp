@@ -46,6 +46,7 @@
 #include "FormVectorGetters.h"
 #include "Furniture.h"
 #include "PapyrusUtilEx.h"
+#include "PapyrusUtilExArrayFunctions.h"
 #include "ProjectileFunctions.h"
 #include "RangeEvents.h"
 #include "BipedSlots.h"
@@ -199,7 +200,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/* RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID,  */RE::StaticFunctionTag* functionTag) {
-    return float(10.5); 
+    return float(10.6); 
 }
 
 std::vector<int> GetSkyrimVersion(RE::StaticFunctionTag*){
@@ -5886,14 +5887,13 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
     vm->RegisterFunction("GetSkyrimVersion", "DbSkseFunctions", GetSkyrimVersion);
     vm->RegisterFunction("GetSkyrimVersionString", "DbSkseFunctions", GetSkyrimVersionString);
-
     vm->RegisterFunction("GetThisScriptName", "DbSkseFunctions", GetThisScriptName);
     vm->RegisterFunction("GetThisFunctionName", "DbSkseFunctions", GetThisFunctionName);
-	
     vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
     vm->RegisterFunction("SetClipBoardText", "DbSkseFunctions", SetClipBoardText);
     vm->RegisterFunction("IsWhiteSpace", "DbSkseFunctions", IsWhiteSpace);
     vm->RegisterFunction("CountWhiteSpaces", "DbSkseFunctions", CountWhiteSpaces);
+    vm->RegisterFunction("RemoveWhiteSpaces", "DbSkseFunctions", RemoveWhiteSpaces);
     vm->RegisterFunction("ModHasFormType", "DbSkseFunctions", ModHasFormType);
     vm->RegisterFunction("GetFormDescription", "DbSkseFunctions", GetFormDescription);
     vm->RegisterFunction("GetFormDescriptions", "DbSkseFunctions", GetFormDescriptions);
@@ -5914,9 +5914,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
     vm->RegisterFunction("GetEnableChildrenRefs", "DbSkseFunctions", GetEnableChildrenRefs);
     vm->RegisterFunction("GetAllContainerRefsThatContainForm", "DbSkseFunctions", GetAllContainerRefsThatContainForm);
-    
 	vm->RegisterFunction("FindLoadDoorsNearRef", "DbSkseFunctions", FindLoadDoorsNearRef);
-	
     vm->RegisterFunction("GetAllFormsThatUseTextureSet", "DbSkseFunctions", GetAllFormsThatUseTextureSet);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
     vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
@@ -6256,12 +6254,33 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             SetSettingsFromIniFile();
             CreateEventSinks();
             SaveSkillBooks();
+			// int scriptsRegistered = 0;
+			
+			try {
+				int n = papyrusUtilExArrayFunctions::RegisterDbSkseArrayScripts();
+				logger::info("registered [{}] array scripts", n);
+			} catch (const std::exception& e) {
+				logger::error("RegisterDbSkseArrayScripts threw: {}", e.what());
+			}
 			
 			UpdateLoop::Start(); 
 			
-            logger::trace("kDataLoaded: sent after the data handler has loaded all its forms");
+            // logger::debug("kDataLoaded: sent after the data handler has loaded all its forms. DbSkseArray ScriptsRegistered");
 			
             // RE::ConsoleLog::GetSingleton()->Print("DbSkse Functions Init - XMake build!");
+			
+			logger::info("built SE[{}] AE[{}] VR[{}] | arrayConversions[{}] | running VR[{}] skyrim version[{}]",
+				static_cast<bool>(ENABLE_SKYRIM_SE),
+				static_cast<bool>(ENABLE_SKYRIM_AE),
+				static_cast<bool>(ENABLE_SKYRIM_VR),
+#ifdef DB_FULL_ARRAY_CONVERSIONS
+				true,
+#else
+				false,
+#endif
+				REL::Module::IsVR(),
+				REL::Module::get().version().string()
+			);
 			
 			// logger::info("built SE[{}] AE[{}] VR[{}] | running VR[{}] version[{}]",
 			// static_cast<bool>(ENABLE_SKYRIM_SE),

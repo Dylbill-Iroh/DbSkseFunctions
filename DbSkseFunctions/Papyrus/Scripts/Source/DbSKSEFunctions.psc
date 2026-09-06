@@ -32,6 +32,7 @@ Bool Function SetClipBoardText(String s) Global Native
 ;is the string c char whitespace? Uses c++ isspace function
 Bool Function IsWhiteSpace(String c) Global Native 
 int Function CountWhiteSpaces(String s) Global Native
+String Function RemoveWhiteSpaces(String s) Global Native
 
 ;does the mod have at least 1 form of formType?
 Bool Function ModHasFormType(String modName, int formType) Global Native
@@ -68,6 +69,8 @@ Function AddFormsToList(Form[] akForms, Formlist akList) Global Native
 ;if noneStringType is 2 and a description is empty, "", gets form ID instead of the description
 ;if akForm is none, returns nullFormString
 String Function GetFormDescription(form akForm, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ", int noneStringType = 0, string nullFormString = "Null") Global Native 
+
+bool Function SetFormDescription(Form akForm, string desc) global native
 
 ;get form descriptions for akForms.
 ;if maxCharacters is greater than 0, limits the number of characters for descriptions. 

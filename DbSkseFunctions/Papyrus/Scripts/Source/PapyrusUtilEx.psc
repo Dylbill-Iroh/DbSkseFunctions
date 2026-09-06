@@ -9,6 +9,9 @@ scriptname PapyrusUtilEx hidden
 ;See the PapyrusUtilEx_Example.psc script for examples of how to use these functions.
 
 ;UPDATE!!! 
+;as of version 10.6, you can use native array functions for any vanilla type. 
+;See the DbSkseArray_Keyword.psc in Data/Scripts/Source/DbSkseArrays for more info.
+
 ;As of version 10.5, if you pass in an empty string for any akHandle or sScriptname parameters, it will automatically get the handle or scriptname for the calling script. 
 ;Example 
 ;/ 
@@ -63,3 +66,4 @@ bool function CopyArray(string akHandle_A, string sScriptName_A, string sArrayPr
 ;Returns the number of instances of the element at the index that the array contains. 
 ;A value of -1 for the index (default) means the last element in the array.
 int Function CountInArray(string akHandle, string sScriptName, string sArrayPropertyName, int index = -1) Global Native
+

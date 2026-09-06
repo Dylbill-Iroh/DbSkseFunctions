@@ -1,34 +1,4 @@
---[[ 
--- Old version
--- include subprojects
-includes("lib/commonlibsse-ng")
 
--- set project constants
-set_project("commonlibsse-ng-template")
-set_version("1.0.0")
-set_license("GPL-3.0")
-set_languages("c++23")
-set_warnings("allextra")
-
--- add common rules
-add_rules("mode.debug", "mode.releasedbg")
-add_rules("plugin.vsxmake.autoupdate")
-
--- define targets
-target("commonlibsse-ng-template")
-    add_rules("commonlibsse-ng.plugin", {
-        name = "commonlibsse-ng-template",
-        author = "libxse",
-        description = "SKSE64 plugin template using CommonLibSSE-NG"
-    })
-
-    -- add src files
-    add_files("src/**.cpp")
-    add_headerfiles("src/**.h")
-    add_includedirs("src")
-    set_pcxxheader("src/pch.h")
- ]]
- 
  -- Add CTRE and Xbyak package dependencies from xmake-repo
 add_requires("ctre")
 add_requires("xbyak")
@@ -46,6 +16,31 @@ set_warnings("all")
 -- add common rules
 add_rules("mode.debug", "mode.releasedbg")
 add_rules("plugin.vsxmake.autoupdate")
+
+-- =====================================================================================================================
+-- How to configure full_array_conversions
+-- xmake f --full_array_conversions=y    # release
+-- xmake -r
+
+-- xmake f --full_array_conversions=n    # daily development
+-- xmake -r
+
+-- with releasedbg
+-- xmake f -m releasedbg --full_array_conversions=y
+-- xmake -r
+
+-- xmake f -m releasedbg --full_array_conversions=n
+-- xmake -r
+
+-- check options
+-- xmake f --menu
+
+option("full_array_conversions", function()
+    set_default(true)
+    set_description("Generate the full N x N ArrayAs conversion matrix. Slow to compile; enable for release builds.")
+    add_defines("DB_FULL_ARRAY_CONVERSIONS=1")
+end)
+-- =====================================================================================================================
 
 -- define targets
 target("DbSkseFunctions")
@@ -82,6 +77,10 @@ target("DbSkseFunctions")
     -- 3. Precompiled Header updated to root path location
     set_pcxxheader("PCH.h")
 
+	add_cxxflags("/bigobj", {force = true})
+	
+	add_options("full_array_conversions");
+	
     -- Custom deployment step: Copies a config folder to your output directory if it exists
     after_build(function (target)
         import("core.base.option")

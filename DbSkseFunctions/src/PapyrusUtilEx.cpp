@@ -1,7 +1,10 @@
 #include "PapyrusUtilEx.h"
 #include "GeneralFunctions.h"
+#include "RE/B/BGSKeyword.h"
 #include "RE/B/BSCoreTypes.h"
+#include "RE/F/FormTypes.h"
 #include "RE/O/ObjectTypeInfo.h"
+#include "RE/T/TypeTraits.h"
 #include "SharedVariables.h"
 
 namespace papyrusUtilEx { 
@@ -203,6 +206,12 @@ namespace papyrusUtilEx {
             return false;
         }
 
+		logger::info("Array raw type[{:X}] [0][{:}] size[{}]",
+			static_cast<std::size_t>(arrayData.arrayPtr->type_info().GetRawType()),
+			static_cast<std::size_t>((*arrayData.arrayPtr)[0].GetType().GetRawType()),
+			arrayData.arrayPtr->size()
+		);
+		
 		RE::BSScript::TypeInfo type = DeriveElementType(arrayData.arrayPtr);
 		if (type.GetUnmangledRawType() == RE::BSScript::TypeInfo::RawType::kNone) {
 			logger::error("couldn't determine element type for [{}] on script[{}]-- array is untyped and all elements are None, aborting.",
@@ -253,9 +262,17 @@ namespace papyrusUtilEx {
             }
         }
 
+		for (std::uint32_t j = 0; j < newArray->size() && j < 3; ++j) {
+			auto& v = (*newArray)[j];
+			logger::info("[PATCH] elem[{}] rawType[{:X}] isNone[{}] isObject[{}]",
+				j,
+				static_cast<std::size_t>(v.GetType().GetRawType()),
+				v.IsNoneObject(), v.IsObject());
+		}
+		
         arrayData.arrayProperty->SetNone();
         arrayData.arrayProperty->SetArray(newArray);
-
+		
         logger::trace("scriptName[{}] array[{}] type[{}] on handle[{}] resized from[{}] to[{}]. Expected size[{}]",
             bsScriptName, bsArrayPropertyName, className, akHandle, oldSize, newArray->size(), size);
 
@@ -1085,7 +1102,7 @@ namespace papyrusUtilEx {
 
         return (newArray_A->size() == newSizeA && newArray_B->size() == newSizeB);
     }
-
+	
     bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("GetFormHandle", "PapyrusUtilEx", GetFormHandle);
         vm->RegisterFunction("GetAliasHandle", "PapyrusUtilEx", GetAliasHandle);

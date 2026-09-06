@@ -6,12 +6,15 @@
 #include "SharedVariables.h"
 
 namespace conditions {
+	enum class ParamType { kRaw, kBool, kInt, kFloat, kString, kForm };
+	std::unordered_map<void*, ParamType> createdConditionParams; 
+	
     std::unordered_map<std::string, RE::TESCondition*> conditionsMap;
     std::mutex mutex;
     std::condition_variable updateCv;
     bool isEmpty = true;
 
-    std::list<void*> createdConditionParams;
+    // std::list<void*> createdConditionParams;
 
     std::string ConditionComparisonToString(int comparison) {
         switch (comparison) {
@@ -356,15 +359,37 @@ namespace conditions {
         return count;
     }
 
+	// enum class ParamType { kRaw, kBool, kInt, kFloat, kString, kForm };
+	
     void DestroyConditionParameter(RE::TESConditionItem* item, int paramIndex) {
         mutex.lock();
-        auto it = std::find(createdConditionParams.begin(), createdConditionParams.end(), item->data.functionData.params[paramIndex]);
-
-        if (it != createdConditionParams.end()) {
-            //param is an RE::BSFixedString, bool, int or float created with new(), delete it to avoid memory leaks.
-            delete item->data.functionData.params[paramIndex];
-            createdConditionParams.erase(it);
-        }
+		
+		void* p = item->data.functionData.params[paramIndex];
+		auto it = createdConditionParams.find(p);
+		if (it != createdConditionParams.end()){
+			auto type = it->second;
+			createdConditionParams.erase(it);
+			switch (type){
+				case ParamType::kRaw:
+					// do nothing
+					break;
+				case ParamType::kBool:
+					delete static_cast<bool*>(p);
+					break;
+				case ParamType::kInt:
+					delete static_cast<int*>(p);
+					break;
+				case ParamType::kFloat:
+					delete static_cast<float*>(p);
+					break;
+				case ParamType::kString:
+					delete static_cast<RE::BSFixedString*>(p);
+					break;
+				case ParamType::kForm:
+					//do nothing
+					break;
+			}
+		}
         item->data.functionData.params[paramIndex] = nullptr;
         mutex.unlock();
     }
@@ -387,7 +412,6 @@ namespace conditions {
                 mutex.unlock();
                 DestroyConditionParameter(it->second->head, 0);
                 DestroyConditionParameter(it->second->head, 1);
-                DestroyConditionParameter(it->second->head, 2);
                 mutex.lock();
 
                 delete it->second->head;
@@ -512,7 +536,7 @@ namespace conditions {
         return true;
     }
 
-    bool SetConditionParameter(std::string conditionId, void* param, int paramIndex, bool createdParam = true) {
+    bool SetConditionParameter(std::string conditionId, void* param, int paramIndex, bool createdParam, ParamType type) {
         mutex.lock();
 
         auto it = conditionsMap.find(conditionId);
@@ -523,7 +547,7 @@ namespace conditions {
             return false;
         }
 
-        if (paramIndex < 0 || paramIndex > 2) {
+        if (paramIndex < 0 || paramIndex > 1) {
             logger::warn("conditionId[{}] paramIndex[{}] not valid. Must be between 0 and 2", conditionId, paramIndex);
             mutex.unlock();
             return false;
@@ -549,7 +573,9 @@ namespace conditions {
         head->data.functionData.params[paramIndex] = param;
         
         if (createdParam) {
-            createdConditionParams.push_back(param);
+			if (type != ParamType::kRaw){
+				createdConditionParams[param] = type;
+			}
         }
 
         mutex.unlock();
@@ -562,34 +588,44 @@ namespace conditions {
             type = param->GetFormType();
         } 
         logger::trace("conditionId[{}] param[{}] paramIndex[{}] type[{}]", conditionId, gfuncs::GetFormName(param), paramIndex, type);
-        bool result = SetConditionParameter(conditionId, param, paramIndex, false);
+        bool result = SetConditionParameter(conditionId, param, paramIndex, false, ParamType::kForm);
         return result;
     }
 
     bool SetConditionParameterAlias(RE::StaticFunctionTag*, std::string conditionId, RE::BGSBaseAlias* param, int paramIndex) {
-        logger::trace("conditionId[{}] param[{}] paramIndex[{}]", conditionId, param->aliasName, paramIndex);
-        bool result = SetConditionParameter(conditionId, param, paramIndex, false);
+        logger::trace("conditionId[{}] param[{}] paramIndex[{}]", conditionId, param? param->aliasName : "null", paramIndex);
+        bool result = SetConditionParameter(conditionId, param, paramIndex, false, ParamType::kForm);
         return result;
     }
 
     bool SetConditionParameterBool(RE::StaticFunctionTag*, std::string conditionId, bool param, int paramIndex) {
         logger::trace("conditionId[{}] param[{}] paramIndex[{}]", conditionId, param, paramIndex);
         bool* paramPtr = new bool(param);
-        bool result = SetConditionParameter(conditionId, paramPtr, paramIndex);
+        bool result = SetConditionParameter(conditionId, paramPtr, paramIndex, true, ParamType::kBool);
         return result;
     }
 
     bool SetConditionParameterInt(RE::StaticFunctionTag*, std::string conditionId, int param, int paramIndex) {
         logger::trace("conditionId[{}] param[{}] paramIndex[{}]", conditionId, param, paramIndex);
         auto* paramPtrint = new int(param);
-        bool result = SetConditionParameter(conditionId, paramPtrint, paramIndex);
+        bool result = SetConditionParameter(conditionId, paramPtrint, paramIndex, true, ParamType::kInt);
         return result;
     }
 
+	// Many condition functions take small enums/indices stored directly in the
+	// pointer field rather than as a pointer to a value. GetIsSex, GetItemCount's
+	// count, actor value indices, etc. Compare against a vanilla condition's raw
+	// params to tell which form a given function expects.
+	bool SetConditionParameterRaw(RE::StaticFunctionTag*, std::string conditionId, int param, int paramIndex) {
+		logger::trace("conditionId[{}] raw param[{}] paramIndex[{}]", conditionId, param, paramIndex);
+		void* packed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(static_cast<std::uint32_t>(param)));
+		return SetConditionParameter(conditionId, packed, paramIndex, false, ParamType::kRaw);   // not heap-allocated
+	}
+	
     bool SetConditionParameterFloat(RE::StaticFunctionTag*, std::string conditionId, float param, int paramIndex) {
         logger::trace("conditionId[{}] param[{}] paramIndex[{}]", conditionId, param, paramIndex);
         float* paramPtr = new float(param);
-        bool result = SetConditionParameter(conditionId, paramPtr, paramIndex);
+        bool result = SetConditionParameter(conditionId, paramPtr, paramIndex, true, ParamType::kFloat);
         return result;
     }
 
@@ -597,7 +633,7 @@ namespace conditions {
         logger::trace("conditionId[{}] param[{}] paramIndex[{}]", conditionId, param, paramIndex);
         //must use new fixed string or it causes ctd when using EvaluateCondition
         RE::BSFixedString* paramPtr = new RE::BSFixedString(param);
-        bool result = SetConditionParameter(conditionId, paramPtr, paramIndex);
+        bool result = SetConditionParameter(conditionId, paramPtr, paramIndex, true, ParamType::kString);
         return result;
     }
     
@@ -643,6 +679,7 @@ namespace conditions {
         vm->RegisterFunction("SetConditionParameterAlias", "DbConditionFunctions", SetConditionParameterAlias);
         vm->RegisterFunction("SetConditionParameterBool", "DbConditionFunctions", SetConditionParameterBool);
         vm->RegisterFunction("SetConditionParameterInt", "DbConditionFunctions", SetConditionParameterInt);
+        vm->RegisterFunction("SetConditionParameterRaw", "DbConditionFunctions", SetConditionParameterRaw);
         vm->RegisterFunction("SetConditionParameterFloat", "DbConditionFunctions", SetConditionParameterFloat);
         vm->RegisterFunction("SetConditionParameterString", "DbConditionFunctions", SetConditionParameterString);
         vm->RegisterFunction("SetConditionComparison", "DbConditionFunctions", SetConditionComparison);

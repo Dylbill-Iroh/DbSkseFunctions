@@ -93,6 +93,8 @@ bool IsWhiteSpace(RE::StaticFunctionTag*, std::string s);
 
 int CountWhiteSpaces(RE::StaticFunctionTag*, std::string s);
 
+std::string RemoveWhiteSpaces(RE::StaticFunctionTag*, std::string s);
+
 bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType);
 
 std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm * akForm, std::string nullFormString);
@@ -114,6 +116,8 @@ std::string GetMagicItemDescription(RE::MagicItem * magicItem);
 std::string GetDescription(RE::TESForm * akForm, std::string newLineReplacer);
 
 std::string GetFormDescription(RE::StaticFunctionTag*, RE::TESForm * akForm, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer, int noneStringType, std::string nullFormString);
+
+bool SetFormDescription(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string desc);
 
 std::vector<RE::BSFixedString> GetFormDescriptions(RE::StaticFunctionTag*, std::vector<RE::TESForm*> akForms, int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer, int noneStringType, std::string nullFormString);
 

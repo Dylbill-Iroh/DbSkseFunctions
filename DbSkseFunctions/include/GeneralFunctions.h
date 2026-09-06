@@ -7,6 +7,10 @@ namespace gfuncs {
 
     void ConvertToLowerCase(std::string& s);
 
+	std::vector<std::string> StringSplit(std::string s, std::string delim);
+	
+	std::string RemoveWhiteSpace(std::string s);
+	
     std::string uint32_to_string(uint32_t value);
 
     int GetRandomInt(int min, int max);

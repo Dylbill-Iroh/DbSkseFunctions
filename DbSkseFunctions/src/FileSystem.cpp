@@ -1,20 +1,59 @@
+#include <cctype>
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <filesystem>
 #include "FileSystem.h"
+#include "GeneralFunctions.h"
 
 namespace fs {
-    std::vector<std::filesystem::path> GetAllFilesInDirectory(const std::filesystem::path& dir_path) {
-        std::vector<std::filesystem::path> files;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(dir_path)) {
-            if (std::filesystem::is_regular_file(entry)) {
-                files.push_back(entry.path());
-            }
-        }
-        return files;
-    }
-    
+	std::vector<std::filesystem::path> GetAllFilesInDirectory(const std::filesystem::path& dir_path, std::string extension) {
+		std::vector<std::filesystem::path> files;
+		gfuncs::ConvertToLowerCase(extension);
+
+		std::error_code ec;
+		if (!std::filesystem::exists(dir_path, ec) || !std::filesystem::is_directory(dir_path, ec)) {
+			logger::info("directory [{}] not found", dir_path.generic_string());
+			return files;
+		}
+
+		if (extension.empty() || extension == ".") { 
+			// the non-throwing overload -- ec is set instead of an exception being raised
+			for (std::filesystem::recursive_directory_iterator it(dir_path, ec), end; it != end; it.increment(ec)) {
+				if (ec) { 
+					logger::warn("iteration error: {}", ec.message());
+					break; 
+				}
+				
+				const auto& path = it->path();
+				if (path.has_extension()) { 
+					std::string ext = path.extension().string();
+					gfuncs::ConvertToLowerCase(ext);
+					files.push_back(path); 
+				}
+			}
+		}
+		else {
+			// the non-throwing overload -- ec is set instead of an exception being raised
+			for (std::filesystem::recursive_directory_iterator it(dir_path, ec), end; it != end; it.increment(ec)) {
+				if (ec) { 
+					logger::warn("iteration error: {}", ec.message());
+					break; 
+				}
+				
+				const auto& path = it->path();
+				if (path.has_extension()) { 
+					std::string ext = path.extension().string();
+					gfuncs::ConvertToLowerCase(ext);
+					if (ext == extension) { 
+						files.push_back(path); 
+					}
+				}
+			}
+		}
+		return files;
+	}
+	
     std::string GetFileContents(const std::filesystem::path& filePath) {
         if (!std::filesystem::exists(filePath)) {
 

@@ -180,7 +180,7 @@ namespace magic {
         if (!gfuncs::IsFormValid(akMagicEffect)) {
             return false;
         }
-
+		
         RE::MagicTarget* magicTarget = ref->GetMagicTarget();
 
         if (magicTarget) {

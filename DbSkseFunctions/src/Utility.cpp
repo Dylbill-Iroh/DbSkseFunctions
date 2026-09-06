@@ -1242,6 +1242,10 @@ int CountWhiteSpaces(RE::StaticFunctionTag*, std::string s) {
     return spaces;
 }
 
+std::string RemoveWhiteSpaces(RE::StaticFunctionTag*, std::string s){
+	return gfuncs::RemoveWhiteSpace(s);
+}
+
 bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType) {
     logger::debug("modName[{}] formType[{}]", modName, formType);
 
@@ -1397,7 +1401,7 @@ std::vector<RE::TESForm*> SortFormArray(RE::StaticFunctionTag*, std::vector<RE::
 
         for (int i = 0; i < akForms.size(); i++) {
             auto* akForm = akForms[i];
-            int formID = akForm->GetFormID();
+			int formID = gfuncs::IsFormValid(akForm, false, false) ? akForm->GetFormID() : 0;
             formIds.push_back(formID);
             auto it = formIdsMap.find(formID);
             if (it == formIdsMap.end()) {
