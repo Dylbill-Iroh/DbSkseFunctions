@@ -118,6 +118,26 @@ namespace papyrusUtilExArrayFunctions {
 	
 	template <class T>
         requires PapyrusObject<T>
+    std::vector<T*> RemoveDuplicatesFromArray(RE::StaticFunctionTag*, std::vector<T*> arr) {
+		int size = arr.size();
+		
+		if (size == 0) {
+			return arr;
+		}
+		
+		// 1. Sort the arrtor (required for std::unique to find all duplicates)
+		std::sort(arr.begin(), arr.end());
+
+		// 2. std::unique moves duplicates to the end and returns a new end iterator
+		auto new_end = std::unique(arr.begin(), arr.end());
+
+		// 3. std::arrtor::erase actually removes the elements from memory
+		arr.erase(new_end, arr.end());
+        return arr;
+    }
+	
+	template <class T>
+        requires PapyrusObject<T>
     int CountInArray(RE::StaticFunctionTag*, std::vector<T*> arr, T* item) {
 		int count = 0;
 		int size = arr.size();

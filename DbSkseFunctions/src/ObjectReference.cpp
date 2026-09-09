@@ -1,6 +1,17 @@
 #include "ObjectReference.h"
 #include "GeneralFunctions.h"
+#include "RE/A/Actor.h"
+#include "RE/B/BGSPerkEntry.h"
+#include "RE/E/ExtraDataList.h"
+#include "RE/RTTI.h"
+#include "RE/T/TESBoundObject.h"
+#include "RE/T/TESObjectREFR.h"
+#include "RE/T/TESObjectWEAP.h"
+#include "RE/T/TypeTraits.h"
 #include "SharedVariables.h"
+#include <cstddef>
+#undef max
+#undef min
 
 namespace objectRef {
     RE::TESObjectREFR* GetAshPileLinkedRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
@@ -144,6 +155,142 @@ namespace objectRef {
 		return v;
 	}
 	
+	RE::TESObjectREFR* GetRefContainer(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
+		std::vector<RE::TESObjectREFR*> refs;
+
+		if (!gfuncs::IsFormValid(ref)) {
+			logger::warn("ref doesn't exist");
+			return nullptr;
+		}
+		
+		//if 3D loaded or has parent cell, the ref is not in an inventory
+		if (ref->Is3DLoaded() || ref->GetParentCell()) {
+			const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			for (auto& [id, form] : *allForms) {
+				if (gfuncs::IsFormValid(form, false, false)){
+					auto* containerRef = form->AsReference();
+					if (gfuncs::ContainerContainsRef(containerRef, ref, true)) {
+						return containerRef;
+					}
+				}
+			}
+		}
+		return nullptr;
+	}
+	
+	int GetRefContainerGoldValue(RE::TESObjectREFR* a_container, RE::TESBoundObject* a_item) {
+		if (!a_container || !a_item) { return 0; }
+
+		auto inv = a_container->GetInventory([&](RE::TESBoundObject& obj) { return &obj == a_item; });
+		auto it = inv.find(a_item);
+		if (it != inv.end() && it->second.second) {
+			return it->second.second->GetValue();
+		}
+		return a_item->GetGoldValue();   // fall back to base value
+	}
+	
+	int GetRefGoldValue(RE::StaticFunctionTag*, RE::TESObjectREFR* ref){
+		if (!gfuncs::IsFormValid(ref)) {
+			logger::warn("ref doesn't exist");
+			return 0;
+		}
+		
+		RE::TESBoundObject* base = ref->GetObjectReference();
+    	if (!base) { 
+			logger::debug("no base TESBoundObject, returning ref->GetGoldValue()");
+			return ref->GetGoldValue(); 
+		}
+
+		// could possibly get an InventoryEntryData with more than 1 in the stack, getting the wrong value.
+		// auto* container = GetRefContainer(nullptr, ref);
+		// if (gfuncs::IsFormValid(container)){
+		// 	return GetRefContainerGoldValue(container, base);
+		// }
+		
+		// countDelta 1 -- always the per-item value, never a stack total
+		RE::InventoryEntryData entry(base, 1);
+		entry.AddExtraList(&ref->extraList);
+		int value = entry.GetValue(); 
+		// entry.extraLists->clear(); //handled by the destructor 
+		return value;
+	}
+	
+	int GetFormGoldValue(RE::StaticFunctionTag*, RE::TESForm* akForm){
+		if (!gfuncs::IsFormValid(akForm)) {
+			logger::warn("akForm doesn't exist");
+			return 0;
+		}
+		
+		RE::TESObjectREFR* ref = skyrim_cast<RE::TESObjectREFR*>(akForm);
+		if (gfuncs::IsFormValid(ref)){
+			return GetRefGoldValue(nullptr, ref);
+		}
+		
+		RE::TESBoundObject* base = skyrim_cast<RE::TESBoundObject*>(akForm);
+    	if (!base) { 
+			logger::debug("no base TESBoundObject, returning akForm->GetGoldValue()");
+			return akForm->GetGoldValue(); 
+		}
+		
+		RE::InventoryEntryData entry(base, 1);
+		int value = entry.GetValue(); 
+		return value;
+	}
+	
+	int CalculateBarterValue(RE::StaticFunctionTag*, RE::Actor* merchant, RE::TESForm* akForm, bool buying) {
+		auto* gmst   = RE::GameSettingCollection::GetSingleton();
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!gmst || !player) { return 0; }
+
+		if (!gfuncs::IsFormValid(akForm)) {
+			logger::warn("akForm doesn't exist");
+			return 0;
+		}
+		
+		const int base = GetFormGoldValue(nullptr, akForm);
+		if (base <= 0) { return 0; }
+
+		auto setting = [&](const char* n, float fallback) {
+			auto* s = gmst->GetSetting(n);
+			return s ? s->GetFloat() : fallback;
+		};
+
+		const float fMax     = setting("fBarterMax", 3.3f);
+		const float fMin     = setting("fBarterMin", 2.0f);
+		const float fBuyMin  = setting("fBarterBuyMin", 1.05f);
+		const float fSellMax = setting("fBarterSellMax", 0.95f);
+
+		const float speech = player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kSpeech);
+		// const float SpeechCraftPowerMod = player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kSpeechcraftPowerModifier);
+		// handled by HandleEntryPoint
+		
+		float mult = 1.0f;
+		auto entryPoint = buying ? RE::BGSEntryPoint::ENTRY_POINT::kModBuyPrices : RE::BGSEntryPoint::ENTRY_POINT::kModSellPrices;
+		RE::BGSEntryPoint::HandleEntryPoint(entryPoint, player, merchant, std::addressof(mult));
+		
+		// numerator: 3.3 - (1.3 * skill/100)
+		float factor = fMax - ((fMax - fMin) * std::clamp(speech, 0.0f, 100.0f) / 100.0f);
+
+		float value;
+		if (buying) {
+			value = base * std::max(factor, fBuyMin);
+		} else {
+			value = base * std::min(1.0f / factor, fSellMax);
+		}
+		
+		// value *= mult;
+		// return std::max(buying ? 1 : 0, static_cast<int>(value));
+		
+		float rValue = std::roundf(value);
+		// float rValue = value;
+		rValue *= mult;
+		
+		logger::trace("speech[{}] pfactor[{}] mult[{}] value[{}] result[{}]",
+			speech, factor, mult, value, rValue);
+		
+		return std::max(buying ? 1 : 0, static_cast<int>(std::roundf(rValue)));
+	}
+	
     bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("GetAshPileLinkedRef", "DbSkseFunctions", GetAshPileLinkedRef);
         vm->RegisterFunction("GetClosestObjectFromRef", "DbSkseFunctions", GetClosestObjectFromRef);
@@ -152,6 +299,10 @@ namespace objectRef {
         vm->RegisterFunction("UpdateRefLight", "DbSkseFunctions", UpdateRefLight);
         vm->RegisterFunction("GetRefLinearVelocity", "DbSkseFunctions", GetRefLinearVelocity);
         vm->RegisterFunction("GetDoorTeleportMarkerPositionAndRotation", "DbSkseFunctions", GetDoorTeleportMarkerPositionAndRotation);
+        vm->RegisterFunction("GetRefContainer", "DbSkseFunctions", GetRefContainer);
+        vm->RegisterFunction("GetRefGoldValue", "DbSkseFunctions", GetRefGoldValue);
+        vm->RegisterFunction("GetFormGoldValue", "DbSkseFunctions", GetFormGoldValue);
+        vm->RegisterFunction("CalculateBarterValue", "DbSkseFunctions", CalculateBarterValue);
         return true;
     }
 }

@@ -1,9 +1,18 @@
 #pragma once
 
+#include "RE/B/BSPointerHandle.h"
 struct TrackedProjectileData {
-	RE::Projectile* projectile;
-	RE::TESObjectREFR* shooter;
-	RE::TESObjectREFR* target;
+	// RE::Projectile* projectile;
+	// RE::TESObjectREFR* shooter;
+	// RE::TESObjectREFR* target;
+	
+	//
+	
+	
+	RE::ObjectRefHandle projectile;
+	RE::ObjectRefHandle shooter;
+	RE::ObjectRefHandle target;
+	
 	RE::TESAmmo* ammo;
 	float gameTimeStamp; //game time when the projectile last had an impact event
 	float lastImpactEventGameTimeStamp; //last time a projectile impact event was sent for this data
@@ -12,15 +21,32 @@ struct TrackedProjectileData {
 	int collidedLayer;
 	float distanceTraveled;
 	std::string hitPartNodeName;
-	RE::TESObjectREFR* projectileMarker;
+	
+	// RE::TESObjectREFR* projectileMarker;
+	RE::ObjectRefHandle projectileMarker;
+	
 	//RE::TESObjectREFR* targetMarker;
 
 	//std::chrono::system_clock::time_point timeStamp;
 	//uint32_t runTimeStamp;
 }; 
 
-extern std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentHitProjectiles;
-extern std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentShotProjectiles;
+struct ObjectRefHandleHash {
+	std::size_t operator()(const RE::ObjectRefHandle& handle) const noexcept
+	{
+		return std::hash<std::uint32_t>{}(handle.native_handle());
+	}
+}; 
+
+extern std::mutex projectileMutex;
+extern std::unordered_map< RE::ObjectRefHandle, std::vector<TrackedProjectileData>, ObjectRefHandleHash> recentHitProjectiles;
+extern std::unordered_map< RE::ObjectRefHandle, std::vector<TrackedProjectileData>, ObjectRefHandleHash> recentShotProjectiles;
+
+// extern std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentHitProjectiles;
+// extern std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentShotProjectiles;
+
+// extern std::unordered_map<RE::ObjectRefHandle, std::vector<TrackedProjectileData>> recentHitProjectiles;
+// extern std::unordered_map<RE::ObjectRefHandle, std::vector<TrackedProjectileData>> recentShotProjectiles;
 
 bool DidShooterHitRefWithProjectile(RE::TESObjectREFR* shooter, RE::TESObjectREFR* ref, TrackedProjectileData& data);
 

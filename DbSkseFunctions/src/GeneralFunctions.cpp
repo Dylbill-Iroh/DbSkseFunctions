@@ -1016,16 +1016,18 @@ namespace gfuncs {
     }
 
     //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
-    bool ContainerContainsRef(RE::TESObjectREFR* containerRef, RE::TESObjectREFR* ref, bool checkContainerRef, bool checkRefIdentity) {
+    bool ContainerContainsRef(RE::TESObjectREFR* containerRef, RE::TESObjectREFR* ref, bool checkContainerRef, bool checkRefIdentity, bool checkRef) {
         if (checkContainerRef){ // in case this function is used in a loop and containerRef is already checked with IsFormValid
 			if (!IsFormValid(containerRef)) {
 				return false;
 			}
 		}
 
-        if (!IsFormValid(ref, false, checkRefIdentity)) {
-            return false;
-        }
+		if (checkRef){
+			if (!IsFormValid(ref, false, checkRefIdentity)) {
+				return false;
+			}
+		}
 
         auto* baseCont = containerRef->GetBaseObject();
         if (!IsFormValid(baseCont)) {
@@ -1794,6 +1796,7 @@ namespace gfuncs {
         return nullptr;
     }
 
+	
     void Install() {
         if (!srandSet) {
             srandSet = true;

@@ -245,6 +245,29 @@ ObjectReference[] function GetQuestObjectRefsInContainer(ObjectReference contain
 ;Object refs must be persistent to be in a container.
 ObjectReference[] function GetAllObjectRefsInContainer(ObjectReference containerRef) Global Native
 
+;Get the container that the ref is currently in, if any.
+ObjectReference function GetRefContainer(ObjectReference ref) Global Native
+
+;Get the current gold value for the ref, adjusted for tempering and enchantments.
+;If the ref is in a container, this function will only work if the ref is persistent. 
+;Note that saving a persistent ref to a script property, putting it inside a container,
+;Saving your game, quiting to desktop, then loading the game and your save, this will also 
+;return not accurate data. If the ref is removed from the container after and re-added to a container, 
+;This function will be accurate again. 
+int function GetRefGoldValue(ObjectReference ref) Global Native
+
+;Get the current gold value for the form, adjusted for enchantments.
+;You can pass in an ObjectReference here and the plugin will detect and return GetRefGoldValue if so. 
+;If the ref is in a container, this function will only work if the ref is persistent.
+;See the GetRefGoldValue for more details.
+int function GetFormGoldValue(Form akForm) Global Native
+
+;Calculate the sell or buy price of the akForm when bartering with the merchant. Can be off by 1 gold due to rounding errors.
+;AkForm can be a base form or an objectReference.
+;Note, if the akForm is an objectReference and the ref is in a container, this function will only work if the ref is persistent.
+;See the GetRefGoldValue for more details.
+int function CalculateBarterValue(Actor merchant, Form akForm, bool buying) Global Native
+
 ;Sets or clears the Quest Object flag for the akAlias. Returns true if successful
 bool function SetAliasQuestObjectFlag(alias akAlias, bool set) Global Native
 

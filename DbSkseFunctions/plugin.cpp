@@ -18,10 +18,12 @@
 #include <any>
 #include <xbyak/xbyak.h>
 #include "RE/B/BSIMusicType.h"
+#include "RE/B/BSPointerHandle.h"
 #include "RE/I/InputEvent.h"
 #include "RE/T/TESObjectREFR.h"
 #include "RE/U/UserEvents.h"
 #include "REL/Module.h"
+#include "SKSE/Logger.h"
 #include "lib/commonlibsse-ng/include/REL/Version.h"
 #include "mini/ini.h"
 #include "logger.h"
@@ -200,7 +202,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/* RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID,  */RE::StaticFunctionTag* functionTag) {
-    return float(10.6); 
+    return float(10.8); 
 }
 
 std::vector<int> GetSkyrimVersion(RE::StaticFunctionTag*){
@@ -270,7 +272,7 @@ void AttachDbSksePersistentVariablesScript() {
 }
 
 RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
-    RE::TESObjectREFR* returnRef = sv::lastPlayerActivatedRef;
+    RE::TESObjectREFR* returnRef = gfuncs::GetRefFromObjectRefHandle(sv::lastPlayerActivatedRef);
     
     if (!gfuncs::IsFormValid(returnRef)) {
         returnRef = nullptr;
@@ -280,7 +282,7 @@ RE::TESObjectREFR* GetLastPlayerActivatedRef(RE::StaticFunctionTag*) {
 }
 
 RE::TESObjectREFR* GetLastPlayerMenuActivatedRef(RE::StaticFunctionTag*) {
-    RE::TESObjectREFR* returnRef = sv::menuRef;
+    RE::TESObjectREFR* returnRef = gfuncs::GetRefFromObjectRefHandle(sv::menuRef);
 
     if (!gfuncs::IsFormValid(returnRef)) {
         returnRef = nullptr;
@@ -734,9 +736,9 @@ int GetImpactResultInt(RE::ImpactResult& result) {
     }
 }
 
-void SaveRecentProjectile(RE::Projectile* projectile, RE::TESObjectREFR* shooter, RE::TESObjectREFR* target, RE::TESAmmo* ammo,
+void SaveRecentProjectile(RE::ObjectRefHandle projectile, RE::ObjectRefHandle shooter, RE::ObjectRefHandle target, RE::TESAmmo* ammo,
     float& gameTime, RE::BGSProjectile* projectileBase, int& impactResult, int& collidedLayer, float& distanceTraveled,
-    std::string hitPartNodeName, RE::TESObjectREFR* projectileMarker/*, uint32_t& runTime, std::chrono::system_clock::time_point& timePoint*/) {
+    std::string hitPartNodeName, RE::ObjectRefHandle projectileMarker/*, uint32_t& runTime, std::chrono::system_clock::time_point& timePoint*/) {
 
     /*RE::TESObjectREFR* targetMarker = nullptr;
 
@@ -750,6 +752,9 @@ void SaveRecentProjectile(RE::Projectile* projectile, RE::TESObjectREFR* shooter
     }*/
 
     TrackedProjectileData data;
+	
+	std::lock_guard<std::mutex> lock(projectileMutex);
+	
     data.gameTimeStamp = gameTime;
     data.lastImpactEventGameTimeStamp = 0.0;
     //data.runTimeStamp = runTime;
@@ -776,7 +781,7 @@ void SaveRecentProjectile(RE::Projectile* projectile, RE::TESObjectREFR* shooter
     else {
         std::vector<TrackedProjectileData> datas;
         datas.push_back(data);
-        recentShotProjectiles.insert(std::pair<RE::TESObjectREFR*, std::vector<TrackedProjectileData>>(shooter, datas));
+        recentShotProjectiles.insert(std::pair<RE::ObjectRefHandle, std::vector<TrackedProjectileData>>(shooter, datas));
     }
 
     auto itt = recentHitProjectiles.find(target);
@@ -789,141 +794,253 @@ void SaveRecentProjectile(RE::Projectile* projectile, RE::TESObjectREFR* shooter
     else {
         std::vector<TrackedProjectileData> datas;
         datas.push_back(data);
-        recentHitProjectiles.insert(std::pair<RE::TESObjectREFR*, std::vector<TrackedProjectileData>>(target, datas));
+        recentHitProjectiles.insert(std::pair<RE::ObjectRefHandle, std::vector<TrackedProjectileData>>(target, datas));
     }
 
     //SendProjectileImpactEvent(data);
 }
 
-bool projectileImpacthookInstalled = false;
+//===============================================================================================================================================================================
 
-struct ProjectileImpactHook
-{
-    static bool thunk(RE::Projectile* projectile) {
-        if ((projectile)) {
-            bool killOnCollision = projectile->GetKillOnCollision();
+namespace HookPattern {
+	struct PatternToken {
+		bool wildcard;
+		uint8_t value;
+	};
 
-            float gameHoursPassed = 0.0;
-            if (sv::calendar) {
-                gameHoursPassed = sv::calendar->GetHoursPassed();
-            }
-            else {
-                logger::error("sv::calendar not found");
-            }
+	inline std::vector<PatternToken> ParsePattern( std::string_view a_pattern ) {
+		std::vector<PatternToken> result;
 
-            //uint32_t runTime = RE::GetDurationOfApplicationRunTime();
-            //auto now = std::chrono::system_clock::now();
+		for( size_t i = 0; i < a_pattern.size(); ) {
+			while( i < a_pattern.size() && isspace( (unsigned char)a_pattern[ i ] ) ) {
+				++i;
+			}
 
-            //return projectile->Unk_B8();
+			if( i >= a_pattern.size() ) {
+				break;
+			}
 
-            if (iMaxArrowsSavedPerReference <= 0) {
-                return killOnCollision;
-            }
+			if( a_pattern[ i ] == '?' ) {
+				result.push_back( { true, 0 } );
 
-            RE::TESObjectREFR* projectileMarker = nullptr;
+				if( i + 1 < a_pattern.size() && a_pattern[ i + 1 ] == '?' )
+				{
+					++i;
+				}
 
-            if (eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded) {
-                if (xMarker) {
-                    auto refPtr = projectile->PlaceObjectAtMe(xMarker->As<RE::TESBoundObject>(), false);
-                    if (refPtr) {
-                        projectileMarker = refPtr.get();
-                    }
-                }
-            }
-            //logger::trace("impact event: getting runtimeData");
-            auto& runtimeData = projectile->GetProjectileRuntimeData();
+				++i;
+				continue;
+			}
 
-            //auto niTransform = runtimeData.unk0A8;
-            //RE::NiPoint3 desiredTargetPoint;
+			unsigned int value = 0;
 
-            RE::BGSProjectile* projectileBase = projectile->GetProjectileBase();
-            int impactResult = GetProjectileImpactResult(nullptr, projectile);
+			std::from_chars(
+				a_pattern.data() + i,
+				a_pattern.data() + i + 2,
+				value,
+				16 );
 
-            RE::TESObjectREFR* shooter = GetProjectileShooterFromRuntimeData(runtimeData);
-            RE::TESObjectREFR* target;
-            RE::TESAmmo* ammo = runtimeData.ammoSource;
-            float distanceTraveled = runtimeData.distanceMoved;
-            std::string hitPartNodeName;
-            int collidedLayer = 0;
+			result.push_back(
+				{
+					false,
+					(uint8_t)value
+				} );
 
-            //for (auto* impactData : runtimeData.impacts) {
-            if (!runtimeData.impacts.empty()) {
-                auto* impactData = *runtimeData.impacts.begin();
-                if (impactData) {
+			i += 2;
+		}
+		return result;
+	}
 
-                    //desiredTargetPoint = impactData->desiredTargetLoc;
+	//from ArcheryLocationalDamage
+	inline uintptr_t FindPatternInFunction(uintptr_t a_function, std::string_view a_pattern, size_t a_maxScan = 0x4000) {
+		auto pattern = ParsePattern(a_pattern);
 
-                    if (impactData->collidee) {
-                        auto hitRefHandle = impactData->collidee;
-                        if (hitRefHandle) {
-                            //logger::trace("hitRef found");
-                            auto hitRefPtr = hitRefHandle.get();
-                            if (hitRefPtr) {
-                                target = hitRefPtr.get();
-                            }
-                        }
-                    }
-                    RE::NiNode* hitPart = impactData->damageRootNode;
-                    if (hitPart) {
-                        hitPartNodeName = hitPart->name;
-                        if (hitPart->parent) {
-                            if (hitPart->parent->name == "SHIELD" || hitPartNodeName == "") {
-                                hitPartNodeName = static_cast<std::string>(hitPart->parent->name);
-                            }
-                        }
-                    }
-                    collidedLayer = impactData->collidedLayer.underlying();
-                }
-            }
+		if (pattern.empty()) {
+			return 0;
+		}
 
-            SaveRecentProjectile(projectile, shooter, target, ammo, gameHoursPassed, projectileBase, impactResult, collidedLayer, distanceTraveled, hitPartNodeName, projectileMarker/*, runTime, now*/);
+		auto ptr = (uint8_t *)a_function;
 
-            return killOnCollision;
-        }
-        else {
-            return false;
-        }
-    }
+		while ((uintptr_t)ptr < a_function + a_maxScan) {
+			if (*(uint32_t *)ptr == 0xCCCCCCC3) {
+				return 0;
+			}
 
-    static REL::Relocation<uintptr_t> GetRelocationID(REL::Version a_ver) {
-        return a_ver <= SKSE::RUNTIME_SSE_1_5_97 ?
-            REL::Relocation<uintptr_t>(REL::ID(43013), 0x3E3) : // SkyrimSE.exe+0x7521f0+0x3E3
-            REL::Relocation<uintptr_t>(REL::ID(44204), 0x3D4); // SkyrimSE.exe+0x780870+0x3D4
-    }
+			bool match = true;
 
-    static inline REL::Relocation<decltype(thunk)> func;
+			for (size_t i = 0; i < pattern.size(); ++i) {
+				if (!pattern[i].wildcard && ptr[i] != pattern[i].value) {
+					match = false;
+					break;
+				}
+			}
 
-    static bool Check(REL::Version a_ver)
-    {
-        auto hook = GetRelocationID(a_ver);
-        if (*(uint16_t*)hook.address() != 0x90FF)
-        {
-            logger::critical("ProjectileImpactHook check: Opcode at injection site not matched. Aborting...");
-            return false;
-        }
+			if (match) {
+				return (uintptr_t)ptr;
+			}
 
-        return true;
-    }
+			++ptr;
+		}
 
-    static bool Install(REL::Version a_ver)
-    {
-        if (Check(a_ver)) {
-            // 44204+0x3EC 0x780870
-            if (!projectileImpacthookInstalled) {
-                projectileImpacthookInstalled = true;
-                auto hook = GetRelocationID(a_ver);
-                REL::safe_fill(hook.address(), 0x90, 6);
-                stl::write_thunk_call<ProjectileImpactHook>(hook.address());
-                return true;
-            }
-            else {
-                return false;
-            }
-        }
-        return false;
-    }
-};
+		return 0;
+	}
+}
 
+//from ArcheryLocationalDamage
+struct ProjectileImpactHook {
+	static const uint64_t funcID = 44204;
+	static inline uintptr_t hookAddr;
+	
+	static bool thunk( RE::Projectile* projectile ) {
+		// logger::debug("ProjectileImpactHook thunk on thread [{}]", GetCurrentThreadId());
+	
+		if ((projectile)) {
+			bool killOnCollision = projectile->GetKillOnCollision();
+
+			RE::ObjectRefHandle projectileHandle = projectile->GetHandle();
+			
+			float gameHoursPassed = 0.0;
+			if (sv::calendar) {
+				gameHoursPassed = sv::calendar->GetHoursPassed();
+			}
+			else {
+				logger::error("sv::calendar not found");
+			}
+
+			//uint32_t runTime = RE::GetDurationOfApplicationRunTime();
+			//auto now = std::chrono::system_clock::now();
+
+			//return projectile->Unk_B8();
+
+			if (iMaxArrowsSavedPerReference <= 0) {
+				return killOnCollision;
+			}
+
+			// RE::TESObjectREFR* projectileMarker = nullptr;
+			RE::ObjectRefHandle projectileMarker;
+
+			if (eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded) {
+				if (xMarker) {
+					auto refPtr = projectile->PlaceObjectAtMe(xMarker->As<RE::TESBoundObject>(), false);
+					if (refPtr) {
+						projectileMarker = refPtr.get();
+					}
+				}
+			}
+			//logger::trace("impact event: getting runtimeData");
+			auto& runtimeData = projectile->GetProjectileRuntimeData();
+			//auto niTransform = runtimeData.unk0A8;
+			//RE::NiPoint3 desiredTargetPoint;
+
+			RE::BGSProjectile* projectileBase = projectile->GetProjectileBase();
+			int impactResult = GetProjectileImpactResult(nullptr, projectile);
+
+			// RE::TESObjectREFR* shooter = GetProjectileShooterFromRuntimeData(runtimeData);
+			RE::ObjectRefHandle shooter = runtimeData.shooter; 
+			
+			RE::ObjectRefHandle target;
+			// RE::TESObjectREFR* target;
+			RE::TESAmmo* ammo = runtimeData.ammoSource;
+			float distanceTraveled = runtimeData.distanceMoved;
+			std::string hitPartNodeName;
+			int collidedLayer = 0;
+
+			//for (auto* impactData : runtimeData.impacts) {
+			if (!runtimeData.impacts.empty()) {
+				auto* impactData = *runtimeData.impacts.begin();
+				if (impactData) {
+
+					//desiredTargetPoint = impactData->desiredTargetLoc;
+
+					if (impactData->collidee) {
+						auto hitRefHandle = impactData->collidee;
+						if (hitRefHandle) {
+							target = hitRefHandle;
+							//logger::trace("hitRef found");
+							// auto hitRefPtr = hitRefHandle.get();
+							// if (hitRefPtr) {
+							//     target = hitRefPtr.get();
+							// }
+						}
+					}
+					RE::NiNode* hitPart = impactData->damageRootNode;
+					if (hitPart) {
+						hitPartNodeName = hitPart->name;
+						if (hitPart->parent) {
+							if (hitPart->parent->name == "SHIELD" || hitPartNodeName == "") {
+								hitPartNodeName = static_cast<std::string>(hitPart->parent->name);
+							}
+						}
+					}
+					collidedLayer = impactData->collidedLayer.underlying();
+				}
+			}
+
+			SaveRecentProjectile(projectileHandle, shooter, target, ammo, gameHoursPassed, projectileBase, impactResult, collidedLayer, distanceTraveled, hitPartNodeName, projectileMarker/*, runTime, now*/);
+
+			return killOnCollision;
+		}
+		else {
+			return false;
+		}
+	}
+
+	static inline REL::Relocation<decltype(thunk)> func;
+
+	/* 1.7.104
+	SkyrimSE.exe+800DA2 - FF 50 08              - call qword ptr [rax+08]
+	SkyrimSE.exe+800DA5 - 90                    - nop 
+	SkyrimSE.exe+800DA6 - 48 8B 07              - mov rax,[rdi]
+	SkyrimSE.exe+800DA9 - 48 8B CF              - mov rcx,rdi
+	SkyrimSE.exe+800DAC - FF 90 C0050000        - call qword ptr [rax+000005C0] <<<<<<
+	SkyrimSE.exe+800DB2 - 84 C0                 - test al,al
+	SkyrimSE.exe+800DB4 - 74 0C                 - je SkyrimSE.exe+800DC2
+	SkyrimSE.exe+800DB6 - 48 8B CF              - mov rcx,rdi
+	SkyrimSE.exe+800DB9 - E8 B28FFFFF           - call SkyrimSE.exe+7F9D70
+	*/
+	static bool Check( REL::Version a_ver )
+	{
+		uintptr_t addr = 0;
+		if( a_ver <= SKSE::RUNTIME_SSE_1_5_97 )
+			addr = REL::Relocation<uintptr_t>( REL::ID(43013), 0x3E3 ).address(); // SkyrimSE.exe+0x7521f0+0x3E3 1.5.97
+			//addr = REL::Relocation<uintptr_t>( REL::ID(44204), 0x3AF ).address(); // SkyrimSE.exe+0x620370+0x3AF 1.6.353
+		else
+		{
+			// This function hook offset changes on 1.6.x so from this point on, the pattern scanning will be used instead of static offset
+			//addr = REL::Relocation<uintptr_t>( REL::ID(44204), 0x3EC ).address(); // SkyrimSE.exe+0x8009C0+0x3EC 1.7.104
+			addr = HookPattern::FindPatternInFunction( 
+				REL::Relocation<uintptr_t>( REL::ID(funcID) ).address(), 
+				"48 8B 07 48 8B CF FF 90 C0 05 00 00 84 C0 74" );
+			if( !addr )
+			{
+				logger::critical( "Cannot find target instruction for ProjectileImpactHook" );
+				return false;
+			}
+
+			addr += 6;
+		}
+		
+		if( *(uint16_t*)addr != 0x90FF )
+		{
+			logger::critical( "Opcode at injection site not matched. Aborting..." );
+			return false;
+		}
+
+		hookAddr = addr;
+		return true;
+	}
+
+	static bool Install( REL::Version a_ver )
+	{
+		if (!Check(a_ver)){
+			return false;
+		}
+		
+		stl::write_thunk_call<ProjectileImpactHook, 6>( hookAddr );
+		return true;
+	}
+}; 
+	
 void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source, bool SneakAttack, bool HitBlocked, float currentGameTime, std::vector<float>& hitTranslation) {
     if (!eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded) {
         return;
@@ -935,20 +1052,24 @@ void SendProjectileImpactEvent(TrackedProjectileData& data, RE::TESForm* source,
 
     data.lastImpactEventGameTimeStamp = currentGameTime;
 
-    std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnProjectileImpact]->GetHandles({ data.shooter, data.target,
+	RE::TESObjectREFR* shooterRef = gfuncs::GetRefFromObjectRefHandle(data.shooter);
+	RE::TESObjectREFR* targetRef = gfuncs::GetRefFromObjectRefHandle(data.target);
+	RE::TESObjectREFR* projectileMarkerRef = gfuncs::GetRefFromObjectRefHandle(data.projectileMarker);
+	
+    std::vector<RE::VMHandle> handles = eventDataPtrs[EventEnum_OnProjectileImpact]->GetHandles({ shooterRef, targetRef,
         source, data.ammo, data.projectileBase });
 
     if (handles.size() > 0) {
 
-        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)data.shooter, (RE::TESObjectREFR*)data.target, (RE::TESForm*)source,
+        auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)shooterRef, (RE::TESObjectREFR*)targetRef, (RE::TESForm*)source,
             (RE::TESAmmo*)data.ammo, (RE::BGSProjectile*)data.projectileBase, (bool)SneakAttack, (bool)HitBlocked,
             (int)data.impactResult, (int)data.collidedLayer, (float)data.distanceTraveled, (std::string)data.hitPartNodeName,
-            (RE::TESObjectREFR*)data.projectileMarker, (std::vector<float>)hitTranslation);
+            (RE::TESObjectREFR*)projectileMarkerRef, (std::vector<float>)hitTranslation);
 
         gfuncs::SendEvents(handles, eventDataPtrs[EventEnum_OnProjectileImpact]->sEvent, args);
 
         logger::trace("shooter[{}] target[{}] source[{}] ammo[{}] projectile[{}]",
-            gfuncs::GetFormName(data.shooter), gfuncs::GetFormName(data.target), gfuncs::GetFormName(source),
+            gfuncs::GetFormName(shooterRef), gfuncs::GetFormName(targetRef), gfuncs::GetFormName(source),
             gfuncs::GetFormName(data.ammo), gfuncs::GetFormName(data.projectileBase));
 
         logger::trace("sneak[{}] blocked[{}] impactResult[{}] collidedLayer[{}] distanceTraveled[{}] hitPartNodeName[{}]",
@@ -963,7 +1084,11 @@ TrackedProjectileData GetRecentTrackedProjectileData(RE::TESObjectREFR* shooter,
     TrackedProjectileData nullData;
 
     if (gfuncs::IsFormValid(shooter) && gfuncs::IsFormValid(target) && hitGameTime > -1.0) {
-        auto it = recentHitProjectiles.find(target);
+		RE::ObjectRefHandle shooterHandle = shooter->GetHandle();
+		RE::ObjectRefHandle targetHandle = target->GetHandle();
+		
+		std::lock_guard<std::mutex> lock(projectileMutex);
+        auto it = recentHitProjectiles.find(targetHandle);
         if (it != recentHitProjectiles.end()) {
             if (it->second.size() > 0) {
                 for (int i = it->second.size() - 1; i >= 0; --i) {
@@ -971,7 +1096,7 @@ TrackedProjectileData GetRecentTrackedProjectileData(RE::TESObjectREFR* shooter,
                     float hitTimeDiff = GameHoursToRealTimeSeconds(nullptr, hitGameTime - akData.gameTimeStamp);
                     //logger::trace("hitTimeDiff = [{}]", hitTimeDiff);
                     if (hitTimeDiff < 0.1) {
-                        if (akData.shooter == shooter && akData.target == target) {
+                        if (akData.shooter == shooterHandle && akData.target == targetHandle) {
                             return akData;
                         }
                     }
@@ -1054,33 +1179,31 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
 
             if (bowEquipped || gfuncs::IsFormValid(projectileForm)) {
                 if (iMaxArrowsSavedPerReference > 0) {
-
                     auto recentProjectileData = GetRecentTrackedProjectileData(attacker, target, currentGameTime);
 
-                    if (gfuncs::IsFormValid(recentProjectileData.target) && gfuncs::IsFormValid(recentProjectileData.shooter)) {
-
+					RE::TESObjectREFR* targetRef = gfuncs::GetRefFromObjectRefHandle((recentProjectileData.target));
+					RE::TESObjectREFR* shooterRef = gfuncs::GetRefFromObjectRefHandle((recentProjectileData.shooter));
+					
+                    if (gfuncs::IsFormValid(targetRef) && gfuncs::IsFormValid(shooterRef)) {
                         std::vector<float> hitTranslation;
-
-                        if (gfuncs::IsFormValid(recentProjectileData.target)) {
-                            RE::Actor* actor = target->As<RE::Actor>();
-                            if (gfuncs::IsFormValid(actor)) {
-                                auto* aiProcess = actor->GetActorRuntimeData().currentProcess;
-                                if (aiProcess) {
-                                    if (aiProcess->middleHigh) {
-                                        if (aiProcess->middleHigh->lastHitData) {
-                                            auto pos = aiProcess->middleHigh->lastHitData->hitPosition;
-                                            auto direction = aiProcess->middleHigh->lastHitData->hitDirection;
-                                            hitTranslation.push_back(pos.x);
-                                            hitTranslation.push_back(pos.y);
-                                            hitTranslation.push_back(pos.z);
-                                            hitTranslation.push_back(direction.x);
-                                            hitTranslation.push_back(direction.y);
-                                            hitTranslation.push_back(direction.z);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+						RE::Actor* actor = target->As<RE::Actor>();
+						if (gfuncs::IsFormValid(actor)) {
+							auto* aiProcess = actor->GetActorRuntimeData().currentProcess;
+							if (aiProcess) {
+								if (aiProcess->middleHigh) {
+									if (aiProcess->middleHigh->lastHitData) {
+										auto pos = aiProcess->middleHigh->lastHitData->hitPosition;
+										auto direction = aiProcess->middleHigh->lastHitData->hitDirection;
+										hitTranslation.push_back(pos.x);
+										hitTranslation.push_back(pos.y);
+										hitTranslation.push_back(pos.z);
+										hitTranslation.push_back(direction.x);
+										hitTranslation.push_back(direction.y);
+										hitTranslation.push_back(direction.z);
+									}
+								}
+							}
+						}
                         if (hitTranslation.size() == 0) {
                             hitTranslation.resize(1); //can't send empty array or it causes ctd
                         }
@@ -1122,7 +1245,8 @@ struct HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
                                         bool ammoFound = false;
 
                                         if (iMaxArrowsSavedPerReference > 0 && sv::calendar) {
-                                            auto recentHitIt = recentShotProjectiles.find(attacker);
+											std::lock_guard<std::mutex> lock(projectileMutex);
+                                            auto recentHitIt = recentShotProjectiles.find(attacker->GetHandle());
                                             if (recentHitIt != recentShotProjectiles.end()) {
                                                 for (int i = 0; i < it->second->forceChangedAmmos.size() && !ammoFound; i++) { //cycle through force unequipped ammos due to shooting last arrow of type. 
                                                     for (int ii = recentHitIt->second.size() - 1; ii >= 0 && !ammoFound; --ii) { //cycle through projectiles that recently hit the target to find matching ammo
@@ -1371,7 +1495,7 @@ void HandleActivateEvent(RE::TESObjectREFRPtr actionRef, RE::TESObjectREFRPtr ob
         if (sv::player) {
             if (activatorRef == sv::player) {
                 if (activatedRef) {
-                    sv::lastPlayerActivatedRef = activatedRef;
+                    sv::lastPlayerActivatedRef = activatedRef->GetHandle();
 
                     if (sv::lastPlayerActivatedRefScriptProperty) {
                         RE::BSScript::PackValue(sv::lastPlayerActivatedRefScriptProperty, activatedRef);
@@ -3935,11 +4059,12 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
 
         if (bActivateEventSinkEnabledByDefault) {
             if (gfuncs::IsRefActivatedMenu(sMenuName)) {
-                if (gfuncs::IsFormValid(sv::lastPlayerActivatedRef)) {
+				RE::TESObjectREFR* activatedRef = gfuncs::GetRefFromObjectRefHandle((sv::lastPlayerActivatedRef));
+                if (gfuncs::IsFormValid(activatedRef)) {
                     sv::menuRef = sv::lastPlayerActivatedRef;
 
                     if (sv::LastPlayerMenuActivatedRefScriptProperty) {
-                        RE::BSScript::PackValue(sv::LastPlayerMenuActivatedRefScriptProperty, sv::menuRef);
+                        RE::BSScript::PackValue(sv::LastPlayerMenuActivatedRefScriptProperty, activatedRef);
                     }
                     else {
                         logger::error("sv::LastPlayerMenuActivatedRefScriptProperty is nullptr");
@@ -5854,6 +5979,10 @@ void CreateEventSinks() {
 
     if (iMaxArrowsSavedPerReference > 0) {
         if (skseLoadInterface) {
+            // if (ProjectileImpactHook::Install(skseLoadInterface->RuntimeVersion())) {
+            //     logger::info("ProjectileImpactHook installed successfully");
+            // }
+			
             if (ProjectileImpactHook::Install(skseLoadInterface->RuntimeVersion())) {
                 logger::info("ProjectileImpactHook installed successfully");
             }
@@ -6388,10 +6517,12 @@ void SaveCallback(SKSE::SerializationInterface* ssi) {
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
 	REL::Module::reset(); //make sure REL offsets are correct before touching them. Caused ctd when opening the game without this.
+	SKSE::AllocTrampoline(450); // for the projectile impact hook
+	
     SetupLog("Data/SKSE/Plugins/DbSkseFunctions.ini");
 	logger::critical("REL base [{:X}]", REL::Module::get().base());
 	
-    skseLoadInterface = skse;
+    skseLoadInterface = skse; 
     SKSE::GetMessagingInterface()->RegisterListener(MessageListener);
 
     auto* serialization = SKSE::GetSerializationInterface();

@@ -1,5 +1,6 @@
 #include "SharedVariables.h"
 #include "GeneralFunctions.h"
+#include "RE/B/BSPointerHandle.h"
 #include "Serialization.h"
 #include "Utility.h"
 
@@ -27,8 +28,13 @@ namespace sv {
 	std::chrono::system_clock::time_point lastTimeGameWasPaused;
 	std::chrono::system_clock::time_point currentTimePoint;
 	float gameTime = 0.0;
-	RE::TESObjectREFR* menuRef = nullptr;
-	RE::TESObjectREFR* lastPlayerActivatedRef = nullptr;
+	
+	// RE::TESObjectREFR* menuRef = nullptr;
+	// RE::TESObjectREFR* lastPlayerActivatedRef = nullptr;
+	
+	RE::ObjectRefHandle menuRef;
+	RE::ObjectRefHandle lastPlayerActivatedRef;
+	
 	RE::BSScript::Variable* LastPlayerMenuActivatedRefScriptProperty = nullptr;
 	RE::BSScript::Variable* lastPlayerActivatedRefScriptProperty = nullptr;
 	RE::TESWeather* currentWeather = nullptr;
@@ -72,11 +78,11 @@ namespace sv {
 			logger::error("Failed to open record[{}]", 'SVr7');
 			return;
 		}
-		if (!serialize::SaveForm(menuRef, record, ssi, false)) {
+		if (!serialize::SaveForm(gfuncs::GetRefFromObjectRefHandle(menuRef), record, ssi, false)) {
 			logger::error("failed to save menuRef, aborting save.");
 			return;
 		}
-		if (!serialize::SaveForm(lastPlayerActivatedRef, record, ssi, false)) {
+		if (!serialize::SaveForm(gfuncs::GetRefFromObjectRefHandle(lastPlayerActivatedRef), record, ssi, false)) {
 			logger::error("failed to save lastPlayerActivatedRef, aborting save.");
 			return;
 		}

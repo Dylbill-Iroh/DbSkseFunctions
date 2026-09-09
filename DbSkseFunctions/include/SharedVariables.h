@@ -1,5 +1,6 @@
 #pragma once
 
+#include "RE/B/BSPointerHandle.h"
 namespace sv {
 	extern std::uint32_t record;
 	
@@ -25,8 +26,13 @@ namespace sv {
 	extern std::chrono::system_clock::time_point lastTimeGameWasPaused;
 	extern std::chrono::system_clock::time_point currentTimePoint;
 	extern float gameTime;
-	extern RE::TESObjectREFR* menuRef;
-	extern RE::TESObjectREFR* lastPlayerActivatedRef;
+	
+	// extern RE::TESObjectREFR* menuRef;
+	// extern RE::TESObjectREFR* lastPlayerActivatedRef;
+	
+	extern RE::ObjectRefHandle menuRef;
+	extern RE::ObjectRefHandle lastPlayerActivatedRef;
+	
 	extern RE::BSScript::Variable* LastPlayerMenuActivatedRefScriptProperty;
 	extern RE::BSScript::Variable* lastPlayerActivatedRefScriptProperty;
 	extern RE::TESWeather* currentWeather;

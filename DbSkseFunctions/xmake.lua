@@ -35,6 +35,10 @@ add_rules("plugin.vsxmake.autoupdate")
 -- check options
 -- xmake f --menu
 
+-- update intellisence
+-- xmake project -k compile_commands 
+-- reset clangd language server
+
 option("full_array_conversions", function()
     set_default(true)
     set_description("Generate the full N x N ArrayAs conversion matrix. Slow to compile; enable for release builds.")

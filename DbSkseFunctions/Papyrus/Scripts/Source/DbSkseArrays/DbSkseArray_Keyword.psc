@@ -10,7 +10,7 @@ scriptname DbSkseArray_Keyword hidden
 ; You can only have one array type per script. If you need more types, duplicate more of these scripts in the same manner.
 ; The exception is that you can add as many ArrayAs functions as you like, as long as the types are compatible. More details below.
 ; Custom user made types are not supported. Only vanilla types are supported, E.G types found in
-; FormType.psc as well as Keyword, ReferenceKeyword, LocationKeyword and ActiveMagicEffect
+; FormType.psc as well as Alias, ReferenceAlias, LocationAlias and ActiveMagicEffect
 
 ; Create a new array of size, filled with optional filler.
 Keyword[] Function Create(int size, Keyword filler = none) Global Native 
@@ -36,6 +36,9 @@ Keyword[] Function Remove(Keyword[] arr, Keyword toRemove, bool all = true) glob
 
 ; remove the element at the index in the array, decreasing its size. If the index is out of bounds, removes the last element in the array.
 Keyword[] Function RemoveAt(Keyword[] arr, int index) Global Native 
+
+; remove all duplicates from the arr, making each element in the arr unique, and return the new array.
+Keyword[] Function RemoveDuplicates(Keyword[] arr) Global Native 
 
 ; returns new array that contains the forms of the passed in akForms array, but sorted. 
 ; Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
@@ -64,7 +67,7 @@ int Function Count(Keyword[] arr, Keyword item) Global Native
 ; If removeNoneArrElements, any none entry in the passed in array is removed from the return array. 
 ; If removeFailedToConvertElements, any valid entry in the passed in array that fails to convert to the return type is removed from the return array.
 ; You can add as many ArrayAs functions here as you want, converting from any compatible type.
-; Make sure the new function names contains ArrayAs.
+; Make sure the new function names contain ArrayAs.
 
 ; Cast all Keyword array elements to Form and return new array.
 Form[] Function ArrayAsForm(Keyword[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native

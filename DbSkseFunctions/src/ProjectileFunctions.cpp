@@ -1,13 +1,27 @@
 #include "ProjectileFunctions.h"
 #include "GeneralFunctions.h"
+#include "RE/B/BSPointerHandle.h"
+#include "RE/P/Projectile.h"
+#include "RE/T/TESObjectREFR.h"
 
-std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentHitProjectiles;
-std::map<RE::TESObjectREFR*, std::vector<TrackedProjectileData>> recentShotProjectiles;
+// std::map<RE::TESObjectREFR, std::vector<TrackedProjectileData>> recentHitProjectiles;
+// std::map<RE::TESObjectREFR, std::vector<TrackedProjectileData>> recentShotProjectiles;
+
+// had to define a hash in ProjectileFunctions.h
+// std::unordered_map<RE::ObjectRefHandle, std::vector<TrackedProjectileData>> recentHitProjectiles;
+// std::unordered_map<RE::ObjectRefHandle, std::vector<TrackedProjectileData>> recentShotProjectiles;
+
+std::mutex projectileMutex;
+std::unordered_map< RE::ObjectRefHandle, std::vector<TrackedProjectileData>, ObjectRefHandleHash> recentHitProjectiles;
+std::unordered_map< RE::ObjectRefHandle, std::vector<TrackedProjectileData>, ObjectRefHandleHash> recentShotProjectiles;
 
 //general projectile functions==========================================================================================================================
 
 bool DidShooterHitRefWithProjectile(RE::TESObjectREFR* shooter, RE::TESObjectREFR* ref, TrackedProjectileData& data) {
-    return (shooter == data.shooter && ref == data.target);
+	RE::TESObjectREFR* shooterRef = gfuncs::GetRefFromObjectRefHandle(data.shooter);
+	RE::TESObjectREFR* targetRef = gfuncs::GetRefFromObjectRefHandle(data.target);
+	
+    return (shooter == shooterRef && ref == targetRef);
 }
 
 bool DidProjectileHitRef(RE::Projectile* akProjectile, RE::TESObjectREFR* ref) {
@@ -54,7 +68,10 @@ bool DidRefShootProjectile(RE::Projectile* akProjectile, RE::TESObjectREFR* ref)
 }
 
 bool DidProjectileHitRefWithAmmoFromShooter(RE::TESObjectREFR* shooter, RE::TESObjectREFR* ref, RE::TESAmmo* akAmmo, TrackedProjectileData& data) {
-    return (shooter == data.shooter && ref == data.target && akAmmo == data.ammo);
+    RE::TESObjectREFR* shooterRef = gfuncs::GetRefFromObjectRefHandle(data.shooter);
+	RE::TESObjectREFR* targetRef = gfuncs::GetRefFromObjectRefHandle(data.target);
+	
+	return (shooter == shooterRef && ref == targetRef && akAmmo == data.ammo);
 }
 
 bool DidProjectileHitRefWithAmmoFromShooter(RE::TESObjectREFR* shooter, RE::TESObjectREFR* ref, RE::Projectile* akProjectile, RE::TESAmmo* akAmmo) {
@@ -658,31 +675,53 @@ std::vector<std::string> GetProjectileNodeHitNames(RE::StaticFunctionTag*, RE::T
 }
 
 std::vector<RE::TESObjectREFR*> GetRecentProjectileHitRefs(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled, int projectileType) {
-    std::vector<RE::TESObjectREFR*> refs;
+	 std::lock_guard<std::mutex> lock(projectileMutex);
+    
+	std::vector<RE::TESObjectREFR*> refs;
     if (!gfuncs::IsFormValid(ref)) {
         logger::warn("ref doesn't exist");
         return refs;
     }
 
-    auto it = recentHitProjectiles.find(ref);
+    auto it = recentHitProjectiles.find(ref->GetHandle());
     if (it != recentHitProjectiles.end()) {
         if (it->second.size() == 0) {
             return refs;
         }
         if (projectileType >= 1 && projectileType <= 7) {
             for (auto& data : it->second) {
-                if (GetProjectileRefType(nullptr, data.projectile) == projectileType) {
-                    if ((data.projectile->Is3DLoaded() || !only3dLoaded) && (!data.projectile->IsDisabled() || !onlyEnabled)) {
-                        refs.push_back(data.projectile);
+				RE::TESObjectREFR* ref = (gfuncs::GetRefFromObjectRefHandle(data.projectile));
+				if (!gfuncs::IsFormValid(ref)){
+					continue;
+				}
+				
+				RE::Projectile* projectile = ref->AsProjectile();
+				if (!gfuncs::IsFormValid(projectile)){
+					continue;
+				}
+				
+                if (GetProjectileRefType(nullptr, projectile) == projectileType) {
+                    if ((projectile->Is3DLoaded() || !only3dLoaded) && (!projectile->IsDisabled() || !onlyEnabled)) {
+                        refs.push_back(projectile);
                     }
                 }
             }
         }
         else {
             for (auto& data : it->second) {
-                if (gfuncs::IsFormValid(data.projectile)) {
-                    if ((data.projectile->Is3DLoaded() || !only3dLoaded) && (!data.projectile->IsDisabled() || !onlyEnabled)) {
-                        refs.push_back(data.projectile);
+				RE::TESObjectREFR* ref = (gfuncs::GetRefFromObjectRefHandle(data.projectile));
+				if (!gfuncs::IsFormValid(ref)){
+					continue;
+				}
+				
+				RE::Projectile* projectile = ref->AsProjectile();
+				if (!gfuncs::IsFormValid(projectile)){
+					continue;
+				}
+				
+				if (gfuncs::IsFormValid(projectile)) {
+                    if ((projectile->Is3DLoaded() || !only3dLoaded) && (!projectile->IsDisabled() || !onlyEnabled)) {
+                        refs.push_back(projectile);
                     }
                 }
             }
@@ -692,31 +731,45 @@ std::vector<RE::TESObjectREFR*> GetRecentProjectileHitRefs(RE::StaticFunctionTag
 }
 
 RE::TESObjectREFR* GetLastProjectileHitRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled, int projectileType) {
-    RE::TESObjectREFR* returnRef = nullptr;
+	std::lock_guard<std::mutex> lock(projectileMutex);
+    
+	RE::TESObjectREFR* returnRef = nullptr;
     if (!gfuncs::IsFormValid(ref)) {
         logger::warn("ref isn't valid or doesn't exist");
         return returnRef;
     }
 
-    auto it = recentHitProjectiles.find(ref);
+    auto it = recentHitProjectiles.find(ref->GetHandle());
     if (it != recentHitProjectiles.end()) {
         if (it->second.size() == 0) {
             return nullptr;
         }
         if (projectileType >= 1 && projectileType <= 7) {
             for (int i = it->second.size() - 1; i >= 0 && !returnRef; --i) {
-                if (GetProjectileRefType(nullptr, it->second[i].projectile) == projectileType) {
-                    if ((it->second[i].projectile->Is3DLoaded() || !only3dLoaded) && (!it->second[i].projectile->IsDisabled() || !onlyEnabled)) {
-                        returnRef = it->second[i].projectile;
+				RE::TESObjectREFR* ref = (gfuncs::GetRefFromObjectRefHandle(it->second[i].projectile));
+				if (!gfuncs::IsFormValid(ref)){
+					continue;
+				}
+				
+				RE::Projectile* projectile = ref->AsProjectile();
+				if (!gfuncs::IsFormValid(projectile)){
+					continue;
+				}
+				
+                if (GetProjectileRefType(nullptr, projectile) == projectileType) {
+                    if ((projectile->Is3DLoaded() || !only3dLoaded) && (!projectile->IsDisabled() || !onlyEnabled)) {
+                        returnRef = projectile;
                     }
                 }
             }
         }
         else {
             for (int i = it->second.size() - 1; i >= 0 && !returnRef; --i) {
-                if (gfuncs::IsFormValid(it->second[i].projectile)) {
-                    if ((it->second[i].projectile->Is3DLoaded() || !only3dLoaded) && (!it->second[i].projectile->IsDisabled() || !onlyEnabled)) {
-                        returnRef = it->second[i].projectile;
+				RE::Projectile* projectile = (gfuncs::GetRefFromObjectRefHandle(it->second[i].projectile)->AsProjectile());
+                
+				if (gfuncs::IsFormValid(projectile)) {
+                    if ((projectile->Is3DLoaded() || !only3dLoaded) && (!projectile->IsDisabled() || !onlyEnabled)) {
+                        returnRef = projectile;
                     }
                 }
             }
@@ -726,31 +779,53 @@ RE::TESObjectREFR* GetLastProjectileHitRef(RE::StaticFunctionTag*, RE::TESObject
 }
 
 std::vector<RE::TESObjectREFR*> GetRecentProjectileShotRefs(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled, int projectileType) {
-    std::vector<RE::TESObjectREFR*> refs;
+	std::lock_guard<std::mutex> lock(projectileMutex);
+	
+	std::vector<RE::TESObjectREFR*> refs;
     if (!gfuncs::IsFormValid(ref)) {
         logger::warn("ref doesn't exist");
         return refs;
     }
 
-    auto it = recentShotProjectiles.find(ref);
+    auto it = recentShotProjectiles.find(ref->GetHandle());
     if (it != recentShotProjectiles.end()) {
         if (it->second.size() == 0) {
             return refs;
         }
         if (projectileType >= 1 && projectileType <= 7) {
             for (auto& data : it->second) {
-                if (GetProjectileRefType(nullptr, data.projectile) == projectileType) {
-                    if ((data.projectile->Is3DLoaded() || !only3dLoaded) && (!data.projectile->IsDisabled() || !onlyEnabled)) {
-                        refs.push_back(data.projectile);
+				RE::TESObjectREFR* ref = (gfuncs::GetRefFromObjectRefHandle(data.projectile));
+				if (!gfuncs::IsFormValid(ref)){
+					continue;
+				}
+				
+				RE::Projectile* projectile = ref->AsProjectile();
+				if (!gfuncs::IsFormValid(projectile)){
+					continue;
+				}
+				
+				if (GetProjectileRefType(nullptr, projectile) == projectileType) {
+                    if ((projectile->Is3DLoaded() || !only3dLoaded) && (!projectile->IsDisabled() || !onlyEnabled)) {
+                        refs.push_back(projectile);
                     }
                 }
             }
         }
         else {
             for (auto& data : it->second) {
-                if (gfuncs::IsFormValid(data.projectile)) {
-                    if ((data.projectile->Is3DLoaded() || !only3dLoaded) && (!data.projectile->IsDisabled() || !onlyEnabled)) {
-                        refs.push_back(data.projectile);
+				RE::TESObjectREFR* ref = (gfuncs::GetRefFromObjectRefHandle(data.projectile));
+				if (!gfuncs::IsFormValid(ref)){
+					continue;
+				}
+				
+				RE::Projectile* projectile = ref->AsProjectile();
+				if (!gfuncs::IsFormValid(projectile)){
+					continue;
+				}
+				
+				if (gfuncs::IsFormValid(projectile)) {
+                    if ((projectile->Is3DLoaded() || !only3dLoaded) && (!projectile->IsDisabled() || !onlyEnabled)) {
+                        refs.push_back(projectile);
                     }
                 }
             }
@@ -760,31 +835,53 @@ std::vector<RE::TESObjectREFR*> GetRecentProjectileShotRefs(RE::StaticFunctionTa
 }
 
 RE::TESObjectREFR* GetLastProjectileShotRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, bool only3dLoaded, bool onlyEnabled, int projectileType) {
-    RE::TESObjectREFR* returnRef = nullptr;
+	std::lock_guard<std::mutex> lock(projectileMutex);
+	
+	RE::TESObjectREFR* returnRef = nullptr;
     if (!gfuncs::IsFormValid(ref)) {
         logger::warn("ref isn't valid or doesn't exist");
         return returnRef;
     }
 
-    auto it = recentShotProjectiles.find(ref);
+    auto it = recentShotProjectiles.find(ref->GetHandle());
     if (it != recentShotProjectiles.end()) {
         if (it->second.size() == 0) {
             return nullptr;
         }
         if (projectileType >= 1 && projectileType <= 7) {
             for (int i = it->second.size() - 1; i >= 0 && !returnRef; --i) {
-                if (GetProjectileRefType(nullptr, it->second[i].projectile) == projectileType) {
-                    if ((it->second[i].projectile->Is3DLoaded() || !only3dLoaded) && (!it->second[i].projectile->IsDisabled() || !onlyEnabled)) {
-                        returnRef = it->second[i].projectile;
+				RE::TESObjectREFR* ref = (gfuncs::GetRefFromObjectRefHandle(it->second[i].projectile));
+				if (!gfuncs::IsFormValid(ref)){
+					continue;
+				}
+				
+				RE::Projectile* projectile = ref->AsProjectile();
+				if (!gfuncs::IsFormValid(projectile)){
+					continue;
+				}
+				
+                if (GetProjectileRefType(nullptr, projectile) == projectileType) {
+                    if ((projectile->Is3DLoaded() || !only3dLoaded) && (!projectile->IsDisabled() || !onlyEnabled)) {
+                        returnRef = projectile;
                     }
                 }
             }
         }
         else {
             for (int i = it->second.size() - 1; i >= 0 && !returnRef; --i) {
-                if (gfuncs::IsFormValid(it->second[i].projectile)) {
-                    if ((it->second[i].projectile->Is3DLoaded() || !only3dLoaded) && (!it->second[i].projectile->IsDisabled() || !onlyEnabled)) {
-                        returnRef = it->second[i].projectile;
+				RE::TESObjectREFR* ref = (gfuncs::GetRefFromObjectRefHandle(it->second[i].projectile));
+				if (!gfuncs::IsFormValid(ref)){
+					continue;
+				}
+				
+				RE::Projectile* projectile = ref->AsProjectile();
+				if (!gfuncs::IsFormValid(projectile)){
+					continue;
+				}
+				
+                if (gfuncs::IsFormValid(projectile)) {
+                    if ((projectile->Is3DLoaded() || !only3dLoaded) && (!projectile->IsDisabled() || !onlyEnabled)) {
+                        returnRef = projectile;
                     }
                 }
             }

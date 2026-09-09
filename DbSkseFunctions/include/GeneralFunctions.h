@@ -116,7 +116,7 @@ namespace gfuncs {
     bool IsQuestObject(RE::TESObjectREFR* ref);
 
     //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
-    bool ContainerContainsRef(RE::TESObjectREFR* containerRef, RE::TESObjectREFR* ref, bool checkContainerRef = true, bool checkRefIdentity = true);
+    bool ContainerContainsRef(RE::TESObjectREFR* containerRef, RE::TESObjectREFR* ref, bool checkContainerRef = true, bool checkRefIdentity = true, bool checkRef = true);
     
     //Thanks to Meridiano, author of Papyrus Ini Manipulator for this.
     std::int32_t GetBaseFormCount(RE::TESObjectREFR* containerRef, RE::TESBoundObject* akForm);
@@ -204,6 +204,6 @@ namespace gfuncs {
     void SendEvents(std::vector<RE::VMHandle> handles, const RE::BSFixedString& sEvent, RE::BSScript::IFunctionArguments* args);
     
     RE::TESForm* FindNullForm();
-
+	
     void Install();
 }

@@ -66,20 +66,21 @@ namespace papyrusUtilExArrayFunctions {
         if (!vm) { return false; }
         
         switch (type) {
-#define X(ENUM, CLASS, PSC)                                                                 \
-        case FormTypeTable::ExtendedFormType::PSC:                                          \
-            vm->RegisterFunction("Create", scriptName, CreateArray<CLASS>);        			\
-            vm->RegisterFunction("Resize", scriptName, ResizeArray<CLASS>);        			\
-            vm->RegisterFunction("Merge", scriptName, MergeArrays<CLASS>);                  \
-            vm->RegisterFunction("Slice", scriptName, SliceArray<CLASS>);                   \
-            vm->RegisterFunction("Push", scriptName, PushArray<CLASS>);                     \
-            vm->RegisterFunction("Insert", scriptName, InsertIntoArray<CLASS>);             \
-            vm->RegisterFunction("Remove", scriptName, RemoveFromArray<CLASS>);             \
-            vm->RegisterFunction("RemoveAt", scriptName, RemoveFromArrayAt<CLASS>);         \
-            vm->RegisterFunction("Sort", scriptName, SortArray<CLASS>);                     \
-            vm->RegisterFunction("GetStrings", scriptName, GetArrayStrings<CLASS>);         \
-            vm->RegisterFunction("Count", scriptName, CountInArray<CLASS>);                 \
-            logger::info("scriptName[{}]", scriptName);                                     \
+#define X(ENUM, CLASS, PSC)                                                                                 \
+        case FormTypeTable::ExtendedFormType::PSC:                                                          \
+            vm->RegisterFunction("Create", scriptName, CreateArray<CLASS>);        			                \
+            vm->RegisterFunction("Resize", scriptName, ResizeArray<CLASS>);        			                \
+            vm->RegisterFunction("Merge", scriptName, MergeArrays<CLASS>);                                  \
+            vm->RegisterFunction("Slice", scriptName, SliceArray<CLASS>);                                   \
+            vm->RegisterFunction("Push", scriptName, PushArray<CLASS>);                                     \
+            vm->RegisterFunction("Insert", scriptName, InsertIntoArray<CLASS>);                             \
+            vm->RegisterFunction("Remove", scriptName, RemoveFromArray<CLASS>);                             \
+            vm->RegisterFunction("RemoveAt", scriptName, RemoveFromArrayAt<CLASS>);                         \
+            vm->RegisterFunction("RemoveDuplicates", scriptName, RemoveDuplicatesFromArray<CLASS>);         \
+            vm->RegisterFunction("Sort", scriptName, SortArray<CLASS>);                                     \
+            vm->RegisterFunction("GetStrings", scriptName, GetArrayStrings<CLASS>);                         \
+            vm->RegisterFunction("Count", scriptName, CountInArray<CLASS>);                                 \
+            logger::info("scriptName[{}]", scriptName);                                                     \
             return true;
             DB_MASTER_TYPE_LIST
 #undef X
@@ -238,7 +239,7 @@ namespace papyrusUtilExArrayFunctions {
 				std::string scriptName = scriptPath.stem().string();
 				std::string fileContents = fs::GetFileContents(scriptPath);
 				std::string mainPropertyName = GetScriptArrayPropertyType(fileContents, scriptName);
-				logger::debug("Registering file[{}] scriptname [{}] mainPropertyName[{}]", 
+				logger::debug("Registering script[{}] scriptname [{}] mainPropertyName[{}]", 
 					scriptPath.filename().generic_string(),
 					scriptName,
 					mainPropertyName
@@ -250,6 +251,9 @@ namespace papyrusUtilExArrayFunctions {
 						count++;
 					}
 				} 
+				else {
+					logger::error("Formtype class for [{}] not found", mainPropertyName);
+				}
 				
 				RegisterArraAsProperties(vm, fileContents, scriptName);
 			}

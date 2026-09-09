@@ -37,6 +37,9 @@ Alias[] Function Remove(Alias[] arr, Alias toRemove, bool all = true) global nat
 ; remove the element at the index in the array, decreasing its size. If the index is out of bounds, removes the last element in the array.
 Alias[] Function RemoveAt(Alias[] arr, int index) Global Native 
 
+; remove all duplicates from the arr, making each element in the arr unique, and return the new array.
+Alias[] Function RemoveDuplicates(Alias[] arr) Global Native 
+
 ; returns new array that contains the forms of the passed in akForms array, but sorted. 
 ; Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
 ; 1 = by form name ascending, 
@@ -64,7 +67,7 @@ int Function Count(Alias[] arr, Alias item) Global Native
 ; If removeNoneArrElements, any none entry in the passed in array is removed from the return array. 
 ; If removeFailedToConvertElements, any valid entry in the passed in array that fails to convert to the return type is removed from the return array.
 ; You can add as many ArrayAs functions here as you want, converting from any compatible type.
-; Make sure the new function names contains ArrayAs.
+; Make sure the new function names contain ArrayAs.
 
 ; Cast all Alias array elements to ReferenceAlias and return new array.
 ReferenceAlias[] Function ArrayAsReferenceAlias(Alias[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native
