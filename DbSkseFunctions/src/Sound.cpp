@@ -10,8 +10,9 @@ RE::BGSMusicType* GetCurrentMusicType(RE::StaticFunctionTag*)
 {
     RE::BGSMusicType* currentPriorityType = nullptr;
 
-    if (sv::dataHandler) {
-        RE::BSTArray<RE::TESForm*>* musicTypeArray = &(sv::dataHandler->GetFormArray(RE::FormType::MusicType));
+	auto* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (dataHandler) {
+        RE::BSTArray<RE::TESForm*>* musicTypeArray = &(dataHandler->GetFormArray(RE::FormType::MusicType));
 
         RE::BSIMusicTrack* currentPriorityTrack = nullptr;
         std::int8_t currentPriority = 127;
@@ -145,9 +146,10 @@ RE::BSSoundHandle* GetSoundHandleById(int id) {
 RE::BSSoundHandle PlaySound(RE::TESSound* akSound, RE::TESObjectREFR* akSource, float volume) {
     RE::BSSoundHandle soundHandle;
     if (akSound && akSource) {
-        if (sv::audiomanager) {
-            // sv::audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor); //from older api
-            sv::audiomanager->GetSoundHandle(soundHandle, akSound->descriptor->soundDescriptor);
+		auto* audiomanager = RE::BSAudioManager::GetSingleton();
+        if (audiomanager) {
+            // audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor); //from older api
+            audiomanager->GetSoundHandle(soundHandle, akSound->descriptor->soundDescriptor);
 
             soundHandle.SetObjectToFollow(akSource->Get3D());
             soundHandle.SetVolume(volume);
@@ -176,7 +178,8 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
         return -1;
     }
 
-    if (!sv::audiomanager) {
+	auto* audiomanager = RE::BSAudioManager::GetSingleton();
+    if (!audiomanager) {
         logger::error("audiomanager* not found, sound[{}] on source[{}] at volume[{}] not played",
             gfuncs::GetFormDataString(akSound), gfuncs::GetFormDataString(akSource), volume);
         return -1;
@@ -184,8 +187,8 @@ int PlaySound(RE::StaticFunctionTag*, RE::TESSound* akSound, RE::TESObjectREFR* 
 
     RE::BSSoundHandle soundHandle;
 
-    // sv::audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor);
-    sv::audiomanager->GetSoundHandle(soundHandle, akSound->descriptor->soundDescriptor);
+    // audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSound->descriptor->soundDescriptor);
+    audiomanager->GetSoundHandle(soundHandle, akSound->descriptor->soundDescriptor);
 
     soundHandle.SetObjectToFollow(akSource->Get3D());
     soundHandle.SetVolume(volume);
@@ -233,15 +236,16 @@ int PlaySoundDescriptor(RE::StaticFunctionTag*, RE::BGSSoundDescriptorForm* akSo
         return -1;
     }
 
-    if (!sv::audiomanager) {
+	auto* audiomanager = RE::BSAudioManager::GetSingleton();
+    if (!audiomanager) {
         logger::error("audiomanager* not found, sound[{}] on source[{}] at volume[{}] not played",
             gfuncs::GetFormDataString(akSoundDescriptor), gfuncs::GetFormDataString(akSource), volume);
         return -1;
     }
     RE::BSSoundHandle soundHandle;
 
-    // sv::audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSoundDescriptor->soundDescriptor);
-    sv::audiomanager->GetSoundHandle(soundHandle, akSoundDescriptor->soundDescriptor);
+    // audiomanager->BuildSoundDataFromDescriptor(soundHandle, akSoundDescriptor->soundDescriptor);
+    audiomanager->GetSoundHandle(soundHandle, akSoundDescriptor->soundDescriptor);
 
     soundHandle.SetObjectToFollow(akSource->Get3D());
     soundHandle.SetVolume(volume);

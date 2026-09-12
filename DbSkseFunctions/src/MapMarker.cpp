@@ -74,12 +74,13 @@ bool IsRefVisibleOnLocalMap(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
 		return false;
 	}
 	
-	if (!sv::ui) {
+	auto* ui = RE::UI::GetSingleton();
+	if (!ui) {
 		logger::warn("ui doesn't exist");
 		return false;
 	}
 	
-	RE::GPtr<RE::MapMenu> menu = sv::ui->GetMenu<RE::MapMenu>();
+	RE::GPtr<RE::MapMenu> menu = ui->GetMenu<RE::MapMenu>();
 	if (!menu) {
 		logger::warn("MapMenu not found");
 		return false;
@@ -143,12 +144,13 @@ bool IsRefVisibleOnLocalMap(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
 std::vector<RE::TESObjectREFR*> GetRefsVisibleOnTheLocalMap(RE::StaticFunctionTag*) {
 	std::vector<RE::TESObjectREFR*> refs; 
 	
-	if (!sv::ui) {
+	auto* ui = RE::UI::GetSingleton();
+	if (!ui) {
 		logger::warn("ui doesn't exist");
 		return refs;
 	}
 	
-	RE::GPtr<RE::MapMenu> menu = sv::ui->GetMenu<RE::MapMenu>();
+	RE::GPtr<RE::MapMenu> menu = ui->GetMenu<RE::MapMenu>();
 	if (!menu) {
 		logger::warn("MapMenu not found");
 		return refs;
@@ -241,16 +243,17 @@ bool SetCanFastTravelToMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMark
 
 // Get all map markers valid for the current worldspace or interior cell grid
 RE::BSTArray<RE::ObjectRefHandle>* GetPlayerMapMarkers() {
-	if (!sv::player){
+	auto* player = RE::PlayerCharacter::GetSingleton();
+	if (!player){
 		return nullptr; 
 	}
 	
 	if (REL::Module::IsVR()){
-		auto* runtimeData = sv::player->GetVRPlayerRuntimeData();
+		auto* runtimeData = player->GetVRPlayerRuntimeData();
 		return &runtimeData->currentMapMarkers;
 	}
 	else {
-		auto& runtimeData = sv::player->GetPlayerRuntimeData();
+		auto& runtimeData = player->GetPlayerRuntimeData();
 		return &runtimeData.currentMapMarkers;
 	}
 }
@@ -722,12 +725,13 @@ bool SetCellOrWorldSpaceOriginForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* 
 
     originData->startingWorldOrCell = cellOrWorldSpace;
 
-    if (sv::player) {
+	auto* player = RE::PlayerCharacter::GetSingleton();
+    if (player) {
         if (IsMapMarker(nullptr, ref)) {
             RE::TESWorldSpace* newOriginWorld = static_cast<RE::TESWorldSpace*>(cellOrWorldSpace);
 
             if (gfuncs::IsFormValid(newOriginWorld)) {
-                RE::TESWorldSpace* currentWorld = sv::player->GetWorldspace();
+                RE::TESWorldSpace* currentWorld = player->GetWorldspace();
                 if (gfuncs::IsFormValid(currentWorld)) {
                     if (newOriginWorld == currentWorld) {
                         auto* mapMarkers = GetPlayerMapMarkers();
@@ -863,11 +867,14 @@ int GetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
 } 
 
 bool ShouldAddToPlayerMapMarkers(RE::TESObjectREFR* objRef) {
-	RE::TESWorldSpace* playerWorldSpace = sv::player->GetWorldspace();
+	auto* player = RE::PlayerCharacter::GetSingleton();
 	
-	if (objRef->GetWorldspace() == playerWorldSpace && playerWorldSpace != nullptr) { 
-		return true;
-	} 
+	if (player){
+		RE::TESWorldSpace* playerWorldSpace = player->GetWorldspace();
+		if (objRef->GetWorldspace() == playerWorldSpace && playerWorldSpace != nullptr) { 
+			return true;
+		} 
+	}
 	
 	RE::TESObjectCELL* objCell = objRef->GetParentCell();
 	if (gfuncs::IsFormValid(objCell)){
@@ -890,15 +897,16 @@ std::string GetNiPoint3String(RE::NiPoint3 point){
 // get the map marker currently highlighted in the map menu, if any.
 // will return none if the "do you want to fast travel" menu is open.
 RE::TESObjectREFR* GetHighlightedMapMarker(RE::StaticFunctionTag*) {
-    if (!sv::ui) {
+	auto* ui = RE::UI::GetSingleton();
+    if (!ui) {
         return nullptr;
     }
 	
-	if (!sv::ui->IsMenuOpen(RE::MapMenu::MENU_NAME) ){
+	if (!ui->IsMenuOpen(RE::MapMenu::MENU_NAME) ){
 		return nullptr;
 	}
 	
-    RE::GPtr<RE::MapMenu> menu = sv::ui->GetMenu<RE::MapMenu>();
+    RE::GPtr<RE::MapMenu> menu = ui->GetMenu<RE::MapMenu>();
     if (!menu) {
         return nullptr;
     }
@@ -1042,12 +1050,15 @@ bool CreateMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef, std::str
 
 	//map markers must have an origin to be visible on the map
 	if (!GetCellOrWorldSpaceOriginForRef(nullptr, objRef)){
-		RE::TESForm* origin = sv::player->GetWorldspace(); 
-		if (!gfuncs::IsFormValid(origin)){
-			origin = sv::player->GetParentCell();
-		}
-		if (gfuncs::IsFormValid(origin)){
-			SetCellOrWorldSpaceOriginForRef(nullptr, objRef, origin);
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (player){
+			RE::TESForm* origin = player->GetWorldspace(); 
+			if (!gfuncs::IsFormValid(origin)){
+				origin = player->GetParentCell();
+			}
+			if (gfuncs::IsFormValid(origin)){
+				SetCellOrWorldSpaceOriginForRef(nullptr, objRef, origin);
+			}
 		}
 	}
 	

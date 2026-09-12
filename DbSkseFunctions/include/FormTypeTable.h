@@ -126,7 +126,7 @@
 	X(201,                				 RE::BGSRefAlias,              ReferenceAlias)     \
 	X(202,                				 RE::BGSLocAlias,              LocationAlias)      \
 	X(203,                				 RE::ActiveEffect,             ActiveMagicEffect)  \
-	X(204,                				 RE::TESForm,                  Form)
+	X(204,                				 RE::TESForm,                  Form)               
 
 namespace FormTypeTable {
     enum class ExtendedFormType : std::int32_t // Force int32_t to safely hold 200+ and RE::FormType
@@ -136,3 +136,4 @@ namespace FormTypeTable {
         #undef X
     };
 }
+

@@ -21,12 +21,13 @@ namespace magic {
             return;
         }
 
-        if (!sv::player) {
-            logger::error("sv::player* not found. shout[{}] not unlocked", gfuncs::GetFormDataString(akShout));
+		auto* player = RE::PlayerCharacter::GetSingleton();
+        if (!player) {
+            logger::error("player* not found. shout[{}] not unlocked", gfuncs::GetFormDataString(akShout));
             return;
         }
 
-        sv::player->AddShout(akShout);
+        player->AddShout(akShout);
 
         logger::debug("{} ID {:x}", akShout->GetName(), akShout->GetFormID());
 
@@ -34,35 +35,36 @@ namespace magic {
         if (gfuncs::IsFormValid(word)) {
             //gfuncs::gfuncs::install->UnlockWord(word);
             logger::debug("unlock word 1 {} ID {:x}", word->GetName(), word->GetFormID());
-            std::string command = "sv::player.teachword " + gfuncs::IntToHex(int(word->GetFormID())); //didn't find a teachword function in NG, so using console command as workaround. 
+            std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID())); //didn't find a teachword function in NG, so using console command as workaround. 
             ConsoleUtil::ExecuteCommand(command, nullptr);
-            sv::player->UnlockWord(word);
+            player->UnlockWord(word);
         }
 
         word = akShout->variations[1].word;
         if (gfuncs::IsFormValid(word)) {
             //playerRef->UnlockWord(word);
             logger::debug("unlock word 2 {} ID {:x}", word->GetName(), word->GetFormID());
-            std::string command = "sv::player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
+            std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
             ConsoleUtil::ExecuteCommand(command, nullptr);
-            sv::player->UnlockWord(word);
+            player->UnlockWord(word);
         }
 
         word = akShout->variations[2].word;
         if (gfuncs::IsFormValid(word)) {
             //playerRef->UnlockWord(word);
             logger::debug("unlock word 3 {} ID {:x}", word->GetName(), word->GetFormID());
-            std::string command = "sv::player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
+            std::string command = "player.teachword " + gfuncs::IntToHex(int(word->GetFormID()));
             ConsoleUtil::ExecuteCommand(command, nullptr);
-            sv::player->UnlockWord(word);
+            player->UnlockWord(word);
         }
     }
 
     void AddAndUnlockAllShouts(RE::StaticFunctionTag*, int minNumberOfWordsWithTranslations, bool onlyShoutsWithNames, bool onlyShoutsWithDescriptions) {
         bool minNumberOfWordsCheck = (minNumberOfWordsWithTranslations > 0 && minNumberOfWordsWithTranslations <= 3);
 
-        if (sv::dataHandler) {
-            RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Shout));
+		auto* dataHandler = RE::TESDataHandler::GetSingleton();
+        if (dataHandler) {
+            RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Shout));
 
             int ic = 0;
             //loop through all shouts

@@ -25,16 +25,16 @@ function DestroyCondition(string conditionId) Global Native
 ;Does the condition with the conditionId exist?
 bool function ConditionExists(string conditionId) Global Native
 
-;Set the nth parameter for the condition with the conditionId to the form param. paramIndex must be between 0 and 1.
+;Set the nth parameter for the condition with the conditionId to the form param. paramIndex must be 0 or 1.
 bool function SetConditionParameterForm(string conditionId, form param, int paramIndex = 0) Global Native
 
-;Set the nth parameter for the condition with the conditionId to the Alias param. paramIndex must be between 0 and 1.
+;Set the nth parameter for the condition with the conditionId to the Alias param. paramIndex must be 0 or 1.
 bool function SetConditionParameterAlias(string conditionId, Alias param, int paramIndex = 0) Global Native
 
-;Set the nth parameter for the condition with the conditionId to the Bool param. paramIndex must be between 0 and 1.
+;Set the nth parameter for the condition with the conditionId to the Bool param. paramIndex must be 0 or 1.
 bool function SetConditionParameterBool(string conditionId, Bool param, int paramIndex = 0) Global Native
 
-;Set the nth parameter for the condition with the conditionId to the Int param. paramIndex must be between 0 and 1.
+;Set the nth parameter for the condition with the conditionId to the Int param. paramIndex must be 0 or 1.
 ;Int parameters will explicitely say integer in the creation kit, like GetIsCreatureType. 
 ;Otherwise for enum drop down lists, such as GetIsSex, use SetConditionParameterRaw.
 bool function SetConditionParameterInt(string conditionId, Int param, int paramIndex = 0) Global Native
@@ -45,10 +45,10 @@ bool function SetConditionParameterInt(string conditionId, Int param, int paramI
 ; params to tell which option a given function expects.
 bool function SetConditionParameterRaw(string conditionId, Int param, int paramIndex = 0) Global Native
 
-;Set the nth parameter for the condition with the conditionId to the Float param. paramIndex must be between 0 and 1.
+;Set the nth parameter for the condition with the conditionId to the Float param. paramIndex must be 0 or 1.
 bool function SetConditionParameterFloat(string conditionId, Float param, int paramIndex = 0) Global Native
 
-;Set the nth parameter for the condition with the conditionId to the String param. paramIndex must be between 0 and 1.
+;Set the nth parameter for the condition with the conditionId to the String param. paramIndex must be 0 or 1.
 bool function SetConditionParameterString(string conditionId, String param, int paramIndex = 0) Global Native
 
 ;Set the condition with the conditionId's comparison for the conditionId. 

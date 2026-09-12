@@ -27,31 +27,43 @@ struct MenuModeTimer {
         interval = afInterval;
         savedTimeElapsed = afSavedTimeElapsed;
 
-        std::thread t([=]() {
+        std::thread t([=, this]() {
             startTime = std::chrono::system_clock::now();
 
             int milliSecondInterval = (interval * 1000);
             std::this_thread::sleep_for(std::chrono::milliseconds(milliSecondInterval));
-
-            if (!cancelled) {
-                if (sv::skyrimVm) {
-                    float elapsedTime = (savedTimeElapsed + gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
-                    auto* args = RE::MakeFunctionArguments((int)timerID);
-                    sv::skyrimVm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
-                    delete args;
-                    logger::debug("menu mode timer event sent. ID[{}], interval[{}], elapsed time[{}]", timerID, interval, elapsedTime);
-                }
-                else {
-                    logger::error("sv::skyrimVm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
-                }
-            }
-
-            finished = true;
-            EraseFinishedMenuModeTimers();
-            });
+			if (auto* task = SKSE::GetTaskInterface()) {
+				task->AddTask([this] { FinishTimer(); });
+			}
+			else {
+				logger::error("couldn't get the SKSE::GetTaskInterface()");
+				finished = true;
+				EraseFinishedMenuModeTimers();
+			}
+            
+		});
         t.detach();
     }
 
+	void FinishTimer(){
+		if (!cancelled) {
+			auto* skyrimVm = RE::SkyrimVM::GetSingleton();
+			if (skyrimVm) {
+				float elapsedTime = (savedTimeElapsed + gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
+				auto* args = RE::MakeFunctionArguments((int)timerID);
+				skyrimVm->SendAndRelayEvent(handle, &sMenuModeTimerEvent, args, nullptr);
+				delete args;
+				logger::debug("menu mode timer event sent. ID[{}], interval[{}], elapsed time[{}]", timerID, interval, elapsedTime);
+			}
+			else {
+				logger::error("skyrimVm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+			}
+		}
+
+		finished = true;
+		EraseFinishedMenuModeTimers();
+	}
+	
     float GetElapsedTime() {
         return (savedTimeElapsed + gfuncs::timePointDiffToFloat(std::chrono::system_clock::now(), startTime));
     }
@@ -350,7 +362,7 @@ struct NoMenuModeTimer {
         started = true;
         noMenuModeTimersEmpty = false;
 
-        std::thread t([=]() {
+        std::thread t([=, this]() {
             bool inMenu = sv::inMenuMode;
             if (inMenu) {
                 lastMenuCheck = std::chrono::system_clock::now();
@@ -359,7 +371,7 @@ struct NoMenuModeTimer {
             {
                 std::unique_lock<std::mutex> lock(sv::updateMutex);
                 // waiting
-                sv::updateCv.wait(lock, [=] {
+                sv::updateCv.wait(lock, [=, this] {
                     return (inMenu != sv::inMenuMode || sv::currentTimePoint >= endTime);
                 });
             }
@@ -373,35 +385,48 @@ struct NoMenuModeTimer {
             } 
 
             if (!cancelled) {
-                if (sv::currentTimePoint >= endTime) {
-                    if (sv::skyrimVm) {
-                        float elapsedTime = GetElapsedTime();
-                        auto* args = RE::MakeFunctionArguments((int)timerID);
-                        sv::skyrimVm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
-                        logger::debug("NoMenuModeTimer event sent: timerID[{}] timeToWait[{}] elapsedTime[{}]",
-                            timerID, timeToWait, elapsedTime);
-
-                        delete args;
-                        finished = true;
-                    }
-                    else {
-                        logger::error("sv::skyrimVm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
-                        finished = true;
-                    }
+                if (sv::currentTimePoint >= endTime) { 
+					if (auto* task = SKSE::GetTaskInterface()) {
+						task->AddTask([this] { FinishTimer(); }); //add to main thread, using RE::SkyrimVM::GetSingleton()
+					}
+					else {
+						logger::error("couldn't get the SKSE::GetTaskInterface()");
+						finished = true;
+                		EraseFinishedNoMenuModeTimers();
+					}
                 }
                 else {
                     StartTimer();
                 }
             }
-            
-            if (cancelled || finished) {
+            else {
                 canDelete = true;
                 EraseFinishedNoMenuModeTimers();
             }
-            });
+		});
         t.detach();
     }
+	
+	void FinishTimer(){
+		auto* skyrimVm = RE::SkyrimVM::GetSingleton();
+		if (skyrimVm) {
+			float elapsedTime = GetElapsedTime();
+			auto* args = RE::MakeFunctionArguments((int)timerID);
+			skyrimVm->SendAndRelayEvent(handle, &sNoMenuModeTimerEvent, args, nullptr);
+			logger::debug("NoMenuModeTimer event sent: timerID[{}] timeToWait[{}] elapsedTime[{}]",
+				timerID, timeToWait, elapsedTime);
 
+			delete args;
+			finished = true;
+		}
+		else {
+			logger::error("skyrimVm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+			finished = true;
+		}
+		canDelete = true;
+		EraseFinishedNoMenuModeTimers();
+	}
+	
     float GetElapsedTime() {
         if (sv::inMenuMode) {
             return (gfuncs::timePointDiffToFloat(lastMenuCheck, startTime));
@@ -723,34 +748,48 @@ struct Timer {
 
             if (!cancelled) {
                 if (sv::currentTimePoint >= endTime) {
-                    if (sv::skyrimVm) {
-                        float elapsedTime = GetElapsedTime();
-                        auto* args = RE::MakeFunctionArguments((int)timerID);
-                        sv::skyrimVm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
-                        logger::debug("Timer event sent: timerID[{}] timeToWait[{}] elapsedTime[{}]",
-                            timerID, timeToWait, elapsedTime);
-
-                        delete args;
-                        finished = true;
-                    }
-                    else {
-                        logger::error("sv::skyrimVm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
-                        finished = true;
-                    }
+					if (auto* task = SKSE::GetTaskInterface()) {
+						task->AddTask([this] { FinishTimer(); }); //add to main thread, using RE::SkyrimVM::GetSingleton()
+					}
+					else {
+						logger::error("couldn't get the SKSE::GetTaskInterface()");
+						finished = true;
+                		EraseFinishedTimers();
+					}
                 }
                 else {
                     StartTimer();
                 }
             }
-
-            if (cancelled || finished) {
+            else {
                 canDelete = true;
                 EraseFinishedTimers();
             }
-            });
+		});
         t.detach();
     }
 
+	void FinishTimer(){
+		auto* skyrimVm = RE::SkyrimVM::GetSingleton();
+		if (skyrimVm) {
+			float elapsedTime = GetElapsedTime();
+			auto* args = RE::MakeFunctionArguments((int)timerID);
+			skyrimVm->SendAndRelayEvent(handle, &sTimerEvent, args, nullptr);
+			logger::debug("Timer event sent: timerID[{}] timeToWait[{}] elapsedTime[{}]",
+				timerID, timeToWait, elapsedTime);
+
+			delete args;
+			finished = true;
+		}
+		else {
+			logger::error("skyrimVm* not found, timer[{}] for handle[{}] event not sent.", timerID, handle);
+			finished = true;
+		}
+		
+		canDelete = true;
+		EraseFinishedTimers();
+	}
+	
     float GetElapsedTime() {
         if (sv::gamePaused) {
             return (gfuncs::timePointDiffToFloat(lastMenuCheck, startTime));
@@ -1019,12 +1058,13 @@ struct GameTimeTimer {
         handle = akHandle;
         timerID = aiTimerID;
 
-        if (sv::calendar) {
-            endTime = sv::calendar->GetHoursPassed() + afInterval;
+		auto* calendar = RE::Calendar::GetSingleton();
+        if (calendar) {
+            endTime = calendar->GetHoursPassed() + afInterval;
             StartTimer();
         }
         else {
-            logger::error("sv::calendar* not found, timer[{}] for handle[{}] event not started.", timerID, handle);
+            logger::error("calendar* not found, timer[{}] for handle[{}] event not started.", timerID, handle);
             cancelled = true;
         }
     }
@@ -1042,42 +1082,62 @@ struct GameTimeTimer {
             }
 
             if (!cancelled) {
-                auto now = std::chrono::system_clock::now();
-                float endTime = sv::gameTime;
-                float elapsedGameHours = (sv::gameTime - startTime);
-
-                auto* args = RE::MakeFunctionArguments((int)timerID);
-                sv::skyrimVm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
-                delete args;
-                logger::debug("game timer event sent. ID[{}] startTime[{}] endTime[{}] elapsedGameHours[{}]",
-                    timerID, startTime, endTime, elapsedGameHours);
-
-                finished = true;
+				if (auto* task = SKSE::GetTaskInterface()) {
+					task->AddTask([this] { FinishTimer(); });
+				}
+				else {
+					logger::error("couldn't get the SKSE::GetTaskInterface()");
+					finished = true;
+					EraseFinishedGameTimers();
+				}
             }
-
-            if (cancelled || finished) {
+            else {
                 EraseFinishedGameTimers();
             }
         });
         t.detach();
     }
 
+	void FinishTimer(){
+		auto* skyrimVm = RE::SkyrimVM::GetSingleton();
+		if (skyrimVm){
+			auto now = std::chrono::system_clock::now();
+			float endTime = sv::gameTime;
+			float elapsedGameHours = (sv::gameTime - startTime);
+
+			auto* args = RE::MakeFunctionArguments((int)timerID);
+			skyrimVm->SendAndRelayEvent(handle, &sGameTimeTimerEvent, args, nullptr);
+			delete args;
+			logger::debug("game timer event sent. ID[{}] startTime[{}] endTime[{}] elapsedGameHours[{}]",
+				timerID, startTime, endTime, elapsedGameHours);
+
+			finished = true;
+		}
+		else {
+			logger::error("skyrimVm not found");
+			finished = true;
+		}
+		EraseFinishedGameTimers();
+	}
+	
     float GetElapsedTime() {
-        if (sv::calendar) {
-            return (sv::calendar->GetHoursPassed() - startTime);
+		auto* calendar = RE::Calendar::GetSingleton();
+        if (calendar) {
+            return (calendar->GetHoursPassed() - startTime);
         }
         else {
-            logger::error("sv::calendar* not found, timer[{}] for handle[{}]", timerID, handle);
+            logger::error("calendar* not found, timer[{}] for handle[{}]", timerID, handle);
             return -1.0;
         }
     }
 
     float GetTimeLeft() {
-        if (sv::calendar) {
-            return (endTime - sv::calendar->GetHoursPassed());
+		auto* calendar = RE::Calendar::GetSingleton();
+        if (calendar) {
+            return (endTime - calendar->GetHoursPassed());
         }
         else {
-            logger::error("sv::calendar* not found, timer[{}] for handle[{}]", timerID, handle);
+            logger::error("calendar* not found, timer[{}] for handle[{}]", timerID, handle);
             return -1.0;
         }
     }
@@ -1262,8 +1322,9 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
         }
     }
 
-    if (!sv::calendar) {
-        logger::critical("sv::calendar not found, aborting load.");
+	auto* calendar = RE::Calendar::GetSingleton();
+    if (!calendar) {
+        logger::critical("calendar not found, aborting load.");
         return false;
     }
 
@@ -1315,7 +1376,7 @@ bool loadTimers(std::vector<GameTimeTimer*>& v, uint32_t record, SKSE::Serializa
             continue;
         }
 
-        GameTimeTimer* timer = new GameTimeTimer(handle, (endTime - sv::calendar->GetHoursPassed()), ID);
+        GameTimeTimer* timer = new GameTimeTimer(handle, (endTime - calendar->GetHoursPassed()), ID);
         v.push_back(timer);
 
         logger::debug("gameTimer loaded: startTime[{}], endTime[{}], handle[{}], ID[{}], cancelled[{}], finished[{}]",

@@ -2,6 +2,7 @@
 #include "GeneralFunctions.h"
 #include "RE/A/Actor.h"
 #include "RE/B/BGSPerkEntry.h"
+#include "RE/B/BSFixedString.h"
 #include "RE/E/ExtraDataList.h"
 #include "RE/RTTI.h"
 #include "RE/T/TESBoundObject.h"

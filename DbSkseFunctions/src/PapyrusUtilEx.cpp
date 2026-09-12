@@ -42,7 +42,13 @@ namespace papyrusUtilEx {
 
 	bool BindArray(std::string typeName){
 		RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo> objType;
-		if (sv::vm->GetScriptObjectType(typeName, objType)){
+		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!bssVm){
+			logger::error("RE::BSScript::Internal::VirtualMachine::GetSingleton() not found");
+			return false;
+		}
+		
+		if (bssVm->GetScriptObjectType(typeName, objType)){
 			RE::BSScript::TypeInfo type;
 			type.SetType(static_cast<RE::BSScript::TypeInfo::RawType>(reinterpret_cast<std::size_t>(objType.get()) | 1));   // bit 0 = array
 			return true;
@@ -124,9 +130,15 @@ namespace papyrusUtilEx {
 			bsScriptName = gfuncs::GetCallingScriptName(vm, stackID, "PapyrusUtilEx");
 		}
 		
-        auto it = sv::vm->attachedScripts.find(handle);
-        if (it == sv::vm->attachedScripts.end()) {
-            logger::error("sv::vm->attachedScripts couldn't find handle[{}] scriptName[{}] arrayProperty[{}]",
+        auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!bssVm){
+			logger::error("RE::BSScript::Internal::VirtualMachine::GetSingleton() not found");
+			return returnValue;
+		}
+		
+		auto it = bssVm->attachedScripts.find(handle);
+        if (it == bssVm->attachedScripts.end()) {
+            logger::error("bssVm->attachedScripts couldn't find handle[{}] scriptName[{}] arrayProperty[{}]",
                 handle, bsScriptName, bsArrayPropertyName);
             return returnValue;
         }
@@ -191,12 +203,13 @@ namespace papyrusUtilEx {
 		std::string sHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName, int size, int fillIndex) {
         
 		RE::VMHandle akHandle = GetHandle(vm, stackID, sHandle); 
+		// auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
 		
-        if (!sv::vm) {
-            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", 
-				bsArrayPropertyName, bsScriptName, akHandle);
-            return false;
-        }
+        // if (!bssVm) {
+        //     logger::error("couldn't get *bssVm for [{}] in script[{}] on handle[{}]", 
+		// 		bsArrayPropertyName, bsScriptName, akHandle);
+        //     return false;
+        // }
 		
         auto arrayData = GetArrayProperty(vm, stackID, akHandle, bsScriptName, bsArrayPropertyName);
 
@@ -226,11 +239,17 @@ namespace papyrusUtilEx {
         }
 		
         RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-		if (!sv::vm->CreateArray1(type, size, newArray)){
+		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!bssVm){
+			logger::error("RE::BSScript::Internal::VirtualMachine::GetSingleton() not found");
+			return false;
+		}
+		
+		if (!bssVm->CreateArray1(type, size, newArray)){
 			logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName, bsScriptName);
 			return false;
 		}
-        //sv::vm->CreateArray(RE::BSScript::TypeInfo{ RE::BSScript::TypeInfo::RawType::kObject }, size, newArray);
+        //bssVm->CreateArray(RE::BSScript::TypeInfo{ RE::BSScript::TypeInfo::RawType::kObject }, size, newArray);
 
         int i = 0;
         int oldSize = arrayData.arrayPtr->size();
@@ -286,11 +305,12 @@ namespace papyrusUtilEx {
         RE::VMHandle akHandle_A = GetHandle(vm, stackID, sHandle_A);
         RE::VMHandle akHandle_B = GetHandle(vm, stackID, sHandle_B);
 
-        if (!sv::vm) {
-            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", 
-				bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-            return false;
-        }
+		// auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        // if (!bssVm) {
+        //     logger::error("couldn't get *bssVm for [{}] in script[{}] on handle[{}]", 
+		// 		bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
+        //     return false;
+        // }
 
         auto arrayData_A = GetArrayProperty(vm, stackID, akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
 
@@ -369,7 +389,7 @@ namespace papyrusUtilEx {
 
         RE::BSTSmartPointer<RE::BSScript::Array> newArray;
 		
-        // sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSize, newArray);
+        // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSize, newArray);
 		
 		if (!vm->CreateArray1(srcType, newSize, newArray) || !newArray) {
 			logger::error("CreateArray1 failed for [{}]", bsArrayPropertyName_A);
@@ -406,11 +426,12 @@ namespace papyrusUtilEx {
         RE::VMHandle akHandle_A = gfuncs::StringToUint64_t(sHandle_A);
         RE::VMHandle akHandle_B = gfuncs::StringToUint64_t(sHandle_B);
 
-        if (!sv::vm) {
-            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", 
-				bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-            return false;
-        }
+		// auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        // if (!bssVm) {
+        //     logger::error("couldn't get *bssVm for [{}] in script[{}] on handle[{}]", 
+		// 		bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
+        //     return false;
+        // }
 
         auto arrayData_A = GetArrayProperty(vm, stackID, akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
         if (!arrayData_A.gotAllData) {
@@ -474,7 +495,7 @@ namespace papyrusUtilEx {
         int i = 0;
 
         RE::BSTSmartPointer<RE::BSScript::Array> newArray;
-        // sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, sizeA, newArray);
+        // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, sizeA, newArray);
 		
 		if (!vm->CreateArray1(srcType, sizeA, newArray) || !newArray) {
 			logger::error("CreateArray1 failed for [{}]", bsArrayPropertyName_A);
@@ -515,11 +536,12 @@ namespace papyrusUtilEx {
     int CountInArray(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag, std::string sHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName, int index) {
         RE::VMHandle akHandle = GetHandle(vm, stackID, sHandle); 
 
-        if (!sv::vm) {
-            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", 
-				bsArrayPropertyName, bsScriptName, akHandle);
-            return false;
-        }
+		// auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        // if (!bssVm) {
+        //     logger::error("couldn't get *bssVm for [{}] in script[{}] on handle[{}]", 
+		// 		bsArrayPropertyName, bsScriptName, akHandle);
+        //     return false;
+        // }
 
         auto arrayData = GetArrayProperty(vm, stackID, akHandle, bsScriptName, bsArrayPropertyName);
 
@@ -552,11 +574,12 @@ namespace papyrusUtilEx {
     int RemoveFromArray(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag, std::string sHandle, RE::BSFixedString bsScriptName, RE::BSFixedString bsArrayPropertyName, int index, bool removeAll) {
         RE::VMHandle akHandle = GetHandle(vm, stackID, sHandle); 
 
-        if (!sv::vm) {
-            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", 
-				bsArrayPropertyName, bsScriptName, akHandle);
-            return 0;
-        }
+		// auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        // if (!bssVm) {
+        //     logger::error("couldn't get *bssVm for [{}] in script[{}] on handle[{}]", 
+		// 		bsArrayPropertyName, bsScriptName, akHandle);
+        //     return 0;
+        // }
 
         auto arrayData = GetArrayProperty(vm, stackID, akHandle, bsScriptName, bsArrayPropertyName);
 
@@ -601,6 +624,12 @@ namespace papyrusUtilEx {
 
         int count = 1;
 
+		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!bssVm){
+			logger::error("RE::BSScript::Internal::VirtualMachine::GetSingleton() not found");
+			return false;
+		}
+		
         if (removeAll) {
             count = CountInBSScriptArray(arrayData.arraySmartPtr, index);
             if (count > 1) {
@@ -611,10 +640,11 @@ namespace papyrusUtilEx {
 
                     newSize = 1;
                     count = -1;
-                    // sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
+                    // bssVm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
                     // newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
 					
-					if (!sv::vm->CreateArray1(type, newSize, newArray)){
+					
+					if (!bssVm->CreateArray1(type, newSize, newArray)){
 						logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName, bsScriptName);
 						return false;
 					}
@@ -623,9 +653,9 @@ namespace papyrusUtilEx {
                     newArray->data()[0].SetNone();
                 }
                 else {
-                    // sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
+                    // bssVm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
 					
-					if (!sv::vm->CreateArray1(type, newSize, newArray)){
+					if (!bssVm->CreateArray1(type, newSize, newArray)){
 						logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName, bsScriptName);
 						return false;
 					}
@@ -648,9 +678,9 @@ namespace papyrusUtilEx {
 
         if (!removeAll || count == 1) {
             newSize = (oldSize - 1);
-            // sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
+            // bssVm->CreateArray2(arrayData.arrayPtr->type(), className, newSize, newArray);
 
-			if (!sv::vm->CreateArray1(type, newSize, newArray)){
+			if (!bssVm->CreateArray1(type, newSize, newArray)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName, bsScriptName);
 				return false;
 			}
@@ -698,11 +728,12 @@ namespace papyrusUtilEx {
 
         logger::trace("called");
 
-        if (!sv::vm) {
-            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", 
-				bsArrayPropertyName, bsScriptName, akHandle);
-            return false;
-        }
+		// auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        // if (!bssVm) {
+        //     logger::error("couldn't get *bssVm for [{}] in script[{}] on handle[{}]", 
+		// 		bsArrayPropertyName, bsScriptName, akHandle);
+        //     return false;
+        // }
 
         auto arrayData = GetArrayProperty(vm, stackID, akHandle, bsScriptName, bsArrayPropertyName);
         if (!arrayData.gotAllData) {
@@ -751,14 +782,20 @@ namespace papyrusUtilEx {
         RE::BSTSmartPointer<RE::BSScript::Array> newArray;
         int newArraySize = 1;
 
+		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!bssVm){
+			logger::error("RE::BSScript::Internal::VirtualMachine::GetSingleton() not found");
+			return false;
+		}
+		
         //keep portion between startIndex and endIndex of array in array
         if (keep) {
             newArraySize = (endIndex - startIndex + 1);
 
-            // sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
+            // bssVm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
             // newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(type, newArraySize, newArray)){
+			if (!bssVm->CreateArray1(type, newArraySize, newArray)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName, bsScriptName);
 				return false;
 			}
@@ -776,10 +813,10 @@ namespace papyrusUtilEx {
 
             int i = 0;
             int ii = 0;
-            // sv::vm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
+            // bssVm->CreateArray2(arrayData.arrayPtr->type(), className, newArraySize, newArray);
             // newArray.get()->type_info().SetType(arrayData.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(type, newArraySize, newArray)){
+			if (!bssVm->CreateArray1(type, newArraySize, newArray)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName, bsScriptName);
 				return false;
 			}
@@ -812,11 +849,12 @@ namespace papyrusUtilEx {
         RE::VMHandle akHandle_A = gfuncs::StringToUint64_t(sHandle_A);
         RE::VMHandle akHandle_B = gfuncs::StringToUint64_t(sHandle_B);
 
-        if (!sv::vm) {
-            logger::error("couldn't get *sv::vm for [{}] in script[{}] on handle[{}]", 
-				bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-            return false;
-        }
+		// auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        // if (!bssVm) {
+        //     logger::error("couldn't get *bssVm for [{}] in script[{}] on handle[{}]", 
+		// 		bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
+        //     return false;
+        // }
 
         auto arrayData_A = GetArrayProperty(vm, stackID, akHandle_A, bsScriptName_A, bsArrayPropertyName_A);
         if (!arrayData_A.gotAllData) {
@@ -900,22 +938,28 @@ namespace papyrusUtilEx {
         int newSizeA = 1;
         int newSizeB = 1;
 
+		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!bssVm){
+			logger::error("RE::BSScript::Internal::VirtualMachine::GetSingleton() not found");
+			return false;
+		}
+		
         if (keep && replace) {
             newSizeA = (endIndex - startIndex + 1);
             newSizeB = (sizeA - newSizeA);
 
-            // sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
             // newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(srcType, newSizeA, newArray_A)){
+			if (!bssVm->CreateArray1(srcType, newSizeA, newArray_A)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
 				return false;
 			}
 			
-            // sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
             // newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(srcType, newSizeB, newArray_B)){
+			if (!bssVm->CreateArray1(srcType, newSizeB, newArray_B)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
 				return false;
 			}
@@ -948,18 +992,18 @@ namespace papyrusUtilEx {
             newSizeB = (sizeA - newSizeA);
             newSizeB += sizeB;
 
-            // sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
             // newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(srcType, newSizeA, newArray_A)){
+			if (!bssVm->CreateArray1(srcType, newSizeA, newArray_A)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
 				return false;
 			}
 			
-            // sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
             // newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(srcType, newSizeB, newArray_B)){
+			if (!bssVm->CreateArray1(srcType, newSizeB, newArray_B)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
 				return false;
 			}
@@ -999,18 +1043,18 @@ namespace papyrusUtilEx {
             newSizeB = (endIndex - startIndex + 1);
             newSizeA = (sizeA - newSizeB);
 
-            // sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
             // newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(srcType, newSizeA, newArray_A)){
+			if (!bssVm->CreateArray1(srcType, newSizeA, newArray_A)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
 				return false;
 			}
 			
-            // sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
             // newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(srcType, newSizeB, newArray_B)){
+			if (!bssVm->CreateArray1(srcType, newSizeB, newArray_B)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
 				return false;
 			}
@@ -1043,18 +1087,18 @@ namespace papyrusUtilEx {
             newSizeA = (sizeA - newSizeB);
             newSizeB += sizeB;
 
-			// sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+			// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
             // newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(srcType, newSizeA, newArray_A)){
+			if (!bssVm->CreateArray1(srcType, newSizeA, newArray_A)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
 				return false;
 			}
 			
-            // sv::vm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
             // newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-			if (!sv::vm->CreateArray1(srcType, newSizeB, newArray_B)){
+			if (!bssVm->CreateArray1(srcType, newSizeB, newArray_B)){
 				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
 				return false;
 			}

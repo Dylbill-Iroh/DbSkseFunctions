@@ -175,9 +175,10 @@ namespace conditions {
         }
 
         void HandleConditionChangeEvent(bool isTrue) {
-            if (sv::vm) {
+			auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+            if (bssVm) {
                 auto* args = RE::MakeFunctionArguments((RE::TESObjectREFR*)target, (bool)isTrue);
-                sv::vm->SendEventAll(sEvent, args);
+                bssVm->SendEventAll(sEvent, args);
                 delete args;
             }
         }

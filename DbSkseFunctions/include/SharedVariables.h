@@ -3,21 +3,6 @@
 #include "RE/B/BSPointerHandle.h"
 namespace sv {
 	extern std::uint32_t record;
-	
-	//singletons
-	extern RE::ScriptEventSourceHolder* eventSourceholder;
-	extern RE::TESDataHandler* dataHandler;
-	extern RE::BSInputDeviceManager* inputManager;
-	extern RE::BSScript::Internal::VirtualMachine* vm;
-	extern RE::BSScript::IVirtualMachine* ivm;
-	extern RE::SkyrimVM* skyrimVm;
-	extern RE::Calendar* calendar;
-	extern RE::UI* ui;
-	extern RE::UserEvents* userEvents;
-	extern RE::BSAudioManager* audiomanager;
-
-	extern RE::PlayerCharacter* player;
-
 	extern int iFrameUpdateInterval;
 	extern std::string lastMenuOpened;
 	extern bool gamePaused;

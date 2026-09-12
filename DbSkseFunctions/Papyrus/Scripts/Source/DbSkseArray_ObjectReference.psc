@@ -1,6 +1,6 @@
-scriptname DbSkseArray_Alias hidden 
+scriptname DbSkseArray_ObjectReference hidden 
 ; To create these array functions for different papyrus types, duplicate this script, 
-; rename it and and replace all of Alias with a new type you want these array functions for, E.G TextureSet
+; rename it and and replace all of ObjectReference with a new type you want these array functions for, E.G TextureSet
 ; Compile the script and copy the source .psc file to Data/Scripts/Source/DbSkseArrays/ 
 ; IMPORTANT!!! You can change the type or add ArrayAs functions, but don't change the formatting because 
 ; the plugin gets papyrus types by reading this source .psc file. Specifically, no spaces between the function name and first left parentheses "("
@@ -13,32 +13,32 @@ scriptname DbSkseArray_Alias hidden
 ; FormType.psc as well as Alias, ReferenceAlias, LocationAlias and ActiveMagicEffect
 
 ; Create a new array of size, filled with optional filler.
-Alias[] Function Create(int size, Alias filler = none) Global Native 
+ObjectReference[] Function Create(int size, ObjectReference filler = none) Global Native 
 
 ; Resize the passed in array. If the size is larger, fills the new indexes with filler. 
-Alias[] Function Resize(Alias[] arr, int size, Alias filler = none) Global Native
+ObjectReference[] Function Resize(ObjectReference[] arr, int size, ObjectReference filler = none) Global Native
 
 ; Merge the two arrays and return the new array containing both array's elements.
-Alias[] Function Merge(Alias[] arr_A, Alias[] arr_B) Global Native
+ObjectReference[] Function Merge(ObjectReference[] arr_A, ObjectReference[] arr_B) Global Native
 
 ; Returns a sub section of the passed in array indicated by a starting and ending index.
 ; The default argument "int endIndex = -1" clamps the to the end of the array. Equivalent of setting EndIndex = (ArrayValues.Length - 1)
-Alias[] function Slice(Alias[] ArrayValues, int startIndex, int endIndex = -1) global native
+ObjectReference[] function Slice(ObjectReference[] ArrayValues, int startIndex, int endIndex = -1) global native
 
 ; Add the toPush form to the end of the arr, increasing its size.
-Alias[] Function Push(Alias[] arr, Alias toPush) Global Native 
+ObjectReference[] Function Push(ObjectReference[] arr, ObjectReference toPush) Global Native 
 
 ; insert the toInsert form into the array, increasing its size. If the index is out of bound, puts the form at the end of the array.
-Alias[] Function Insert(Alias[] arr, Alias toInsert, int index) global native
+ObjectReference[] Function Insert(ObjectReference[] arr, ObjectReference toInsert, int index) global native
 
 ; Remove the toRemove form from the array, decreasing its size. If all is true, remove all instances, otherwise, remove the first found instance.
-Alias[] Function Remove(Alias[] arr, Alias toRemove, bool all = true) global native
+ObjectReference[] Function Remove(ObjectReference[] arr, ObjectReference toRemove, bool all = true) global native
 
 ; remove the element at the index in the array, decreasing its size. If the index is out of bounds, removes the last element in the array.
-Alias[] Function RemoveAt(Alias[] arr, int index) Global Native 
+ObjectReference[] Function RemoveAt(ObjectReference[] arr, int index) Global Native 
 
 ; remove all duplicates from the arr, making each element in the arr unique, and return the new array.
-Alias[] Function RemoveDuplicates(Alias[] arr) Global Native 
+ObjectReference[] Function RemoveDuplicates(ObjectReference[] arr) Global Native 
 
 ; returns new array that contains the forms of the passed in akForms array, but sorted. 
 ; Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
@@ -48,41 +48,41 @@ Alias[] Function RemoveDuplicates(Alias[] arr) Global Native
 ; 4 = by form editor Id name descending,
 ; 5 = by form Id ascending, 
 ; 6 = by form Id descending
-Alias[] Function Sort(Alias[] arr, int sortOption) Global Native 
+ObjectReference[] Function Sort(ObjectReference[] arr, int sortOption) Global Native 
 
 ; Get the strings for the passed in array. mode options are:
 ; 1 = form names
 ; 2 = editor names 
-; 3 = IDs as hexidecimal (formId or AliasId)
+; 3 = IDs as hexidecimal (formId or ObjectReferenceId)
 ; SortOptions are: 
 ; 1 = not sorted 
 ; 2 = sorted ascending 
 ; 3 = sorted descending
-String[] Function GetStrings(Alias[] arr, int mode, int sortOption, string nullName = "NONE", string emptyName = " - ")  Global Native 
+String[] Function GetStrings(ObjectReference[] arr, int mode, int sortOption, string nullName = "NONE", string emptyName = " - ")  Global Native 
 
 ; count the number of times the item appears in the array.
-int Function Count(Alias[] arr, Alias item) Global Native 
+int Function Count(ObjectReference[] arr, ObjectReference item) Global Native 
 
 ; return true if all of the elements in arr_A equal the elements in arr_B.
-bool function IsEqual(Alias[] arr_A, Alias[] arr_B) Global Native 
+bool function IsEqual(ObjectReference[] arr_A, ObjectReference[] arr_B) Global Native 
 
 ; for linking arrays. Return an int array that contains all indexes in arr that match the value
 ; use with RemoveIndexes to remove all of value from the same arr, and remove the same indexes from another array.
-; See the DbSkseMap_Alias_Alias.psc script for example usage.
-int[] function GetIndexes(Alias[] arr, Alias value) global native
+; See the DbSkseMap_Alias_ObjectReference.psc script for example usage.
+int[] function GetIndexes(ObjectReference[] arr, ObjectReference value) global native
 
 ; for linking arrays. Returns an int array containing all indexes of duplicate elements in the arr.
 ; use with RemoveIndexes to remove all duplicates from the same arr, and remove the same indexes from another array.
-; See the DbSkseMap_Alias_Alias.psc script for example usage.
-int[] function GetRemoveDuplicatesIndexes(Alias[] arr) global native
+; See the DbSkseMap_Alias_ObjectReference.psc script for example usage.
+int[] function GetRemoveDuplicatesIndexes(ObjectReference[] arr) global native
 
 ; Removes all indexes in the arr. Example, if indexes contains [0] = 2, [1] = 7, 
 ; Removes the elements that are currently at [2] and [7] from the arr. 
-; See the DbSkseMap_Alias_Alias.psc script for example usage.
-Alias[] Function RemoveIndexes(Alias[] arr, int[] indexes) Global Native 
+; See the DbSkseMap_Alias_ObjectReference.psc script for example usage.
+ObjectReference[] Function RemoveIndexes(ObjectReference[] arr, int[] indexes) Global Native 
 
 ; for linking arrays, get new sorted index for the arr. 
-; See the DbSkseMap_Alias_Alias.psc script for example usage.
+; See the DbSkseMap_Alias_ObjectReference.psc script for example usage.
 ;  Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
 ;  1 = by form name ascending, 
 ;  2 = by form name descending, 
@@ -90,10 +90,10 @@ Alias[] Function RemoveIndexes(Alias[] arr, int[] indexes) Global Native
 ;  4 = by form editor Id name descending,
 ;  5 = by form Id ascending, 
 ;  6 = by form Id descending
-int[] Function GetSortIndexes(Alias[] arr, int sortOption) Global Native 
+int[] Function GetSortIndexes(ObjectReference[] arr, int sortOption) Global Native 
 
-; See the DbSkseMap_Alias_Alias.psc script for example usage.
-Alias[] Function SortByIndexes(Alias[] arr, int[] indexes) Global Native 
+; See the DbSkseMap_Alias_ObjectReference.psc script for example usage.
+ObjectReference[] Function SortByIndexes(ObjectReference[] arr, int[] indexes) Global Native 
 
 ;  ArrayAs functions, returns a new array where each element of the passed in array is cast as the return type. 
 ;  If removeNoneArrElements, any none entry in the passed in array is removed from the return array. 
@@ -101,8 +101,8 @@ Alias[] Function SortByIndexes(Alias[] arr, int[] indexes) Global Native
 ;  You can add as many ArrayAs functions here as you want, converting from any compatible type.
 ;  Make sure the new function names contain ArrayAs.
 
-;  Cast all Alias array elements to Form and return new array.
-Alias[] Function ArrayAsForm(Alias[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native
+;  Cast all ObjectReference array elements to Form and return new array.
+ObjectReference[] Function ArrayAsForm(ObjectReference[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native
 
-;  Cast all Form array elements to Alias and return new array.
-ReferenceAlias[] Function ArrayAsReferenceAlias(Alias[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native
+;  Cast all Form array elements to ObjectReference and return new array.
+ObjectReference[] Function ArrayAsObjectReference(ObjectReference[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native

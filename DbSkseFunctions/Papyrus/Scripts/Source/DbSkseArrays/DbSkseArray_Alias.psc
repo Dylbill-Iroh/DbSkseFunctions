@@ -63,14 +63,46 @@ String[] Function GetStrings(Alias[] arr, int mode, int sortOption, string nullN
 ; count the number of times the item appears in the array.
 int Function Count(Alias[] arr, Alias item) Global Native 
 
-; ArrayAs functions, returns a new array where each element of the passed in array is cast as the return type. 
-; If removeNoneArrElements, any none entry in the passed in array is removed from the return array. 
-; If removeFailedToConvertElements, any valid entry in the passed in array that fails to convert to the return type is removed from the return array.
-; You can add as many ArrayAs functions here as you want, converting from any compatible type.
-; Make sure the new function names contain ArrayAs.
+; return true if all of the elements in arr_A equal the elements in arr_B.
+bool function IsEqual(Alias[] arr_A, Alias[] arr_B) Global Native 
 
-; Cast all Alias array elements to ReferenceAlias and return new array.
+; for linking arrays. Return an int array that contains all indexes in arr that match the value
+; use with RemoveIndexes to remove all of value from the same arr, and remove the same indexes from another array.
+; See the DbSkseMap_Alias_Alias.psc script for example usage.
+int[] function GetIndexes(Alias[] arr, Alias value) global native
+
+; for linking arrays. Returns an int array containing all indexes of duplicate elements in the arr.
+; use with RemoveIndexes to remove all duplicates from the same arr, and remove the same indexes from another array.
+; See the DbSkseMap_Alias_Alias.psc script for example usage.
+int[] function GetRemoveDuplicatesIndexes(Alias[] arr) global native
+
+; Removes all indexes in the arr. Example, if indexes contains [0] = 2, [1] = 7, 
+; Removes the elements that are currently at [2] and [7] from the arr. 
+; See the DbSkseMap_Alias_Alias.psc script for example usage.
+Alias[] Function RemoveIndexes(Alias[] arr, int[] indexes) Global Native 
+
+; for linking arrays, get new sorted index for the arr. 
+; See the DbSkseMap_Alias_Alias.psc script for example usage.
+;  Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
+;  1 = by form name ascending, 
+;  2 = by form name descending, 
+;  3 = by form editor Id name ascending,
+;  4 = by form editor Id name descending,
+;  5 = by form Id ascending, 
+;  6 = by form Id descending
+int[] Function GetSortIndexes(Alias[] arr, int sortOption) Global Native 
+
+; See the DbSkseMap_Alias_Alias.psc script for example usage.
+Alias[] Function SortByIndexes(Alias[] arr, int[] indexes) Global Native 
+
+;  ArrayAs functions, returns a new array where each element of the passed in array is cast as the return type. 
+;  If removeNoneArrElements, any none entry in the passed in array is removed from the return array. 
+;  If removeFailedToConvertElements, any valid entry in the passed in array that fails to convert to the return type is removed from the return array.
+;  You can add as many ArrayAs functions here as you want, converting from any compatible type.
+;  Make sure the new function names contain ArrayAs.
+
+;  Cast all Alias array elements to Form and return new array.
+Alias[] Function ArrayAsForm(Alias[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native
+
+;  Cast all Form array elements to Alias and return new array.
 ReferenceAlias[] Function ArrayAsReferenceAlias(Alias[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native
-
-; Cast all Alias array elements to LocationAlias and return new array.
-LocationAlias[] Function ArrayAsLocationAlias(Alias[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native

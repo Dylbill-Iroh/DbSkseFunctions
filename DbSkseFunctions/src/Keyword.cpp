@@ -33,8 +33,9 @@ namespace keyword {
 	std::vector<RE::BGSKeyword*> GetKeywordsForString(RE::StaticFunctionTag*, std::string keywordString){
 		std::vector<RE::BGSKeyword*> v; 
 		
-        if (sv::dataHandler) {
-			RE::BSTArray<RE::TESForm*>* akArray = &(sv::dataHandler->GetFormArray(RE::FormType::Keyword));
+		auto* dataHandler = RE::TESDataHandler::GetSingleton();
+        if (dataHandler) {
+			RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Keyword));
 
 			int ic = 0;
 			for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {

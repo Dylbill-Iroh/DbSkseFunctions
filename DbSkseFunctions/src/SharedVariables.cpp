@@ -6,20 +6,6 @@
 
 namespace sv {
 	std::uint32_t record = 'SVr7';
-	
-	RE::ScriptEventSourceHolder* eventSourceholder = nullptr;
-	RE::TESDataHandler* dataHandler = nullptr;
-	RE::BSInputDeviceManager* inputManager = nullptr;
-	RE::BSScript::Internal::VirtualMachine* vm = nullptr;
-	RE::BSScript::IVirtualMachine* ivm = nullptr; //set bindPapyrusFunctions in plugin.cpp
-	RE::SkyrimVM* skyrimVm = nullptr;
-	RE::Calendar* calendar = nullptr;
-	RE::UI* ui = nullptr;
-	RE::UserEvents* userEvents = nullptr;
-	RE::BSAudioManager* audiomanager = nullptr;
-
-	RE::PlayerCharacter* player = nullptr;
-
 	int iFrameUpdateInterval = 1;
 	std::string lastMenuOpened = "";
 	bool gamePaused = false;
@@ -46,18 +32,20 @@ namespace sv {
 	//called on kDataLoaded in plugin.cpp
 	void Install() {
 		logger::info("installing shared variables");
-		if (!eventSourceholder) { eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton(); }
-		if (!dataHandler) { dataHandler = RE::TESDataHandler::GetSingleton(); }
-		if (!inputManager) { inputManager = RE::BSInputDeviceManager::GetSingleton(); }
-		if (!vm) { vm = RE::BSScript::Internal::VirtualMachine::GetSingleton(); }
+		// if (!eventSourceholder) { eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton(); }
+		// if (!dataHandler) { dataHandler = RE::TESDataHandler::GetSingleton(); }
+		// if (!inputManager) { inputManager = RE::BSInputDeviceManager::GetSingleton(); }
+		// if (!vm) { vm = RE::BSScript::Internal::VirtualMachine::GetSingleton(); }
 		
-		if (!skyrimVm) { skyrimVm = RE::SkyrimVM::GetSingleton(); }
-		if (!calendar) { calendar = RE::Calendar::GetSingleton(); }
-		if (!ui) { ui = RE::UI::GetSingleton(); }
-		if (!userEvents) { userEvents = RE::UserEvents::GetSingleton(); }
-		if (!audiomanager) { audiomanager = RE::BSAudioManager::GetSingleton(); }
-		if (!player) { player = RE::PlayerCharacter::GetSingleton(); }
+		// if (!skyrimVm) { skyrimVm = RE::SkyrimVM::GetSingleton(); }
+		// if (!calendar) { calendar = RE::Calendar::GetSingleton(); }
+		// if (!ui) { ui = RE::UI::GetSingleton(); }
+		// if (!userEvents) { userEvents = RE::UserEvents::GetSingleton(); }
+		// if (!audiomanager) { audiomanager = RE::BSAudioManager::GetSingleton(); }
+		// if (!player) { player = RE::PlayerCharacter::GetSingleton(); }
 
+		
+		
 		//if (!eventSourceholder) { logger::error("eventSourceholder not found"); }
 		//if (!dataHandler) { logger::error("dataHandler not found"); }
 		//if (!inputManager) { logger::error("inputManager not found"); }
@@ -89,7 +77,9 @@ namespace sv {
 	}
 
 	void Load(SKSE::SerializationInterface* ssi) {
-		Install(); //make sure all singletons are gotten.
+		// Install(); //make sure all singletons are gotten.
+		
+		auto* calendar = RE::Calendar::GetSingleton();
 		if (calendar) {
 			gameTime = calendar->GetHoursPassed();
 		} 
