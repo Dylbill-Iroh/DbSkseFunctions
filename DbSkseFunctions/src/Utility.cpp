@@ -1,7 +1,14 @@
 #include <Windows.h>
+#include <mutex>
+#include <string.h>
+#include <unordered_map>
 #include "Utility.h"
 #include "GeneralFunctions.h"
+#include "RE/B/BGSBaseAlias.h"
 #include "RE/B/BSCoreTypes.h"
+#include "RE/T/TESObjectREFR.h"
+#include "RE/T/TypeTraits.h"
+#include "Serialization.h"
 #include "editorID.hpp"
 #include "SharedVariables.h"
 
@@ -1176,6 +1183,496 @@ std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOp
         }
     }
     return sfileDescriptions;
+}
+
+std::mutex ObjectReferenceBaseScriptsMutex;
+std::unordered_map<RE::FormID, std::vector<std::string>> ObjectReferenceBaseScripts;
+
+struct ObjectRefScriptInitEventSink : public RE::BSTEventSink<RE::TESInitScriptEvent> {
+    bool sinkAdded = false;
+
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESInitScriptEvent* event, RE::BSTEventSource<RE::TESInitScriptEvent>*/*source*/) {
+        if (!event) {
+            //logger::error("ObjectInitEvent doesn't exist");
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        if (IsBadReadPtr(event, sizeof(event))) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+	
+        if (event->objectInitialized) {
+            RE::TESObjectREFR* loadedRef = event->objectInitialized.get();
+            if (gfuncs::IsFormValid(loadedRef)) {
+                RE::TESForm* baseObj = loadedRef->GetBaseObject();
+				if (gfuncs::IsFormValid(baseObj)) {
+					RE::FormID formId = baseObj->GetFormID(); 
+					
+					std::vector<std::string> scriptNames;
+					
+					ObjectReferenceBaseScriptsMutex.lock();
+					auto it = ObjectReferenceBaseScripts.find(formId); 
+					if (it != ObjectReferenceBaseScripts.end()){
+						scriptNames = it->second; 
+					}
+					ObjectReferenceBaseScriptsMutex.unlock();  
+					
+					for (std::string& scriptName : scriptNames) {
+						if (!gfuncs::IsScriptAttachedToForm(loadedRef, scriptName)){
+							logger::debug("attaching script[{}] to objectRef[{}]", scriptName, gfuncs::GetFormNameAndId(loadedRef));
+							gfuncs::AttachPapyrusScriptToForm(loadedRef, scriptName.c_str());
+						}
+					}
+				}
+            }
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+ObjectRefScriptInitEventSink* objectRefScriptInitEventSink;
+
+void AddObjectLoadedEventSink() {
+	ObjectReferenceBaseScriptsMutex.lock();
+    if (!objectRefScriptInitEventSink) { objectRefScriptInitEventSink = new ObjectRefScriptInitEventSink(); }
+	
+	auto* eventSourceholder = RE::ScriptEventSourceHolder::GetSingleton();
+	if (eventSourceholder){
+		if (!objectRefScriptInitEventSink->sinkAdded){
+			objectRefScriptInitEventSink->sinkAdded = true;
+			eventSourceholder->AddEventSink(objectRefScriptInitEventSink); 
+		}
+	}
+	ObjectReferenceBaseScriptsMutex.unlock();
+}
+
+std::uint32_t utilRecord = 'UTr7';
+
+bool SaveObjectReferenceBaseScripts(SKSE::SerializationInterface* ssi){
+	// std::lock_guard<std::mutex> lock(ObjectReferenceBaseScriptsMutex);
+	
+	ObjectReferenceBaseScriptsMutex.lock();
+	
+	if (!ssi->OpenRecord(utilRecord, 1)) {
+		logger::error("Failed to open record[{}]", 'UTr7');
+		ObjectReferenceBaseScriptsMutex.unlock();
+		return false;
+	}
+
+	const auto size = ObjectReferenceBaseScripts.size();
+	logger::debug("record[{}] ObjectReferenceBaseScripts size[{}]", 'UTr7', size);
+	
+	if (!ssi->WriteRecordData(size)) {
+		logger::error("record[{}] Failed to write size of ObjectReferenceBaseScripts!", 'UTr7');
+		ObjectReferenceBaseScriptsMutex.unlock();
+		return false;
+	}
+	
+	for (auto& pair : ObjectReferenceBaseScripts){
+		auto& v = pair.second;
+		auto vSize = v.size(); 
+		RE::FormID formId = pair.first; 
+		
+		if (!ssi->WriteRecordData(formId)) {
+			logger::error("record[{}] Failed to write data for formID[{:08X}]", 'UTr7', formId);
+			ObjectReferenceBaseScriptsMutex.unlock();
+			return false;
+		}
+		
+		if (!ssi->WriteRecordData(vSize)) {
+			logger::error("record[{}] Failed to write vSize for formID[{:08X}]", 'UTr7', formId);
+			ObjectReferenceBaseScriptsMutex.unlock();
+			return false;
+		} 
+		
+		for (std::string scriptName : v){
+			if (!serialize::SaveString(utilRecord, ssi, scriptName)){
+				logger::error("record[{}] Failed to write scriptName[{}]", 'UTr7', scriptName);
+				ObjectReferenceBaseScriptsMutex.unlock();
+				return false;
+			}
+		}
+	}
+	
+	ObjectReferenceBaseScriptsMutex.unlock();
+	return true;
+}
+
+bool LoadObjectReferenceBaseScripts(SKSE::SerializationInterface* ssi){
+	// std::lock_guard<std::mutex> lock(ObjectReferenceBaseScriptsMutex);
+	
+	ObjectReferenceBaseScriptsMutex.lock();
+	
+	ObjectReferenceBaseScripts.clear(); 
+	
+	std::size_t size;
+
+	if (!ssi->ReadRecordData(size)) {
+		logger::error("record: [{}] Failed to load size of arr!", 'UTr7');
+		ObjectReferenceBaseScriptsMutex.unlock();
+		return false;
+	}
+
+	logger::debug("load arr size = {}", size);
+
+	for (std::size_t i = 0; i < size; ++i) {
+		RE::FormID formID;
+		if (!ssi->ReadRecordData(formID)) {
+			logger::error("{}: Failed to load formID!", i);
+			ObjectReferenceBaseScriptsMutex.unlock();
+			return false;
+		}
+
+		bool formIdResolved = ssi->ResolveFormID(formID, formID);
+		if (!formIdResolved) {
+			logger::warn("record[{}] {}: failed to resolve formID[{:x}]", 'UTr7', i, formID);
+		}
+		
+		std::size_t vSize;
+		if (!ssi->ReadRecordData(vSize)) {
+			logger::error("record: [{}] Failed to load vSize!", 'UTr7');
+			ObjectReferenceBaseScriptsMutex.unlock();
+			return false;
+		} 
+		
+		std::vector<std::string> v;
+		
+		for (std::size_t i2 = 0; i2 < vSize; ++i2) {
+			bool loadStringSuccess = false;
+			std::string scriptName = serialize::LoadString(utilRecord, ssi, loadStringSuccess);
+			if (!loadStringSuccess){
+				logger::error("record: [{}] Failed to load scriptName!", 'UTr7');
+				ObjectReferenceBaseScriptsMutex.unlock();
+				return false;
+			} 
+			v.push_back(scriptName);
+			logger::debug("loaded script [{}] on formid[{:08X}]", scriptName, formID);
+		}
+		
+		if (formIdResolved) {
+			//init vector for formID
+			ObjectReferenceBaseScripts[formID] = v;
+		} 
+	}
+	
+	size = ObjectReferenceBaseScripts.size();
+	
+	ObjectReferenceBaseScriptsMutex.unlock();
+	
+	logger::debug("new ObjectReferenceBaseScripts size is [{}]", size);
+	if (size > 0){ 
+		AddObjectLoadedEventSink();
+	}
+	
+	return true;
+}
+
+void AttachObjectReferenceScriptToBaseForm(RE::StaticFunctionTag*, std::string scriptName, RE::TESForm* akForm, bool attachToCurrentRefs, bool attachToNewRefs){
+	if (!gfuncs::IsFormValid(akForm)){
+		logger::warn("akForm doesn't exist");
+		return;
+	}
+	
+	if (!gfuncs::ScriptHasParent(scriptName, "ObjectReference")){
+		logger::error("scriptName [{}] does not extend ObjectReference, aborting AttachObjectReferenceScriptToBaseForm", scriptName);
+		return; //scriptName does not extend ObjectReference
+	}
+		
+	RE::TESObjectREFR* ref = skyrim_cast<RE::TESObjectREFR*>(akForm);
+	if (gfuncs::IsFormValid(ref)){
+		logger::info("akForm is an objectReference, attaching the scriptName[{}] directly to the ref.", scriptName);
+		gfuncs::AttachPapyrusScriptToForm(akForm, scriptName.c_str());
+		return;
+	}
+	
+	RE::FormID formId = akForm->GetFormID();
+	
+	if (attachToCurrentRefs){
+		std::vector<RE::TESObjectREFR*> refsToUnattach;
+		
+		const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		for (auto& [id, form] : *allForms) {
+			auto* akRef = form ? form->AsReference() : nullptr;
+			if (akRef) {
+				RE::TESForm* baseForm = akRef->GetBaseObject(); 
+				if (baseForm == akForm){
+					refsToUnattach.push_back(akRef);
+				}
+			}
+		}
+		
+		for (auto* akRef : refsToUnattach){
+			if (!gfuncs::IsScriptAttachedToForm(akRef, scriptName)){
+				gfuncs::AttachPapyrusScriptToForm(akRef, scriptName.c_str());
+			}
+		}
+	}
+	
+	if (attachToNewRefs){
+		ObjectReferenceBaseScriptsMutex.lock();
+		auto it = ObjectReferenceBaseScripts.find(formId);
+		std::vector<std::string> v;
+		if (it == ObjectReferenceBaseScripts.end()){
+			v.push_back(scriptName);
+			ObjectReferenceBaseScripts[formId] = v;
+		}
+		else {
+			std::vector<std::string>& vv = it->second;
+			if (std::find(vv.begin(), vv.end(), scriptName) == vv.end()){
+				vv.push_back(scriptName);
+			}
+		}
+		
+		ObjectReferenceBaseScriptsMutex.unlock();
+		AddObjectLoadedEventSink();
+	}
+}
+
+bool StopAttachingObjectReferenceScriptsToNewRefs(RE::StaticFunctionTag*, std::string scriptName, RE::TESForm* akForm){
+	if (!gfuncs::IsFormValid(akForm)){
+		logger::warn("akForm doesn't exist");
+		return false;
+	}
+	
+	ObjectReferenceBaseScriptsMutex.lock();
+	auto it = ObjectReferenceBaseScripts.find(akForm->GetFormID());
+	if (it != ObjectReferenceBaseScripts.end()){
+		auto itt = (std::find(it->second.begin(), it->second.end(), scriptName));
+		if (itt != it->second.end()){
+			it->second.erase((itt));
+		}
+	}
+	ObjectReferenceBaseScriptsMutex.unlock();
+}
+
+bool AttachScriptToForm(RE::StaticFunctionTag*, std::string scriptName, RE::TESForm* akForm, bool allowDuplicates){
+	if (!allowDuplicates){
+		if (gfuncs::IsScriptAttachedToForm(akForm, scriptName)){
+			return false;
+		}
+	}
+	
+	return gfuncs::AttachPapyrusScriptToForm(akForm, scriptName.c_str()) != nullptr;
+}
+
+bool AttachScriptToAlias(RE::StaticFunctionTag*, std::string scriptName, RE::BGSBaseAlias* akAlias, bool allowDuplicates){
+	if (!allowDuplicates){
+		if (gfuncs::IsScriptAttachedToAlias(akAlias, scriptName)){
+			return false;
+		}
+	}
+	
+	return gfuncs::AttachPapyrusScriptToAlias(akAlias, scriptName.c_str()) != nullptr;
+}
+
+std::vector<std::string> GetAllScriptsAttachedToForm(RE::StaticFunctionTag*, RE::TESForm* akForm, bool RemoveDuplicates){
+	std::vector<std::string> v;
+	if (!gfuncs::IsFormValid(akForm)){
+		logger::warn("akForm doesn't exist");
+		return v;
+	}
+	
+	RE::VMHandle handle = gfuncs::GetHandle(akForm);
+	v = gfuncs::GetScriptsAttachedTohandle(handle, RemoveDuplicates);
+	
+	ObjectReferenceBaseScriptsMutex.lock();
+	
+	auto it = ObjectReferenceBaseScripts.find(akForm->GetFormID());
+	if (it != ObjectReferenceBaseScripts.end()){
+		for (std::string scriptName : it->second){
+			v.push_back(scriptName);
+		}
+	}
+	
+	ObjectReferenceBaseScriptsMutex.unlock();
+	
+	if (RemoveDuplicates){
+		gfuncs::RemoveDuplicates(v);
+	}
+	
+	return v;
+}
+
+//E.G using MyMiscScript, returns ["MyMiscScript", "MiscObject", "Form"], if MyMiscScript is attached to akForm.
+//Note that swapping out sScriptName for any of the scriptnames in the hierarchy returns the same thing.
+std::vector<std::string> GetScriptHierarchyOnForm(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string sScriptName){
+	std::vector<std::string> v;
+	if (!gfuncs::IsFormValid(akForm)){
+		logger::warn("akForm doesn't exist");
+		return v;
+	}
+	
+	RE::VMHandle handle = gfuncs::GetHandle(akForm);
+	v = gfuncs::GetScriptHierarchyForScriptOnHandle(handle, sScriptName);
+	
+	//hierarchy not found
+	if (v.size() == 0){
+		std::vector<std::string> scriptsToCheck; 
+		
+		ObjectReferenceBaseScriptsMutex.lock();
+		
+		auto it = ObjectReferenceBaseScripts.find(akForm->GetFormID());
+		if (it != ObjectReferenceBaseScripts.end()){
+			scriptsToCheck = it->second;
+		}
+		
+		ObjectReferenceBaseScriptsMutex.unlock();
+		
+		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (vm){
+			auto scriptChar = sScriptName.c_str();
+			
+			for (auto& scriptName : scriptsToCheck){
+				RE::BSTSmartPointer<RE::BSScript::Object> object = nullptr;
+				if (!vm->CreateObject2(scriptName, object) || !object) { 
+					continue;
+				}
+				
+				auto* script = object.get();
+				if (script) {
+					auto info = script->GetTypeInfo();
+					if (info) {
+						bool scriptNameFound = false;
+						//logger::error("info->name = [{}]", info->name);
+						v.push_back((std::string)info->name);
+						if (_stricmp(scriptChar, info->name.c_str()) == 0){
+							scriptNameFound = true;
+						}
+						
+						auto* parentInfo = info->GetParent();
+						while (parentInfo){
+							v.push_back((std::string)parentInfo->name);
+							if (_stricmp(scriptChar, parentInfo->name.c_str()) == 0){
+								scriptNameFound = true;
+							}
+							parentInfo = parentInfo->GetParent();
+						}
+						if (scriptNameFound){
+							return v;
+						} 
+						else {
+							v.clear();
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	return v;
+}
+
+//returns true if the sScriptName is attached to the form and the sParentScriptName exists in the script hierarchy,
+//and is higher in the hierarchy than the sScriptName. 
+//E.G,  ["MyMiscScript", "MiscObject", "Form"], sScriptName = "MyMiscScript", sParentScriptName = "MiscObject" returns true. 
+// switch sScriptName to "MiscObject" and sParentScriptName to "MyMiscScript", returns false.
+bool ScriptHasParentOnForm(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string sScriptName, std::string sParentScriptName){
+	std::vector<std::string> v = GetScriptHierarchyOnForm(nullptr, akForm, sScriptName);
+	auto scriptChar = sScriptName.c_str(); 
+	auto parentScriptChar = sParentScriptName.c_str();
+	int scriptIndex = -1; 
+	int parentScriptIndex = -1; 
+	for (int i = 0; i < v.size(); i++){
+		std::string script = v[i]; 
+		auto c = script.c_str(); 
+		if (_stricmp(c, scriptChar) == 0){
+			scriptIndex = i;
+		}
+		else if (_stricmp(c, parentScriptChar) == 0){
+			parentScriptIndex = i;
+		}
+	} 
+	
+	return (scriptIndex != -1 && parentScriptIndex != -1 && parentScriptIndex > scriptIndex);
+}
+
+//returns true if the sScriptName is attached to the form and the sChildScriptName exists in the script hierarchy,
+//and is lower in the hierarchy than the sScriptName. 
+//E.G,  ["MyMiscScript", "MiscObject", "Form"], sScriptName = "MiscObject", sChildScriptName = "MyMiscScript" returns true. 
+// switch sScriptName to "MyMiscScript" and sChildScriptName to "MiscObject", returns false.
+bool ScriptHasChildOnForm(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string sScriptName, std::string sChildScriptName){
+	std::vector<std::string> v = GetScriptHierarchyOnForm(nullptr, akForm, sScriptName);
+	auto scriptChar = sScriptName.c_str(); 
+	auto childScriptChar = sChildScriptName.c_str();
+	int scriptIndex = -1; 
+	int childScriptIndex = -1; 
+	for (int i = 0; i < v.size(); i++){
+		std::string script = v[i]; 
+		auto c = script.c_str(); 
+		if (_stricmp(c, scriptChar) == 0){
+			scriptIndex = i;
+		}
+		else if (_stricmp(c, childScriptChar) == 0){
+			childScriptIndex = i;
+		}
+	} 
+	
+	return (scriptIndex != -1 && childScriptIndex != -1 && childScriptIndex > scriptIndex);
+}
+
+bool IsScriptAttachedToForm(RE::StaticFunctionTag*, std::string scriptName, RE::TESForm* akForm){
+	bool attached = gfuncs::IsScriptAttachedToForm(akForm, scriptName);
+	if (!attached){
+		if (gfuncs::IsFormValid(akForm)){
+			RE::FormID formID = akForm->GetFormID();
+			ObjectReferenceBaseScriptsMutex.lock();
+			auto it = ObjectReferenceBaseScripts.find(formID);
+			if (it != ObjectReferenceBaseScripts.end()){
+				attached = std::find(it->second.begin(), it->second.end(), scriptName) != it->second.end();
+			}
+			ObjectReferenceBaseScriptsMutex.unlock();
+		}
+	}
+	return attached;
+}
+
+std::vector<std::string> GetAllScriptsAttachedToAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, bool RemoveDuplicates){
+	if (!akAlias){
+		std::vector<std::string> v;
+		logger::warn("akAlias doesn't exist");
+		return v;
+	}
+	
+	RE::VMHandle handle = gfuncs::GetHandle(akAlias);
+	return gfuncs::GetScriptsAttachedTohandle(handle, RemoveDuplicates);
+}
+
+//E.G using MyAliasReferenceAliasScript, returns ["MyAliasReferenceAliasScript", "ReferenceAlias", "Alias"], if MyAliasReferenceAliasScript is attached to akAlias.
+//Note that swapping out sScriptName for any of the scriptnames in the hierarchy returns the same thing.
+std::vector<std::string> GetScriptHierarchyOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, std::string sScriptName){
+	std::vector<std::string> v;
+	if (!(akAlias)){
+		logger::warn("akForm doesn't exist");
+		return v;
+	}
+	
+	RE::VMHandle handle = gfuncs::GetHandle(akAlias);
+	return gfuncs::GetScriptHierarchyForScriptOnHandle(handle, sScriptName);
+}
+
+bool ScriptHasParentOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, std::string sScriptName, std::string sParentScriptName){
+	if (!(akAlias)){
+		logger::warn("akForm doesn't exist");
+		return false;
+	}
+	
+	RE::VMHandle handle = gfuncs::GetHandle(akAlias);
+	return gfuncs::ScriptHasParentOnHandle(handle, sScriptName, sParentScriptName);
+}
+
+bool ScriptHasChildOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, std::string sScriptName, std::string sChildScriptName){
+	if (!(akAlias)){
+		logger::warn("akForm doesn't exist");
+		return false;
+	}
+	
+	RE::VMHandle handle = gfuncs::GetHandle(akAlias);
+	return gfuncs::ScriptHasChildOnHandle(handle, sScriptName, sChildScriptName);
+}
+
+bool IsScriptAttachedToAlias(RE::StaticFunctionTag*, std::string scriptName, RE::BGSBaseAlias* akAlias){
+	return gfuncs::IsScriptAttachedToAlias(akAlias, scriptName);
 }
 
 std::string GetThisScriptName(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag) {

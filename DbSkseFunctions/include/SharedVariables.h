@@ -18,6 +18,7 @@ namespace sv {
 	extern RE::ObjectRefHandle menuRef;
 	extern RE::ObjectRefHandle lastPlayerActivatedRef;
 	
+	extern RE::BSTSmartPointer<RE::BSScript::Object> DbSksePersistentVariablesScript;  // owns the two Variable* below
 	extern RE::BSScript::Variable* LastPlayerMenuActivatedRefScriptProperty;
 	extern RE::BSScript::Variable* lastPlayerActivatedRefScriptProperty;
 	extern RE::TESWeather* currentWeather;

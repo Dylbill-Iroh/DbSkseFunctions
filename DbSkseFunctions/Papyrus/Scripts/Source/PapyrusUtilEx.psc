@@ -52,15 +52,15 @@ bool function SliceArray(string akHandle, string sScriptName, string sArrayPrope
 
 ;Take a portion of the _A array and remove it, merging it with or replacing the _B array depending on the replace parameter.
 ;If keep is true (default) it keeps the portion between the startIndex and endIndex and removes the rest. If keep is false, it removes the portion between the startIndex and endIndex.
-;Array _A and array _B must be the same type. Remember both arrays must be already initialized.
+;Array _A and array _B must be compatible, E.G you can cast Array_A type as array_B type, or must match types exactly.
 bool function SliceArrayOnto(string akHandle_A, string sScriptName_A, string sArrayPropertyName_A, string akHandle_B, string sScriptName_B, string sArrayPropertyName_B, int startIndex, int endIndex = -1, bool replace = false, bool keep = true) Global Native
 
-;Merge the _A array to the end of the _B array, increasing _B array's size. The _A array is unaltered.
-;Array _A and array _B must be the same type. Remember both arrays must be already initialized.
+;Merge the _A array to the end of the _B array, increasing _B array's size. The _A array is unaltered. 
+;Array _A and array _B must be compatible, E.G you can cast Array_A type as array_B type, or must match types exactly.
 bool function MergeArrays(string akHandle_A, string sScriptName_A, string sArrayPropertyName_A, string akHandle_B, string sScriptName_B, string sArrayPropertyName_B) Global Native
 
 ;Replace the _B array with a copy of the _A array. The _A array is unaltered.
-;Array _A and array _B must be the same type. Remember both arrays must be already initialized.
+;Array _A and array _B must be compatible, E.G you can cast Array_A type as array_B type, or must match types exactly.
 bool function CopyArray(string akHandle_A, string sScriptName_A, string sArrayPropertyName_A, string akHandle_B, string sScriptName_B, string sArrayPropertyName_B) Global Native
 
 ;Returns the number of instances of the element at the index that the array contains. 

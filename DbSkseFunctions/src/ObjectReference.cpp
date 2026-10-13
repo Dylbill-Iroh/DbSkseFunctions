@@ -1,11 +1,15 @@
 #include "ObjectReference.h"
 #include "GeneralFunctions.h"
+#include "RE/E/ExtraPromotedRef.h"
+#include "magic_enum/magic_enum_all.hpp"
 #include "RE/A/Actor.h"
 #include "RE/B/BGSPerkEntry.h"
+#include "RE/B/BSCoreTypes.h"
 #include "RE/B/BSFixedString.h"
 #include "RE/E/ExtraDataList.h"
 #include "RE/RTTI.h"
 #include "RE/T/TESBoundObject.h"
+#include "RE/T/TESForm.h"
 #include "RE/T/TESObjectREFR.h"
 #include "RE/T/TESObjectWEAP.h"
 #include "RE/T/TypeTraits.h"
@@ -15,6 +19,107 @@
 #undef min
 
 namespace objectRef {
+	void LogRefExtraData(RE::TESObjectREFR* ref, std::string msg) {
+		if (!ref) {
+			return;
+		}
+		
+		std::string types;
+		for (auto& extra : ref->extraList) {
+			types += std::format("[{}] ", magic_enum::enum_name(extra.GetType()));
+		}
+		logger::info("{}: ref[{:08X}] persistent[{}] extras:[{}]",
+			msg, ref->GetFormID(), ref->IsPersistent(), types);
+	}
+	
+	// Check if the akForm is in use. 
+	// Returns true if it's occupying any papyrus script property or variable. 
+	// Also returns true if the form is an owner of any ObjectReference, E.G it's in any ref's promotedRefOwners list.
+	// If the akForm is an ObjectReference, also returns true if it's in any referenceAlias's,
+	// or if its promotedRefOwners list contains any owners.
+	// if the akForm is an objectReference and this returns false, it's reasonable to assume it is not persistent.
+	bool IsFormInUse(RE::StaticFunctionTag*, RE::TESForm* akForm){
+		return gfuncs::IsFormInUse(akForm);
+	}
+	
+	bool IsObjectRefOwner(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE::TESForm* akForm){
+		return gfuncs::IsObjectRefOwner(ref, akForm);
+	}
+	
+	bool PromoteObjectRefPersistence(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE::TESForm* owner){
+		logger::trace("");
+		
+		if (!gfuncs::IsFormValid(ref)){
+			logger::warn("ref doesn't exist");
+			return false;
+		}
+		
+		if (!gfuncs::IsFormValid(owner)){
+			logger::warn("owner doesn't exist");
+			return false;
+		}
+		
+		auto* manager = RE::BGSDynamicPersistenceManager::GetSingleton();
+		if (!manager){
+			logger::warn("couldn't get BGSDynamicPersistenceManager");
+			return false;
+		}
+		
+		// LogRefExtraData(ref, "pre  promote");
+		manager->PromoteReference(ref, owner);
+		// LogRefExtraData(ref, "post promote");
+		return IsObjectRefOwner(nullptr, ref, owner);
+	}
+	
+	bool DemoteObjectRefPersistence(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE::TESForm* owner, bool allowActors){
+		logger::trace("");
+		
+		if (!gfuncs::IsFormValid(ref)){
+			logger::warn("ref doesn't exist");
+			return false;
+		}
+		
+		if (!gfuncs::IsFormValid(owner)){
+			logger::warn("owner doesn't exist");
+			return false;
+		}
+		
+		auto* manager = RE::BGSDynamicPersistenceManager::GetSingleton();
+		if (!manager){
+			logger::warn("couldn't get BGSDynamicPersistenceManager");
+			return false;
+		}
+		
+		//this returns false even though it worked.
+		// LogRefExtraData(ref, "pre  demote");
+		manager->DemoteReference(ref, owner, allowActors);
+		// LogRefExtraData(ref, "post demote");
+		return !IsObjectRefOwner(nullptr, ref, owner);
+	}
+	
+	std::vector<RE::TESForm*> GetObjectRefOwners(RE::StaticFunctionTag*, RE::TESObjectREFR* ref){
+		std::vector<RE::TESForm*> v;
+		if (!gfuncs::IsFormValid(ref)){
+			logger::warn("ref doesn't exist");
+			return v;
+		}
+		
+		auto* promotedRefData = ref->extraList.GetByType<RE::ExtraPromotedRef>();
+		if (promotedRefData){
+			for (RE::TESForm* form : promotedRefData->promotedRefOwners){
+				if (gfuncs::IsFormValid(form)){
+					v.push_back(form);
+				}
+			}
+		}
+		
+		return v;
+	}
+	
+	int CountObjectRefOwners(RE::StaticFunctionTag*, RE::TESObjectREFR* ref){
+		return (GetObjectRefOwners(nullptr, ref).size());
+	}
+	
     RE::TESObjectREFR* GetAshPileLinkedRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref) {
         RE::TESObjectREFR* returnRef = nullptr;
 
@@ -304,6 +409,14 @@ namespace objectRef {
         vm->RegisterFunction("GetRefGoldValue", "DbSkseFunctions", GetRefGoldValue);
         vm->RegisterFunction("GetFormGoldValue", "DbSkseFunctions", GetFormGoldValue);
         vm->RegisterFunction("CalculateBarterValue", "DbSkseFunctions", CalculateBarterValue);
-        return true;
+        
+		vm->RegisterFunction("IsFormInUse", "DbSkseFunctions", IsFormInUse);
+		vm->RegisterFunction("PromoteObjectRefPersistence", "DbSkseFunctions", PromoteObjectRefPersistence);
+		vm->RegisterFunction("DemoteObjectRefPersistence", "DbSkseFunctions", DemoteObjectRefPersistence);
+		vm->RegisterFunction("GetObjectRefOwners", "DbSkseFunctions", GetObjectRefOwners);
+		vm->RegisterFunction("CountObjectRefOwners", "DbSkseFunctions", CountObjectRefOwners);
+		vm->RegisterFunction("IsObjectRefOwner", "DbSkseFunctions", IsObjectRefOwner);
+        
+		return true;
     }
 }

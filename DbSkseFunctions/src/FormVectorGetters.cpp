@@ -1,6 +1,12 @@
 #include "FormVectorGetters.h"
 #include "GeneralFunctions.h"
+#include "RE/B/BGSBaseAlias.h"
+#include "RE/B/BGSRefAlias.h"
+#include "RE/B/BSCoreTypes.h"
 #include "RE/T/TESObjectREFR.h"
+#include "RE/T/TESQuest.h"
+#include "RE/T/TESTopicInfo.h"
+#include "RE/T/TypeTraits.h"
 #include "Utility.h"
 #include "SharedVariables.h"
 
@@ -886,6 +892,48 @@ std::vector<RE::BGSRefAlias*> GetAllRefAliasesForRef(RE::StaticFunctionTag*, RE:
         }
     }
     return aliases;
+}
+
+std::vector<RE::BGSRefAlias*> GetNthQuestObjectiveTargets(RE::StaticFunctionTag*, RE::TESQuest* akQuest, int index, bool useObjectiveIndex){
+	logger::trace("");
+	
+	std::vector<RE::BGSRefAlias*> v;
+	if (!gfuncs::IsFormValid(akQuest)){
+		return v;
+	} 
+	
+	RE::BGSQuestObjective* akObjective = nullptr;
+	
+	if (useObjectiveIndex){
+		for (auto* objective : akQuest->objectives){
+			if (objective){
+				if (objective->index == index){
+					akObjective = objective;
+				}
+			}
+		}
+	}
+	else {
+		if (index >= 0 && index < akQuest->objectives.size()){
+			akObjective = *akQuest->objectives[index];
+		}
+	}
+	
+	if (akObjective){
+		for (int i = 0; i < akObjective->numTargets; i++){
+			auto* questTarget = akObjective->targets[i];
+			if (questTarget){
+				// logger::info("index[{}] questTarget->alias[{}]", index, questTarget->alias);
+				auto* alias = akQuest->aliases[questTarget->alias];
+				RE::BGSRefAlias* refAlias = skyrim_cast<RE::BGSRefAlias*>(alias);
+				if (refAlias){
+					v.push_back(refAlias);
+				}
+			}
+		}
+	}
+	
+	return v;
 }
 
 std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*) {

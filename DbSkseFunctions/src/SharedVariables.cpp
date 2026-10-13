@@ -21,6 +21,7 @@ namespace sv {
 	RE::ObjectRefHandle menuRef;
 	RE::ObjectRefHandle lastPlayerActivatedRef;
 	
+	RE::BSTSmartPointer<RE::BSScript::Object> DbSksePersistentVariablesScript;  // owns the two Variable* below
 	RE::BSScript::Variable* LastPlayerMenuActivatedRefScriptProperty = nullptr;
 	RE::BSScript::Variable* lastPlayerActivatedRefScriptProperty = nullptr;
 	RE::TESWeather* currentWeather = nullptr;

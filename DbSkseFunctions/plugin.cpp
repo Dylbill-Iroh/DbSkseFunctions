@@ -21,9 +21,13 @@
 #include "RE/B/BSPointerHandle.h"
 #include "RE/I/InputEvent.h"
 #include "RE/P/PlayerCharacter.h"
+#include "RE/T/TESForm.h"
 #include "RE/T/TESObjectREFR.h"
+#include "RE/T/TypeTraits.h"
 #include "RE/U/UserEvents.h"
+#include "RE/V/Variable.h"
 #include "REL/Module.h"
+#include "SKSE/API.h"
 #include "SKSE/Logger.h"
 #include "lib/commonlibsse-ng/include/REL/Version.h"
 #include "mini/ini.h"
@@ -62,6 +66,10 @@
 #include "mINIHelper.h"
 #include "FileSystem.h"
 #include "UIGfx.h"
+#include "Topic.h"
+#include "StoryManager.h"
+#include "Scene.h"
+#include "Message.h"
 
 bool bPlayerIsInCombat = false;
 bool bRegisteredForPlayerCombatChange = false;
@@ -203,8 +211,8 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/* RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID,  */RE::StaticFunctionTag* functionTag) {
-    return float(10.9); 
-}
+    return float(10.10);
+} 
 
 std::vector<int> GetSkyrimVersion(RE::StaticFunctionTag*){
 	auto& mod = REL::Module::get();
@@ -243,15 +251,19 @@ void AttachDbSksePersistentVariablesScript() {
 
         if (!gfuncs::IsScriptAttachedToHandle(handle, scriptName)) {
             logger::info("Attaching DbSksePersistentVariables script to player.");
-            ConsoleUtil::ExecuteCommand("player.aps DbSksePersistentVariables", nullptr);
-            std::this_thread::sleep_for(std::chrono::milliseconds(100)); //wait .1 seconds for console command to finish.
+            // ConsoleUtil::ExecuteCommand("player.aps DbSksePersistentVariables", nullptr);
+            // std::this_thread::sleep_for(std::chrono::milliseconds(100)); //wait .1 seconds for console command to finish.
+			gfuncs::AttachPapyrusScriptToForm(player, "DbSksePersistentVariables");
         }
 
 		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
 		if (!bssVm){
 			return;
 		}
-        auto it = bssVm->attachedScripts.find(handle);
+		
+		RE::BSSpinLockGuard lock(bssVm->attachedScriptsLock);
+		
+        auto it = bssVm->attachedScripts.find(handle); 
         if (it == bssVm->attachedScripts.end()) {
             logger::error("DbSkse: bssVm->attachedScripts couldn't find handle[{}] scriptName[{}]",
                 handle, scriptName);
@@ -267,6 +279,7 @@ void AttachDbSksePersistentVariablesScript() {
                     if (info) {
                         if (info->name == scriptName) {
                             logger::trace("script[{}] found attached to handle[{}]", scriptName, handle);
+							sv::DbSksePersistentVariablesScript = RE::BSTSmartPointer<RE::BSScript::Object>(script); //keep the script object persistent
                             sv::lastPlayerActivatedRefScriptProperty = script->GetProperty("lastPlayerActivatedRef");
                             sv::LastPlayerMenuActivatedRefScriptProperty = script->GetProperty("LastPlayerMenuActivatedRef");
                         }
@@ -4034,8 +4047,9 @@ void FirstLoad() {
     if (!firstLoadCalled) {
         firstLoadCalled = true;
         AttachDbSksePersistentVariablesScript();
-        logger::info(" called"); //log FirstLoad automatically due to logger setup
 		UpdateWeather();
+		StoryManager::InitStoryManager();
+        logger::info(" called"); //log FirstLoad automatically due to logger setup
     }
 }
 
@@ -4375,7 +4389,7 @@ void AddSink(int index) {
         if (AddHitEventSink()) {
             logger::debug("EventEnum_hitEvent sink added");
         }
-        if (AddEquipEventSink()); {
+        if (AddEquipEventSink()) {
             logger::debug("EventEnum_HitEvent Equip event sink added");
         }
         if (!eventDataPtrs[EventEnum_HitEvent]->sinkAdded && !eventDataPtrs[EventEnum_HitEvent]->isEmpty()) {
@@ -6058,7 +6072,27 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
     vm->RegisterFunction("GetSkyrimVersion", "DbSkseFunctions", GetSkyrimVersion);
     vm->RegisterFunction("GetSkyrimVersionString", "DbSkseFunctions", GetSkyrimVersionString);
-    vm->RegisterFunction("GetThisScriptName", "DbSkseFunctions", GetThisScriptName);
+    
+	vm->RegisterFunction("GetAllScriptsAttachedToAlias", "DbSkseFunctions", GetAllScriptsAttachedToAlias);
+	
+	vm->RegisterFunction("GetAllScriptsAttachedToForm", "DbSkseFunctions", GetAllScriptsAttachedToForm);
+	
+	vm->RegisterFunction("GetScriptHierarchyOnForm", "DbSkseFunctions", GetScriptHierarchyOnForm);
+	vm->RegisterFunction("ScriptHasParentOnForm", "DbSkseFunctions", ScriptHasParentOnForm);
+	vm->RegisterFunction("ScriptHasChildOnForm", "DbSkseFunctions", ScriptHasChildOnForm);
+	vm->RegisterFunction("IsScriptAttachedToForm", "DbSkseFunctions", IsScriptAttachedToForm);
+	
+	vm->RegisterFunction("GetScriptHierarchyOnAlias", "DbSkseFunctions", GetScriptHierarchyOnAlias);
+	vm->RegisterFunction("ScriptHasParentOnAlias", "DbSkseFunctions", ScriptHasParentOnAlias);
+	vm->RegisterFunction("ScriptHasChildOnAlias", "DbSkseFunctions", ScriptHasChildOnAlias);
+	vm->RegisterFunction("IsScriptAttachedToAlias", "DbSkseFunctions", IsScriptAttachedToAlias);
+	
+	vm->RegisterFunction("AttachObjectReferenceScriptToBaseForm", "DbSkseFunctions", AttachObjectReferenceScriptToBaseForm);
+	vm->RegisterFunction("StopAttachingObjectReferenceScriptsToNewRefs", "DbSkseFunctions", StopAttachingObjectReferenceScriptsToNewRefs);
+	vm->RegisterFunction("AttachScriptToForm", "DbSkseFunctions", AttachScriptToForm);
+	vm->RegisterFunction("AttachScriptToAlias", "DbSkseFunctions", AttachScriptToAlias);
+	
+	vm->RegisterFunction("GetThisScriptName", "DbSkseFunctions", GetThisScriptName);
     vm->RegisterFunction("GetThisFunctionName", "DbSkseFunctions", GetThisFunctionName);
     vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
     vm->RegisterFunction("SetClipBoardText", "DbSkseFunctions", SetClipBoardText);
@@ -6099,6 +6133,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetAllRefAliasesWithScriptAttached", "DbSkseFunctions", GetAllRefAliasesWithScriptAttached);
     vm->RegisterFunction("GetAllRefaliases", "DbSkseFunctions", GetAllRefaliases);
     vm->RegisterFunction("GetAllRefAliasesForRef", "DbSkseFunctions", GetAllRefAliasesForRef);
+    vm->RegisterFunction("GetNthQuestObjectiveTargets", "DbSkseFunctions", GetNthQuestObjectiveTargets);
     vm->RegisterFunction("GetAllQuestObjectRefs", "DbSkseFunctions", GetAllQuestObjectRefs);
     vm->RegisterFunction("GetQuestObjectRefsInContainer", "DbSkseFunctions", GetQuestObjectRefsInContainer);
     vm->RegisterFunction("GetAllObjectRefsInContainer", "DbSkseFunctions", GetAllObjectRefsInContainer);
@@ -6168,12 +6203,6 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetBookSkill", "DbSkseFunctions", GetBookSkill);
     vm->RegisterFunction("SetBookRead", "DbSkseFunctions", SetBookRead);
     vm->RegisterFunction("SetAllBooksRead", "DbSkseFunctions", SetAllBooksRead);
-    vm->RegisterFunction("CreateKeyword", "DbSkseFunctions", CreateKeyword);
-    vm->RegisterFunction("CreateFormList", "DbSkseFunctions", CreateFormList);
-    vm->RegisterFunction("CreateColorForm", "DbSkseFunctions", CreateColorForm);
-    vm->RegisterFunction("CreateConstructibleObject", "DbSkseFunctions", CreateConstructibleObject);
-    vm->RegisterFunction("CreateTextureSet", "DbSkseFunctions", CreateTextureSet);
-    vm->RegisterFunction("CreateSoundMarker", "DbSkseFunctions", CreateSoundMarker);
     vm->RegisterFunction("PlaySound", "DbSkseFunctions", PlaySound);
     vm->RegisterFunction("PlaySoundDescriptor", "DbSkseFunctions", PlaySoundDescriptor);
     vm->RegisterFunction("SetSoundInstanceSource", "DbSkseFunctions", SetSoundInstanceSource);
@@ -6425,6 +6454,11 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             papyrusInterface->Register(conditions::BindPapyrusFunctions);
             papyrusInterface->Register(rangeEvents::BindPapyrusFunctions);
             papyrusInterface->Register(MapMarker::BindPapyrusFunctions);
+            papyrusInterface->Register(Topic::BindPapyrusFunctions);
+            papyrusInterface->Register(StoryManager::BindPapyrusFunctions);
+            papyrusInterface->Register(Scene::BindPapyrusFunctions);
+            papyrusInterface->Register(CreateForms::BindPapyrusFunctions);
+            papyrusInterface->Register(Message::BindPapyrusFunctions);
 			
             SetSettingsFromIniFile();
             CreateEventSinks();
@@ -6440,6 +6474,8 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
 			
 			// auto* player = RE::PlayerCharacter::GetSingleton();
 			// logger::info("player ID = [{}]", player->GetFormID());
+			
+			// conditions::LogAllConditionFunctionParamTypes();
 			
 			UpdateLoop::Start(); 
 			
@@ -6472,97 +6508,87 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
     }
 }
 
+std::mutex serializeMutex;
+
 void LoadCallback(SKSE::SerializationInterface* ssi) {
+	std::lock_guard<std::mutex> lock(serializeMutex);
+	
     //gfuncs::lastTimeGameWasLoaded = std::chrono::system_clock::now();
 
-    logger::trace("LoadCallback started");
+    logger::debug("LoadCallback started");
 
     int max = EventEnum_Last + 1;
     std::uint32_t record, version, length;
 
     if (ssi) {
-        if (serialize::SetSerializing(true)) {
-            while (ssi->GetNextRecordInfo(record, version, length)) {
-                logger::trace("record[{}]", gfuncs::uint32_to_string(record));
+		while (ssi->GetNextRecordInfo(record, version, length)) {
+			logger::trace("record[{}]", gfuncs::uint32_to_string(record));
 
-                if (record == sv::record) {
-                    sv::Load(ssi);
-                }
-                else if (timers::IsTimerType(record)) {
-                    timers::LoadTimers(record, ssi);
-                } 
-                else {
-                    //this is causing ctd on Skyrim AE when fast traveling too many times too quickly.
-                    /*for (int i = EventEnum_First; i < max; i++) {
-                        if (record == eventDataPtrs[i]->record) {
-                            eventDataPtrs[i]->Load(ssi);
-                            break;
-                        }
-                    }*/
-                }
-            }
+			if (record == sv::record) {
+				sv::Load(ssi);
+			}
+			else if (record == utilRecord) {
+				LoadObjectReferenceBaseScripts(ssi);
+			} 
+			else if (timers::IsTimerType(record)) {
+				timers::LoadTimers(record, ssi);
+			} 
+			else if (record == conditions::Serialization::conditionsRecord){
+				conditions::Serialization::Load(ssi, version);
+			}
+			
+			// used only for testing ResolveFormID on created forms.
+			// else if (record == CreateForms::createFormsRecord){
+			// 	CreateForms::LoadForms(ssi);
+			// }
+		}
 
-			auto* player = RE::PlayerCharacter::GetSingleton();
-            if (player) {
-                bPlayerIsInCombat = player->IsInCombat();
-            }
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (player) {
+			bPlayerIsInCombat = player->IsInCombat();
+		}
 
-            //EventEnum_OnLoadGame doesn't have an event sink, hence EventEnum_First + 1
-            /*for (int i = EventEnum_First + 1; i < max; i++) {
-                AddSink(i);
-            }*/
+		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (bssVm) {
+			auto* args = RE::MakeFunctionArguments();
+			bssVm->SendEventAll(eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
+			delete args;
+		}
 
-            //now sending to all scripts with the OnLoadGameGlobal Event
-            //gfuncs::RemoveDuplicates(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles);
-            //gfuncs::SendEvents(eventDataPtrs[EventEnum_OnLoadGame]->globalHandles, eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
-
-			auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-            if (bssVm) {
-                auto* args = RE::MakeFunctionArguments();
-                bssVm->SendEventAll(eventDataPtrs[EventEnum_OnLoadGame]->sEvent, args);
-                delete args;
-            }
-
-            RegisterActorsForBowDrawAnimEvents();
-            SaveActorRaces();
-            serialize::SetSerializing(false);
-            logger::trace("LoadCallback complete");
-        }
-        else {
-            logger::debug("already loading or saving");
-        }
+		RegisterActorsForBowDrawAnimEvents();
+		SaveActorRaces();
+		logger::debug("LoadCallback complete");
     }
     else {
         logger::error("ssi doesn't exist, aborting load.");
     }
-    AttachDbSksePersistentVariablesScript();
+	
+    AttachDbSksePersistentVariablesScript(); //no mutex here
 }
 
 void SaveCallback(SKSE::SerializationInterface* ssi) {
-    logger::trace("SaveCallback started");
+	std::lock_guard<std::mutex> lock(serializeMutex);
+    logger::debug("SaveCallback started");
 
     if (ssi) {
-        if (serialize::SetSerializing(true)) {
-            //this is causing ctd on Skyrim AE when fast traveling too many times too quickly.
-            /*int max = EventEnum_Last + 1;
-            for (int i = EventEnum_First; i < max; i++) {
-                eventDataPtrs[i]->Save(ssi);
-            }*/
-
-            sv::Save(ssi);
-            timers::SaveTimers(ssi);
-			
-            serialize::SetSerializing(false);
-            logger::trace("SaveCallback complete");
-        }
-        else {
-            logger::debug("already loading or saving");
-        }
+		sv::Save(ssi);
+		SaveObjectReferenceBaseScripts(ssi);
+		timers::SaveTimers(ssi);
+		conditions::Serialization::Save(ssi);
+		
+		// used only for testing ResolveFormID on created forms.
+		// CreateForms::SaveForms(ssi);
+		logger::trace("SaveCallback complete");
     }
     else {
         logger::error("ssi doesn't exist, aborting save.");
     }
+	
+    // logger::debug("SaveCallback complete");
 }
+
+// void FormDeleteCallback(RE::VMHandle handle){
+// }
 
 //init================================================================================================================================================================
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
@@ -6574,12 +6600,15 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
 	logger::critical("REL base [{:X}]", REL::Module::get().base());
 	
     skseLoadInterface = skse; 
+	
+	
     SKSE::GetMessagingInterface()->RegisterListener(MessageListener);
 
     auto* serialization = SKSE::GetSerializationInterface();
     serialization->SetUniqueID('DbSF');
     serialization->SetSaveCallback(SaveCallback);
     serialization->SetLoadCallback(LoadCallback);
+	// serialization->SetFormDeleteCallback(FormDeleteCallback);
 
     //std::stringstream ss;
     //ss << std::hex << std::uppercase << reinterpret_cast<uintptr_t>(SaveCallback);
@@ -6588,7 +6617,6 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
 
     //replaced gfuncs::LogAndMessage with logger:: functions.
     //fs::ReplaceLogAndMessageFuncs();
-
     
     return true;
 }

@@ -33,6 +33,8 @@ std::vector<RE::BGSRefAlias*> GetAllRefaliases(RE::StaticFunctionTag*, bool only
 
 std::vector<RE::BGSRefAlias*> GetAllRefAliasesForRef(RE::StaticFunctionTag*, RE::TESObjectREFR * ref);
 
+std::vector<RE::BGSRefAlias*> GetNthQuestObjectiveTargets(RE::StaticFunctionTag*, RE::TESQuest* akQuest, int index, bool useObjectiveIndex);
+
 std::vector<RE::TESObjectREFR*> GetAllQuestObjectRefs(RE::StaticFunctionTag*);
 
 std::vector<RE::TESObjectREFR*> GetQuestObjectRefsInContainer(RE::StaticFunctionTag*, RE::TESObjectREFR * containerRef);

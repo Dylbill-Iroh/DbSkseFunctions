@@ -125,5 +125,5 @@ namespace serialize {
 	
 	bool SaveString(uint32_t record, SKSE::SerializationInterface* ssi, std::string s);
 	
-    std::string LoadString(uint32_t record, SKSE::SerializationInterface* ssi);
+    std::string LoadString(uint32_t record, SKSE::SerializationInterface* ssi, bool& success);
 }

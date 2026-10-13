@@ -449,7 +449,7 @@ namespace serialize {
 		return true;
     }
 	
-    std::string LoadString(uint32_t record, SKSE::SerializationInterface* ssi) {
+    std::string LoadString(uint32_t record, SKSE::SerializationInterface* ssi, bool& success) {
         std::string sRecord = gfuncs::uint32_to_string(record);
 		
 		std::string s = ""; 
@@ -457,6 +457,7 @@ namespace serialize {
         std::uint32_t len = 0;
         if (!ssi->ReadRecordData(len)) {
             logger::error("failed to read string length for record[{}]", sRecord);
+			success = false;
             return "";
         }
 		
@@ -464,8 +465,11 @@ namespace serialize {
         if (len > 0 && ssi->ReadRecordData(s.data(), len) != len) {
             logger::error("failed to read string data for record[{}]", sRecord);
             s.clear();
+			success = false;
             return "";
         }
+		
+		success = true;
         return s;
     }
 }

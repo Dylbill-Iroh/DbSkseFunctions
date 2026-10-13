@@ -28,21 +28,20 @@ bool function ConditionExists(string conditionId) Global Native
 ;Set the nth parameter for the condition with the conditionId to the form param. paramIndex must be 0 or 1.
 bool function SetConditionParameterForm(string conditionId, form param, int paramIndex = 0) Global Native
 
-;Set the nth parameter for the condition with the conditionId to the Alias param. paramIndex must be 0 or 1.
+;depreciated - there are no alias param types, this will always return false.
 bool function SetConditionParameterAlias(string conditionId, Alias param, int paramIndex = 0) Global Native
 
-;Set the nth parameter for the condition with the conditionId to the Bool param. paramIndex must be 0 or 1.
+;depreciated - there are no bool param types, this will always return false.
 bool function SetConditionParameterBool(string conditionId, Bool param, int paramIndex = 0) Global Native
 
-;Set the nth parameter for the condition with the conditionId to the Int param. paramIndex must be 0 or 1.
-;Int parameters will explicitely say integer in the creation kit, like GetIsCreatureType. 
-;Otherwise for enum drop down lists, such as GetIsSex, use SetConditionParameterRaw.
+; Set the nth parameter for the condition, paramIndex must be 0 or 1.
+; Note that for the kGetEventData condition, index 0 = Event Function (int), 1 = Event Member (int), 2 = Event Data (form). See kGetEventData Info below for more info.
+; This is for integer conditions and conditions with an enum dropdown list, such as GetIsSex, GetActorValue, etc.
+; Compare creationkit created conditions with GetParameterInt to get correct values for what it expects.
+; Make sure you're using this on the correct type for param. Use GetFunctionParameterBaseType to check. It will return 1 for integer types.
 bool function SetConditionParameterInt(string conditionId, Int param, int paramIndex = 0) Global Native
 
-; Many condition functions take small enums/indices stored directly in the
-; pointer field rather than as a pointer to a value. 
-; GetIsSex, actor value indices, etc. Compare against a vanilla condition's raw
-; params to tell which option a given function expects.
+; Depreciated - does the same as SetConditionParameterInt.
 bool function SetConditionParameterRaw(string conditionId, Int param, int paramIndex = 0) Global Native
 
 ;Set the nth parameter for the condition with the conditionId to the Float param. paramIndex must be 0 or 1.
@@ -67,6 +66,168 @@ bool function SetConditionValue(string conditionId, float value) Global Native
 ;Run the condition with the conditionId on the optional target and evaluate. Return true if the condition is met.
 bool function EvaluateCondition(string conditionId, ObjectReference target = none) Global Native 
 
+; Returns the expected base type for the functionId's paramIndex.
+; base types are 
+; kNone
+; kRaw
+; kFloat
+; kString
+; kForm
+; kObjectReference
+; note that both kForm and kObjectReference are valid for SetConditionParameterForm.
+string Function GetFunctionParameterBaseTypeString(int functionId, int paramIndex) Global Native
+
+; Returns the expected base type for the functionId's paramIndex.
+; 0 = kNone
+; 1 = kRaw
+; 2 = kFloat
+; 3 = kString
+; 4 = kForm
+; 5 = kObjectReference
+; note that both kForm and kObjectReference are valid for SetConditionParameterForm.
+int Function GetFunctionParameterBaseType(int functionId, int paramIndex) Global Native
+
+; Return the expected parameter type for the functionId's paramIndex. 
+; see GetFunctionParameterType below for valid types.
+string Function GetFunctionParameterTypeString(int conditionFunction, int paramIndex = 0) Global Native 
+
+; Return the expected parameter type for the functionId's paramIndex. 
+; paramIndex must be 0 or 1, the exception being kGetEventData. kGetEventData info below for more info.
+;-----------------------------------------------------------------------------------------------------
+; idx          SCRIPT_PARAM_TYPE         base type        what the value is
+; -----------  ------------------------  ---------------- -------------------------------------------
+; 0x00 (0)     kChar                     String
+; 0x01 (1)     kInt                      Int              integer
+; 0x02 (2)     kFloat                    Float
+; 0x03 (3)     kInventoryObject          None
+; 0x04 (4)     kObjectRef                ObjectReference  ObjectReference
+; 0x05 (5)     kActorValue               Int              actor value index
+; 0x06 (6)     kActor                    ObjectReference  ObjectReference / Actor
+; 0x07 (7)     kSpellItem                Form             Spell
+; 0x08 (8)     kAxis                     Int              X / Y / Z
+; 0x09 (9)     kCell                     Form             Cell
+; 0x0A (10)    kAnimGroup                None
+; 0x0B (11)    kMagicItem                Form             Spell, Scroll, Potion, Enchantment, etc
+; 0x0C (12)    kSound                    None
+; 0x0D (13)    kTopic                    None
+; 0x0E (14)    kQuest                    Form             Quest
+; 0x0F (15)    kRace                     Form             Race
+; 0x10 (16)    kClass                    Form             Class
+; 0x11 (17)    kFaction                  Form             Faction
+; 0x12 (18)    kSex                      Int
+; 0x13 (19)    kGlobal                   Form             GlobalVariable
+; 0x14 (20)    kFurnitureOrFormList      Form             Furniture or FormList
+; 0x15 (21)    kObject                   Form
+; 0x16 (22)    kScriptVar                String
+; 0x17 (23)    kStage                    Int              quest stage index as set in the CK (0, 50, 100)
+; 0x18 (24)    kMapMarker                None
+; 0x19 (25)    kActorBase                Form             ActorBase
+; 0x1A (26)    kContainerRef             None
+; 0x1B (27)    kWorldOrList              Form             WorldSpace or FormList
+; 0x1C (28)    kCrimeType                Int
+; 0x1D (29)    kPackage                  Form             Package
+; 0x1E (30)    kCombatStyle              None
+; 0x1F (31)    kMagicEffect              Form             MagicEffect
+; 0x20 (32)    kFormType                 Int
+; 0x21 (33)    kWeather                  Form             Weather
+; 0x22 (34)    kNPC                      None             not verified -- no condition function found
+; 0x23 (35)    kOwner                    Form             ActorBase
+; 0x24 (36)    kShaderEffect             None
+; 0x25 (37)    kFormList                 Form             FormList
+; 0x26 (38)    kMenuIcon                 None             not verified -- no condition function found
+; 0x27 (39)    kPerk                     Form             Perk
+; 0x28 (40)    kNote                     Int              index
+; 0x29 (41)    kMiscStat                 Int
+; 0x2A (42)    kImagespaceMod            None             not verified -- unused
+; 0x2B (43)    kImagespace               None             not verified -- unused
+; 0x2C (44)    kVATSValue                None             not verified -- unused
+; 0x2D (45)    kVATSValueData            None             not verified -- unused
+; 0x2E (46)    kEventFunction            Int              event function + event member, packed -- see below
+; 0x2F (47)    kEventFunctionMember      Form             event data form (optional) -- see below
+; 0x30 (48)    kEventFunctionData        None             not verified -- no condition function found
+; 0x31 (49)    kVoiceType                Form             VoiceType or FormList
+; 0x32 (50)    kEncounterZone            Form             EncounterZone
+; 0x33 (51)    kIdleForm                 Form             Idle
+; 0x34 (52)    kMessage                  None
+; 0x35 (53)    kInvObjectOrFormList      Form             inventory object form or FormList
+; 0x36 (54)    kAlignment                Int
+; 0x37 (55)    kEquipType                Form             EquipSlot
+; 0x38 (56)    kObjectOrFormList         Form             object form or FormList
+; 0x39 (57)    kMusic                    None
+; 0x3A (58)    kCritStage                Int
+; 0x3B (59)    kKeyword                  Form             keyword
+; 0x3C (60)    kRefType                  Form             Location
+; 0x3D (61)    kLocation                 Form             Location
+; 0x3E (62)    kForm                     None
+; 0x3F (63)    kAlias                    Int              alias INDEX, not an Alias object
+; 0x40 (64)    kShout                    Form             Shout
+; 0x41 (65)    kWordOfPower              None
+; 0x42 (66)    kRelationshipRank         None             not verified -- no condition function found
+; 0x43 (67)    kBGSScene                 Form             Scene
+; 0x44 (68)    kCastingSource            Int
+; 0x45 (69)    kAssociationType          Form             AssociationType
+; 0x46 (70)    kWardState                Int
+; 0x47 (71)    kPackageDataCanBeNull     Int              package ID
+; 0x48 (72)    kPackageDataNumeric       Int              integer
+; 0x49 (73)    kFurnitureAnimType        Int
+; 0x4A (74)    kFurnitureEntryType       Int
+; 0x4C (76)    kVMScriptVar              String
+; 0x4D (77)    kReferenceEffect          None
+; 0x4E (78)    kPackageData              Int              package ID
+; 0x50 (80)    kSkillAction              Int
+; 0x51 (81)    kKnowableForm             Form
+; 0x52 (82)    kRegion                   Form             Region
+;
+; Indices 75 and 79, and anything above 82, have no entry and report kNone.
+; Every row marked "not verified" means no condition function was found that uses that parameter type.
+; They report kNone, so the accessors will reject them. 
+
+
+; kGetEventData Info 
+;==============================================================================================================================
+; kGetEventData is the one condition with 3 parameters in the Creation Kit.
+; The Creation Kit shows kGetEventData with three fields. The engine packs the first two into a
+; single parameter, so this condition is addressed with three paramIndex values instead of two:
+;
+;   paramIndex 0   Event Function   SetParameterInt()  / GetParameterInt()
+;   paramIndex 1   Event Member     SetParameterInt()  / GetParameterInt()
+;   paramIndex 2   Data (optional)  SetParameterForm() / GetParameterForm()
+;
+; Event Function values, in the order the Creation Kit lists them:
+;
+;   0  GetIsID
+;   1  GetItemValue
+;   2  GetValue
+;   3  HasKeyword
+;   4  IsInList
+;
+; Event Member values, in the order the Creation Kit lists them:
+;
+;   0  (New)Location
+;   1  (Old)Location
+;   2  CreatedObject
+;   3  Form
+;   4  Keyword
+;   5  None
+;   6  Value1
+;   7  Value2
+;
+; Which members a given kGetEventData actually provides depends on the event, so a member that is
+; valid syntactically can still never match at runtime. 
+; Check the event's definition in the Creation Kit or XEdit to verify.
+;
+; Example -- HasKeyword on the event's (Old)Location, testing for ActorTypeNPC:
+;
+;   myCondition.SetParameterInt(3, 0)                      ; HasKeyword
+;   myCondition.SetParameterInt(1, 1)                      ; (Old)Location
+;   myCondition.SetParameterForm(ActorTypeNPCKeyword, 2)   ; the keyword to test for
+;
+; A freshly created GetEventData condition reads back as Event Function 0 (GetIsID) and Event
+; Member 5 (None), because both halves are zero. That is the default state, not an error.
+int Function GetFunctionParameterType(int conditionFunction, int paramIndex = 0) Global Native 
+
+
+	
 ;/Example script
 I know that papyrus already has GetFactionRank, this was just an easy way to test these functions for proof of concept.
 ===================================================================================================================================================================================================================================================================================

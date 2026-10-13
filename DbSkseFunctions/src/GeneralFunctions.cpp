@@ -5,11 +5,20 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <wingdi.h>
 #include "GeneralFunctions.h"
 #include "RE/B/BGSKeyword.h"
+#include "RE/B/BGSLocAlias.h"
+#include "RE/B/BGSRefAlias.h"
 #include "RE/B/BSCoreTypes.h"
+#include "RE/B/BSFixedString.h"
+#include "RE/O/Object.h"
+#include "RE/RTTI.h"
+#include "RE/T/TESCondition.h"
 #include "RE/T/TESForm.h"
 #include "RE/T/TESObjectREFR.h"
+#include "RE/T/TESTopic.h"
+#include "RE/T/TypeTraits.h"
 #include "REL/Version.h"
 #include "editorID.hpp"
 #include "SharedVariables.h"
@@ -19,7 +28,11 @@ namespace gfuncs {
 
     const std::string hexDigits = "0123456789abcdef";
     const std::string reverseHexDigits = "fedcba9876543210";
-
+	
+	// 0000028A, this is the form the game uses as default when using PlaceAtMe with abForcePersistent == true.
+	// It promotes this form as an owner of the ref with the BGSDynamicPersistenceManager.
+	const RE::FormID promotedPersistenceDefaultFormID = 650; 
+	
     bool srandSet = false;
 
     enum logLevel { trace, debug, info, warn, error, critical };
@@ -211,12 +224,19 @@ namespace gfuncs {
     }
 
     uint64_t StringToUint64_t(std::string s) {
-        uint64_t value;
+        uint64_t value = 0;
         std::istringstream iss(s);
         iss >> value; 
         return value;
     }
 
+	uint32_t StringToUint32_t(std::string s) {
+        uint32_t value = 0;
+        std::istringstream iss(s);
+        iss >> value; 
+        return value;
+    }
+	
     //does the string have at least minNumber of c characters in it?
     bool StringHasNCharacters(std::string s, char c, int minNumber) {
         int size = s.size();
@@ -327,6 +347,40 @@ namespace gfuncs {
         return true;
     }
 
+	FormIdEx GetAliasKey(RE::BGSBaseAlias* alias) {
+		if (!alias){
+			return {0, 0};
+		}
+		RE::FormID questId = gfuncs::IsFormValid(alias->owningQuest) ? alias->owningQuest->GetFormID() : 0;
+		return { questId, alias->aliasID, 0, FormIdExType::kAlias };
+	}
+	
+	RE::BGSBaseAlias* GetAliasFromKey(const FormIdEx& key) {
+		auto* quest = RE::TESForm::LookupByID<RE::TESQuest>(key.formId);
+		if (!gfuncs::IsFormValid(quest)) { return nullptr; }
+		for (auto* alias : quest->aliases) {
+			if (alias && alias->aliasID == key.subId) { return alias; }
+		}
+		return nullptr;
+	}
+	
+	//thanks to shad0wshayd3 for this.
+	RE::TESQuestStageItem* GetQuestStageItem(RE::TESQuestStage* questStage, std::uint8_t a_index){
+		// auto& mod = REL::Module::get();
+		// REL::Version version = mod.version();
+		// REL::Version SeVersion = REL::Version(1, 5, 97, 0);
+		// REL::Version minAeVersion = REL::Version(1, 7, 99, 0);
+		
+		// //only have the ids for 1.5.97 and 1.7xx or greater
+		// if (version < minAeVersion && version != SeVersion){
+		// 	return nullptr;
+		// }
+		
+        using func_t = decltype(&gfuncs::GetQuestStageItem);
+        static REL::Relocation<func_t> func{ RELOCATION_ID(24766, 25246) };
+        return func(questStage, a_index);
+    }
+	
     std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string nullFormString) {
         if (!IsFormValid(akForm)) {
             return nullFormString;
@@ -393,7 +447,11 @@ namespace gfuncs {
     }
 
     std::string GetFormNameAndId(RE::TESForm* akForm, std::string nullString, std::string noNameString) {
-        std::string name = std::string(GetFormName(akForm, nullString, noNameString, false));
+        if (!IsFormValid(akForm)) {
+            return nullString;
+        }
+		
+		std::string name = std::string(GetFormName(akForm, nullString, noNameString, false));
 		if (name == nullString){
 			return nullString;
 		}
@@ -685,7 +743,21 @@ namespace gfuncs {
         //     return NULL;
         // }
 
-        RE::VMTypeID id = akAlias->GetVMTypeID();
+		
+		RE::VMTypeID id = RE::BGSBaseAlias::VMTYPEID;
+        // RE::VMTypeID id = akAlias->GetVMTypeID();
+		
+		RE::BGSRefAlias* refAlias = skyrim_cast<RE::BGSRefAlias*>(akAlias); 
+		RE::BGSLocAlias* locAlias = skyrim_cast<RE::BGSLocAlias*>(akAlias); 
+		
+		if (refAlias){
+			id = RE::BGSLocAlias::VMTYPEID;
+			// id = refAlias->GetVMTypeID();
+		}
+		else if (locAlias){
+			id = RE::BGSLocAlias::VMTYPEID;
+			// id = locAlias->GetVMTypeID();
+		}
 		
 		auto* policy = GetHandlePolicy();
 		if (!policy) { 
@@ -696,7 +768,7 @@ namespace gfuncs {
 		//old api 
         // RE::VMHandle handle = skyrimVm->handlePolicy.GetHandleForObject(id, akAlias);
 		
-		RE::VMHandle handle = policy->GetHandleForObject(akAlias->GetVMTypeID(), akAlias);
+		RE::VMHandle handle = policy->GetHandleForObject(id, akAlias);
 		return handle;
     }
 
@@ -817,18 +889,136 @@ namespace gfuncs {
         return itemReference;
     }
 
-    bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName) {
+	const std::unordered_map<std::string, FormTypeTable::ExtendedFormType>& GetPapyrusFormTypeMap() {
+        static const std::unordered_map<std::string, FormTypeTable::ExtendedFormType> map = {
+#define X(ENUM, CLASS, PSC) { #PSC,  FormTypeTable::ExtendedFormType::PSC },
+            DB_MASTER_TYPE_LIST
+#undef X
+        };
+        return map;
+    }
+	
+	std::optional<FormTypeTable::ExtendedFormType> GetFormTypeFromPapyrusPropertyName(std::string propertyName) {
+		gfuncs::ConvertToLowerCase(propertyName);
+		static const auto lowered = [] {
+			std::unordered_map<std::string, FormTypeTable::ExtendedFormType> m;
+			for (const auto& [k, v] : GetPapyrusFormTypeMap()) {
+				std::string lk = k;
+				gfuncs::ConvertToLowerCase(lk);
+				m[lk] = v;
+			}
+			return m;
+		}();
+		auto it = lowered.find(propertyName);
+		return it != lowered.end() ? std::optional{ it->second } : std::nullopt;
+	}
+	
+	bool IsScriptObjectTypeRegistered(RE::BSScript::IVirtualMachine* vm, RE::VMTypeID type) {
+		RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo> classPtr;
+		return vm->GetScriptObjectType(type, classPtr) && classPtr;
+	}
+	
+	// returns the papyrus script name currently registered for this type id, or "" if none
+	std::string GetRegisteredScriptObjectTypeName(RE::BSScript::IVirtualMachine* vm, RE::VMTypeID type) {
+		RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo> classPtr;
+		if (!vm->GetScriptObjectType(type, classPtr) || !classPtr) {
+			return "";
+		}
+		const char* name = classPtr->GetName();
+		return name ? name : "";
+	}
+
+	bool RegisterObjectType(RE::BSScript::IVirtualMachine* vm, RE::VMTypeID type, const char* scriptName) {
+		const std::string existing = GetRegisteredScriptObjectTypeName(vm, type);
+		
+		if (existing.empty()) {
+			vm->RegisterObjectType(type, scriptName);
+
+			// re-query: this forces the VM to load and link the script, and confirms it took
+			const std::string after = GetRegisteredScriptObjectTypeName(vm, type);
+			if (after.empty()) {
+				logger::error("type[{}] registered as [{}] but the VM can't resolve it -- is {}.pex in Data/Scripts?",
+					static_cast<int>(type), scriptName, scriptName);
+				return false;
+			}
+
+			logger::info("type[{}] registered as [{}]", static_cast<int>(type), after);
+			return true;
+		}
+
+		if (_stricmp(existing.c_str(), scriptName) == 0) {
+			return true;   // already ours (or an identical registration)
+		}
+
+		logger::warn("type[{}] already registered as [{}] -- [{}] not registered; callers must use the global functions",
+			static_cast<int>(type), existing, scriptName);
+		return false;
+	}
+	
+	std::vector<std::string> GetScriptsAttachedTohandle(RE::VMHandle& handle, bool RemoveDuplicates) {
+		std::vector<std::string> v;
         if (handle == NULL) {
             logger::error("handle is null");
-            return false;
+            return v;
         }
 
 		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
         if (!bssVm) {
             logger::error("vm not found");
-            return false;
+            return v;
         }
 
+		{ //scoped lock
+			RE::BSSpinLockGuard lock(bssVm->attachedScriptsLock);
+			
+			auto it = bssVm->attachedScripts.find(handle);
+			if (it != bssVm->attachedScripts.end()) {
+				//logger::error("it->second.size() = {}", it->second.size());
+				for (int i = 0; i < it->second.size(); i++) {
+					auto& attachedScript = it->second[i];
+					if (attachedScript) {
+						auto* script = attachedScript.get();
+						if (script) {
+							auto info = script->GetTypeInfo();
+							if (info) {
+								//logger::error("info->name = [{}]", info->name);
+								v.push_back((std::string)info->name);
+								auto* parentInfo = info->GetParent();
+								while (parentInfo){
+									v.push_back((std::string)parentInfo->name);
+									parentInfo = parentInfo->GetParent();
+								}
+							}
+						}
+					}
+				}
+			}
+			else {
+				logger::error("vm* couldnt find handle");
+			}
+		}
+		
+		if (RemoveDuplicates){
+			gfuncs::RemoveDuplicates(v);
+		}
+        return v;
+    }
+	
+	std::vector<std::vector<std::string>> GetScriptHierarchiesOnHandle(RE::VMHandle& handle) {
+		std::vector<std::vector<std::string>> v;
+        if (handle == NULL) {
+            logger::error("handle is null");
+            return v;
+        }
+
+		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (!bssVm) {
+            logger::error("vm not found");
+            return v;
+        }
+
+		RE::BSSpinLockGuard lock(bssVm->attachedScriptsLock);
+		
         auto it = bssVm->attachedScripts.find(handle);
         if (it != bssVm->attachedScripts.end()) {
             //logger::error("it->second.size() = {}", it->second.size());
@@ -839,10 +1029,15 @@ namespace gfuncs {
                     if (script) {
                         auto info = script->GetTypeInfo();
                         if (info) {
+							std::vector<std::string> subVector;
                             //logger::error("info->name = [{}]", info->name);
-                            if (info->name == sScriptName) {
-                                return true;
-                            }
+                            subVector.push_back((std::string)info->name);
+							auto* parentInfo = info->GetParent();
+							while (parentInfo){
+                            	subVector.push_back((std::string)parentInfo->name);
+								parentInfo = parentInfo->GetParent();
+							}
+							v.push_back(subVector);
                         }
                     }
                 }
@@ -851,6 +1046,196 @@ namespace gfuncs {
         else {
             logger::error("vm* couldnt find handle");
         }
+		
+        return v;
+    }
+	
+	std::vector<std::string> GetScriptHierarchyForScriptOnHandle(RE::VMHandle& handle, std::string scriptName){
+		auto scriptChar = scriptName.c_str();
+		std::vector<std::vector<std::string>> v = GetScriptHierarchiesOnHandle(handle);
+		for (auto vv : v){
+			for (auto& script : vv){
+				if (_stricmp(scriptChar, script.c_str()) == 0){
+					return vv;
+				}
+			}
+		}
+		
+		return std::vector<std::string>(0);
+	}
+	
+	bool ScriptHasParentOnHandle(RE::VMHandle& handle, std::string scriptName, std::string parentScriptName){
+		auto scriptChar = scriptName.c_str();
+		auto parentScriptChar = parentScriptName.c_str();
+		std::vector<std::string> v = GetScriptHierarchyForScriptOnHandle(handle, scriptName);
+		int scriptIndex = -1;
+		int parentScriptIndex = -1; 
+		for (int i = 0; i < v.size(); i++){
+			std::string script = v[i];
+			auto c = script.c_str();
+			if (_stricmp(scriptChar, c) == 0){
+				scriptIndex = i;
+			} 
+			else if (_stricmp(parentScriptChar, c) == 0){
+				parentScriptIndex = i;
+			} 
+		} 
+		
+		return (scriptIndex > -1 && parentScriptIndex > -1 && parentScriptIndex > scriptIndex);
+	}
+	
+	bool ScriptHasChildOnHandle(RE::VMHandle& handle, std::string scriptName, std::string childScriptName){
+		auto scriptChar = scriptName.c_str();
+		auto childScriptChar = childScriptName.c_str();
+		std::vector<std::string> v = GetScriptHierarchyForScriptOnHandle(handle, scriptName);
+		int scriptIndex = -1;
+		int childScriptIndex = -1; 
+		for (int i = 0; i < v.size(); i++){
+			std::string script = v[i];
+			auto c = script.c_str();
+			if (_stricmp(scriptChar, c) == 0){
+				scriptIndex = i;
+			} 
+			else if (_stricmp(childScriptChar, c) == 0){
+				childScriptIndex = i;
+			} 
+		} 
+		
+		return (scriptIndex > -1 && childScriptIndex > -1 && childScriptIndex < scriptIndex);
+	}
+	
+	bool ScriptHasParent(std::string scriptName, std::string parentScriptName){
+		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!vm){
+			return false;
+		} 
+		
+		RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo> info;
+		if (!vm->GetScriptObjectType1(scriptName, info)) {
+			return false;
+		}
+
+		if (!info){
+			return false;
+		}
+		
+		auto scriptChar = scriptName.c_str();
+		std::vector<std::string> v;
+		
+		if (info) {
+			bool scriptNameFound = false;
+			//logger::error("info->name = [{}]", info->name);
+			v.push_back((std::string)info->name);
+			if (_stricmp(scriptChar, info->name.c_str()) == 0){
+				scriptNameFound = true;
+			}
+			
+			auto* parentInfo = info->GetParent();
+			while (parentInfo){
+				v.push_back((std::string)parentInfo->name);
+				if (_stricmp(scriptChar, parentInfo->name.c_str()) == 0){
+					scriptNameFound = true;
+				}
+				parentInfo = parentInfo->GetParent();
+			}
+			if (scriptNameFound){
+				// return true;
+			} 
+			else {
+				v.clear();
+			}
+		} 
+		
+		auto parentScriptChar = parentScriptName.c_str();
+		int scriptIndex = -1; 
+		int parentScriptIndex = -1; 
+		for (int i = 0; i < v.size(); i++){
+			std::string script = v[i]; 
+			auto c = script.c_str(); 
+			if (_stricmp(c, scriptChar) == 0){
+				scriptIndex = i;
+			}
+			else if (_stricmp(c, parentScriptChar) == 0){
+				parentScriptIndex = i;
+			}
+		} 
+		
+		return (scriptIndex != -1 && parentScriptIndex != -1 && parentScriptIndex > scriptIndex);
+	}
+	
+	bool ScriptHasChild(std::string scriptName, std::string childScriptName){
+		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!vm){
+			return false;
+		} 
+		
+		RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo> info;
+		if (!vm->GetScriptObjectType1(scriptName, info)) {
+			return false;
+		}
+
+		if (!info){
+			return false;
+		}
+		
+		auto scriptChar = scriptName.c_str();
+		std::vector<std::string> v;
+		
+		if (info) {
+			bool scriptNameFound = false;
+			//logger::error("info->name = [{}]", info->name);
+			v.push_back((std::string)info->name);
+			if (_stricmp(scriptChar, info->name.c_str()) == 0){
+				scriptNameFound = true;
+			}
+			
+			auto* parentInfo = info->GetParent();
+			while (parentInfo){
+				v.push_back((std::string)parentInfo->name);
+				if (_stricmp(scriptChar, parentInfo->name.c_str()) == 0){
+					scriptNameFound = true;
+				}
+				parentInfo = parentInfo->GetParent();
+			}
+			if (scriptNameFound){
+				// return true;
+			} 
+			else {
+				v.clear();
+			}
+		} 
+		
+		auto childScriptChar = childScriptName.c_str();
+		int scriptIndex = -1; 
+		int childScriptIndex = -1; 
+		for (int i = 0; i < v.size(); i++){
+			std::string script = v[i]; 
+			auto c = script.c_str(); 
+			if (_stricmp(c, scriptChar) == 0){
+				scriptIndex = i;
+			}
+			else if (_stricmp(c, childScriptChar) == 0){
+				childScriptIndex = i;
+			}
+		} 
+		
+		return (scriptIndex != -1 && childScriptIndex != -1 && childScriptIndex < scriptIndex);
+	}
+	
+    bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName) {
+        if (handle == NULL) {
+            logger::error("handle is null");
+            return false;
+        }
+
+		auto scriptChar = sScriptName.c_str();
+		
+        std::vector<std::string> scripts = GetScriptsAttachedTohandle(handle, true); 
+		for (std::string& script : scripts){
+			if (_stricmp(scriptChar, script.c_str()) == 0){
+				return true;
+			}
+		}
         return false;
     }
 
@@ -872,7 +1257,16 @@ namespace gfuncs {
         return IsScriptAttachedToHandle(handle, sScriptName);
     }
 
-    RE::BSScript::Object* GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedString& sScriptName) {
+	bool IsScriptAttachedToAlias(RE::BGSBaseAlias* akAlias, RE::BSFixedString sScriptName) {
+        if (!akAlias) {
+            return false;
+        }
+
+        RE::VMHandle handle = gfuncs::GetHandle(akAlias);
+        return IsScriptAttachedToHandle(handle, sScriptName);
+    }
+	
+    RE::BSTSmartPointer<RE::BSScript::Object> GetAttachedScriptObject(RE::VMHandle& handle, RE::BSFixedString& sScriptName) {
         if (handle == NULL) {
             return nullptr;
         }
@@ -882,6 +1276,8 @@ namespace gfuncs {
             return nullptr;
         }
 
+		RE::BSSpinLockGuard lock(bssVm->attachedScriptsLock);
+		
         auto it = bssVm->attachedScripts.find(handle);
         if (it != bssVm->attachedScripts.end()) {
             for (int i = 0; i < it->second.size(); i++) {
@@ -892,7 +1288,7 @@ namespace gfuncs {
                         auto info = script->GetTypeInfo();
                         if (info) {
                             if (info->name == sScriptName) {
-                                return script;
+                                return RE::BSTSmartPointer<RE::BSScript::Object>(script);
                             }
                         }
                     }
@@ -902,6 +1298,182 @@ namespace gfuncs {
         return nullptr;
     }
 
+	bool IsObjectRefOwner(RE::TESObjectREFR* ref, RE::TESForm* akForm, bool checkRef, bool checkForm){
+		if (checkRef){
+			if (!gfuncs::IsFormValid(ref)){
+				logger::warn("ref doesn't exist");
+				return false;
+			}
+		}
+	
+		if (checkForm){
+			if (!gfuncs::IsFormValid(akForm)){
+				logger::warn("akForm doesn't exist");
+				return false;
+			}
+		}
+		
+		auto* promotedRefData = ref->extraList.GetByType<RE::ExtraPromotedRef>();
+		if (promotedRefData){
+			for (RE::TESForm* form : promotedRefData->promotedRefOwners){
+				if (form == akForm){
+					return true;
+				}
+			}
+		}
+		
+		return false;
+	}
+	
+	//is the handle in use by papyrus?
+	bool IsVMHandleInUse(RE::VMHandle handle) {
+		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!bssVm){
+			return true; // can't tell -- assume in use
+		}
+		
+		auto* policy = bssVm ? bssVm->GetObjectHandlePolicy() : nullptr;
+		if (!policy) { 
+			return true; // can't tell -- assume in use
+		}   
+		
+		if (handle == policy->EmptyHandle()) { 
+			return false; 
+		}
+
+		// true if this variable (or any element of it, if it's an array) refers to form
+		auto matches = [&](const RE::BSScript::Variable& var) -> bool {
+			if (var.IsObject()) {
+				auto obj = var.GetObject();
+				return obj && obj->GetHandle() == handle;
+			}
+			if (var.IsArray()) {
+				auto arr = var.GetArray();
+				if (!arr) { return false; }
+				for (std::uint32_t i = 0; i < arr->size(); i++) {
+					const auto& element = (*arr)[i];
+					if (element.IsObject()) {
+						auto obj = element.GetObject();
+						if (obj && obj->GetHandle() == handle) { 
+							return true; 
+						}
+					}
+				}
+			}
+			return false;
+		};
+
+		RE::BSSpinLockGuard lock(bssVm->attachedScriptsLock);
+
+		for (auto& [vmHandle, scripts] : bssVm->attachedScripts) {
+			for (auto& script : scripts) {
+				if (script){
+					if (script->type){
+						const auto numVars = script->type->GetNumVariables();
+						for (std::uint32_t i = 0; i < numVars; i++) {
+							if (matches(script->variables[i])) { 
+								// logger::trace("handle[{}] is held by script[{}] attached to handle[{}], variable[{}] of [{}]",
+									// handle, script->type->GetName(), vmHandle, i, numVars
+								// );
+								return true; 
+							}
+						}
+					}
+				}
+			}
+		}
+		return false;
+	}
+	
+	//is the form in use by papyrus?
+	bool IsFormInUse(RE::TESForm* form, bool checkForm, bool checkDeleted, bool checkIdentity, bool checkIsOwner){
+		if (checkForm){
+			if (!gfuncs::IsFormValid(form, checkDeleted, checkIdentity)) { 
+				return false; 
+			}
+		}
+		
+		auto handle = gfuncs::GetHandle(form);
+		if (IsVMHandleInUse(handle)){
+			// logger::debug("IsVMHandleInUse = true");
+			return true;
+		}
+		
+		RE::TESObjectREFR* ref = form->AsReference();
+		if (gfuncs::IsFormValid(ref)){
+			auto* promotedRefData = ref->extraList.GetByType<RE::ExtraPromotedRef>();
+			if (promotedRefData){
+				if (promotedRefData->promotedRefOwners.size() > 0){
+					// logger::debug("promotedRefData->promotedRefOwners.size() = [{}]", promotedRefData->promotedRefOwners.size());
+					return true;
+				}
+			}
+			
+			auto aliasArray = ref->extraList.GetByType<RE::ExtraAliasInstanceArray>();
+			if (aliasArray) {
+				//logger::trace("alias array for ref[{}] found", ref->GetDisplayFullName());
+				for (auto* akAlias : aliasArray->aliases) {
+					if (akAlias) {
+						if (akAlias->alias) {
+							if (gfuncs::IsFormValid(akAlias->alias->owningQuest)) {
+								for (auto* alias : akAlias->alias->owningQuest->aliases) {
+									//akAlias-alias is a const, this is a workaround to get the non const alias without using const_cast
+									if (alias == akAlias->alias) {
+										RE::BGSRefAlias* refAlias = skyrim_cast<RE::BGSRefAlias*>(alias);
+										if (refAlias) {
+											if (refAlias->GetReference() == ref){
+												return true;
+												// logger::debug("ref is in alias");
+											}
+										}
+										break;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		bool isOwner = false;
+		if (checkIsOwner){
+			const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			for (auto& [id, akForm] : *allForms) {
+				auto* akRef = akForm->AsReference();
+				if (gfuncs::IsFormValid(akRef)){
+					if (IsObjectRefOwner(akRef, form, false, false)){
+						// logger::debug("form is owner of akRef[{}]", gfuncs::GetFormNameAndId(akRef));
+						isOwner = true;
+						break;
+					}
+				}
+			}
+		}
+			
+		return isOwner;
+	}
+	
+	//is the alias in use by papyrus?
+	bool IsAliasInUse(RE::BGSBaseAlias* alias){
+		if (!alias){
+			return false;
+		}
+		
+		auto handle = gfuncs::GetHandle(alias);
+		return IsVMHandleInUse(handle);
+	}
+	
+	//is the activeEffect in use by papyrus?
+	bool IsActiveEffectInUse(RE::ActiveEffect* activeEffect){
+		if (!activeEffect){
+			return false;
+		}
+		
+		auto handle = gfuncs::GetHandle(activeEffect);
+		return IsVMHandleInUse(handle);
+	}
+	
     RE::TESObjectREFR* GetDialogueTarget(RE::Actor* actor) {
         RE::TESObjectREFR* ref = nullptr;
         if (gfuncs::IsFormValid(actor)) {
@@ -1197,7 +1769,7 @@ namespace gfuncs {
 
         return -1;
     }
-
+	
     int GetIndexInVector(std::vector<RE::TESForm*>& v, RE::TESForm* element) {
         if (!IsFormValid(element)) {
             return -1;
@@ -1339,6 +1911,24 @@ namespace gfuncs {
         return -1;
     }
 
+	int GetIndexInVector(std::vector<RE::TESConditionItem*> v, RE::TESConditionItem* element) {
+        if (!(element)) {
+            return -1;
+        }
+
+        if (v.size() == 0) {
+            return -1;
+        }
+
+        auto it = std::find(v.begin(), v.end(), element);
+
+        if (it != v.end()) {
+            return int(std::distance(v.begin(), it));
+        }
+
+        return -1;
+    }
+	
     bool IsObjectInBSTArray(RE::BSTArray<RE::ObjectRefHandle>* v, RE::ObjectRefHandle& element) {
         if (v->size() == 0) {
             return false;
@@ -1748,6 +2338,18 @@ namespace gfuncs {
         std::sort(vec.begin(), vec.end());
         vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
     }
+	
+    void RemoveDuplicates(std::vector<RE::TESTopic*>& vec)
+    {
+        std::sort(vec.begin(), vec.end());
+        vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
+    }
+	
+    void RemoveDuplicates(std::vector<RE::TESTopicInfo*>& vec)
+    {
+        std::sort(vec.begin(), vec.end());
+        vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
+    }
 
 	void RemoveDuplicates(std::vector<RE::BGSKeyword*>& vec)
     {
@@ -1811,6 +2413,107 @@ namespace gfuncs {
         }
         return nullptr;
     }
+	
+	RE::BSTSmartPointer<RE::BSScript::Object> AttachPapyrusScriptToHandle(RE::VMHandle& handle, const char* scriptName) {
+		RE::BSTSmartPointer<RE::BSScript::Object> object = nullptr;
+		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		auto* policy = vm ? vm->GetObjectHandlePolicy() : nullptr;
+		if (!vm || !policy) { 
+			return object; 
+		}
+		
+		if (handle == policy->EmptyHandle()) { 
+			return object; 
+		}
+
+		if (!vm->CreateObject2(scriptName, object) || !object) { 
+			return object; 
+		}
+		
+		vm->BindObject(object, handle, false);
+		return object;
+	}
+	
+	//using this also unattaches all parent scripts and invalidates the form / alias. Use with caution.
+	bool UnattachPapyrusScriptFromHandle(RE::VMHandle& handle, const char* scriptName) {
+		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		auto* policy = vm ? vm->GetObjectHandlePolicy() : nullptr;
+		if (!vm || !policy || handle == policy->EmptyHandle()) {
+			return false;
+		}
+
+		RE::BSTSmartPointer<RE::BSScript::Object> object;
+		// std::string parentScriptName;
+		{
+			RE::BSSpinLockGuard lock(vm->attachedScriptsLock);
+
+			auto it = vm->attachedScripts.find(handle);
+			if (it == vm->attachedScripts.end()) {
+				return false;
+			}
+
+			for (auto& script : it->second) {
+				if (!script) { continue; }
+				auto* info = script->GetTypeInfo();
+				if (info && _stricmp(info->GetName(), scriptName) == 0) {
+					RE::BSScript::Object* objPtr = script.get();  
+					if (objPtr){
+						object = RE::BSTSmartPointer<RE::BSScript::Object>(objPtr); // smart pointer keeps it alive past the unlock
+					}
+					break;
+				}
+			}
+		}
+
+		if (!object) {
+			logger::debug("script[{}] not attached to handle[{}]", scriptName, handle);
+			return false;
+		}
+		
+		logger::debug("script[{}]", scriptName);
+		
+		vm->UnbindObject(object);
+		return true;
+	}
+	
+	RE::BSTSmartPointer<RE::BSScript::Object> AttachPapyrusScriptToForm(RE::TESForm* form, const char* scriptName) {
+		RE::BSTSmartPointer<RE::BSScript::Object> object = nullptr;
+		if (!IsFormValid(form)){
+			logger::warn("form doesn't exist");
+			return object;
+		}
+		RE::VMHandle handle = GetHandle(form);
+		object = AttachPapyrusScriptToHandle(handle, scriptName);
+		return object;
+	}
+	
+	RE::BSTSmartPointer<RE::BSScript::Object> AttachPapyrusScriptToAlias(RE::BGSBaseAlias* alias, const char* scriptName) {
+		RE::BSTSmartPointer<RE::BSScript::Object> object = nullptr;
+		if (!(alias)){
+			return object;
+		}
+		RE::VMHandle handle = GetHandle(alias);
+		object = AttachPapyrusScriptToHandle(handle, scriptName);
+		return object;
+	}
+	
+	bool UnattachPapyrusScriptFromForm(RE::TESForm* form, const char* scriptName) {
+		RE::BSTSmartPointer<RE::BSScript::Object> object = nullptr;
+		if (!IsFormValid(form)){
+			return false;
+		}
+		RE::VMHandle handle = GetHandle(form);
+		return UnattachPapyrusScriptFromHandle(handle, scriptName);
+	}
+	
+	bool UnattachPapyrusScriptFromAlias(RE::BGSBaseAlias* alias, const char* scriptName) {
+		RE::BSTSmartPointer<RE::BSScript::Object> object = nullptr;
+		if (!(alias)){
+			return false;
+		}
+		RE::VMHandle handle = GetHandle(alias);
+		return UnattachPapyrusScriptFromHandle(handle, scriptName);
+	}
 	
     void Install() {
         if (!srandSet) {

@@ -1,11 +1,19 @@
+#include <string>
+#include <unordered_set>
+#include <winbase.h>
 #include "PapyrusUtilEx.h"
 #include "GeneralFunctions.h"
 #include "RE/B/BGSKeyword.h"
 #include "RE/B/BSCoreTypes.h"
+#include "RE/B/BSTSmartPointer.h"
 #include "RE/F/FormTypes.h"
+#include "RE/O/Object.h"
 #include "RE/O/ObjectTypeInfo.h"
 #include "RE/T/TypeTraits.h"
+#include "RE/V/Variable.h"
+#include "SKSE/Logger.h"
 #include "SharedVariables.h"
+#include "magic_enum/magic_enum.hpp"
 
 namespace papyrusUtilEx { 
 	RE::VMHandle GetHandle(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, std::string sHandle){
@@ -40,6 +48,26 @@ namespace papyrusUtilEx {
         return gfuncs::GetActiveEffectFromHandle(akHandle);
     }
 
+	bool IsRawTypePrimitive(RE::BSScript::TypeInfo::RawType type){
+		using RawType = RE::BSScript::TypeInfo::RawType;
+		
+		switch(type){
+			case RawType::kString:
+			case RawType::kInt:
+			case RawType::kFloat:
+			case RawType::kBool:
+			case RawType::kStringArray:
+			case RawType::kIntArray:
+			case RawType::kFloatArray:
+			case RawType::kBoolArray:
+				return true;
+			default:
+				return false;
+		}
+		
+		return false;
+	}
+	
 	bool BindArray(std::string typeName){
 		RE::BSTSmartPointer<RE::BSScript::ObjectTypeInfo> objType;
 		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
@@ -76,49 +104,180 @@ namespace papyrusUtilEx {
 	}
 	
 	std::string GetObjTypeInfoName(RE::BSScript::ObjectTypeInfo* info){
+		if (!info){
+			return "";
+		}
+		
+		if (IsBadReadPtr(info, sizeof(RE::BSScript::ObjectTypeInfo))){
+			return "";
+		}
+		
 		if (info){
-			return info->GetName();
+			return std::string(info->name);
 		}
 		
 		return "";
 	}
 	
-	bool TypeInfosMatch(RE::BSScript::TypeInfo typeA, RE::BSScript::TypeInfo typeB) { 
+	// does the base exist in the info or its parents?
+	bool ObtTypeInfoHasBaseScriptAttached(RE::BSScript::ObjectTypeInfo* info, RE::BSScript::ObjectTypeInfo* base) {
+		if (!info || !base) {
+			return false;
+		}
+		
+		const char* baseName = base->GetName();
+		
+		RE::BSScript::ObjectTypeInfo* parent = info;
+		while (parent){
+			const char* parentName = parent->GetName();
+			if (_stricmp(parentName, baseName) == 0) {
+				return true;
+			}
+			
+			parent = parent->GetParent();
+		}
+
+		return false;
+	}
+	
+	// Would `var as destType` be a valid cast in Papyrus?
+	bool ScriptObjectCastsTo(const RE::BSTSmartPointer<RE::BSScript::Object>& obj,  RE::BSScript::TypeInfo destType) {
+                        
+		using RawType = RE::BSScript::TypeInfo::RawType;
+
+		if (!obj) {
+			return true; // None casts to anything
+		}
+		
+		auto* destInfo = destType.GetTypeInfo();
+		if (!destInfo) {
+			return true; // untyped object destination
+		}
+		
+		if (destType.GetUnmangledRawType() != RawType::kObject) {
+			return false; // an object can't go in a primitive slot
+		}
+
+		// 1. the obj or one of its parents has the destType script attached.
+		if (ObtTypeInfoHasBaseScriptAttached(obj->GetTypeInfo(), destInfo)) {
+			return true;
+		}
+
+		// 2. can't get children from obj directly, this checks children that weren't checked in ObtTypeInfoHasBaseScriptAttached.
+		RE::VMHandle handle = obj->GetHandle();
+		RE::BSFixedString destName = destInfo->name;
+
+		return handle != 0 && gfuncs::IsScriptAttachedToHandle(handle, destName);
+	}
+	
+	std::unordered_set<std::string> GetObjTypeInfoScriptHierarchy(RE::BSScript::ObjectTypeInfo* info){
+		std::unordered_set<std::string> set;
+		if (info){
+			// logger::debug("info->name [{}]", info->name);
+			set.insert((std::string)info->name);
+			auto* parentInfo = info->GetParent();
+			while (parentInfo){
+				// logger::debug("parentInfo->name [{}]", parentInfo->name);
+				set.insert((std::string)parentInfo->name);
+				parentInfo = parentInfo->GetParent();
+			}
+			
+		}
+		
+		return set;
+	}
+	
+	//get the top most root parent of info
+	std::string GetObjTypeInfoParentRoot(RE::BSScript::ObjectTypeInfo* info){
+		if (info){
+			RE::BSScript::ObjectTypeInfo* parent = info;
+			while (parent){
+				// logger::debug("scriptname[{}]", parent->name);
+				RE::BSScript::ObjectTypeInfo* nextParent = parent->GetParent(); 
+				if (!nextParent){
+					return std::string(parent->name);
+				}
+				
+				parent = nextParent;
+			}
+		}
+		
+		return "";
+	}
+	
+	enum class TypeInfosMatchType{kDontMatch, kExact, kSharesRoot};
+	
+	TypeInfosMatchType TypeInfosMatch(RE::BSScript::TypeInfo typeA, RE::BSScript::TypeInfo typeB) { 
+		using RawType = RE::BSScript::TypeInfo::RawType;
+		
 		auto* infoA = typeA.GetTypeInfo();
-		auto* infoB = typeA.GetTypeInfo();
+		auto* infoB = typeB.GetTypeInfo();
 		
 		if (infoA && infoB){
-			return infoA->GetName() == infoB->GetName();
+			if (infoA->name == infoB->name){
+				return TypeInfosMatchType::kExact;
+			}
 		}
 		
 		auto rawTypeA = typeA.GetUnmangledRawType();
 		auto rawTypeB = typeB.GetUnmangledRawType();
 		
-		if (rawTypeA == RE::BSScript::TypeInfo::RawType::kNone && rawTypeB ==RE::BSScript::TypeInfo::RawType::kNone){
-			return false;
+		bool typeAIsPrimitive = IsRawTypePrimitive(rawTypeA);
+		bool typeBIsPrimitive = IsRawTypePrimitive(rawTypeB);
+		
+		// logger::debug("rawTypeA[{}] rawTypeB[{}]", 
+		// 	magic_enum::enum_name(rawTypeA), magic_enum::enum_name(rawTypeB)
+		// );
+		
+		
+		if (typeAIsPrimitive && typeBIsPrimitive){
+			return TypeInfosMatchType::kExact; //if primitive, we know every element in the 2 arrays can be cast as in either direction.
+		}
+		else if (typeAIsPrimitive != typeBIsPrimitive){ //one type is a primitive and the other is not, which means they can't be cast to one another.
+			return TypeInfosMatchType::kDontMatch;
+		}
+		
+		// return TypeInfosMatchType::kExact;
+		
+		if (infoA && infoB){
+			if ((rawTypeA == RawType::kObject || rawTypeA == RawType::kObjectArray) &&
+				(rawTypeB == RawType::kObject || rawTypeB == RawType::kObjectArray)){
+					
+				if (GetObjTypeInfoParentRoot(infoA) == GetObjTypeInfoParentRoot(infoB)){
+					return TypeInfosMatchType::kSharesRoot;
+				}
+				else {
+					return TypeInfosMatchType::kDontMatch;
+				}
+			}
+		}
+	
+		if (rawTypeA == RawType::kNone && rawTypeB == RawType::kNone){ 
+			return TypeInfosMatchType::kDontMatch;
 		}
 		
 		if (typeA == typeB){
-			return true;
+			return TypeInfosMatchType::kExact;
 		} 
 		
-		if (rawTypeA == RE::BSScript::TypeInfo::RawType::kNone){
-			return true;
+		if (rawTypeA == RawType::kNone){
+			return TypeInfosMatchType::kSharesRoot;
 		}
 		
-		if (rawTypeB == RE::BSScript::TypeInfo::RawType::kNone){
-			return true;
+		if (rawTypeB == RawType::kNone){
+			return TypeInfosMatchType::kSharesRoot;
 		}
 		
-		return false;
+		return TypeInfosMatchType::kDontMatch;
 	}
 	
     struct ArrayPropertyData {
         bool gotAllData = false;
-        RE::BSScript::Variable* arrayProperty;
-        RE::BSTSmartPointer<RE::BSScript::Array> arraySmartPtr;
-        RE::BSScript::Array* arrayPtr;
-        RE::BSScript::ObjectTypeInfo* info;
+		RE::BSTSmartPointer<RE::BSScript::Object> scriptObject;   // keeps arrayProperty's owner alive
+        RE::BSScript::Variable* arrayProperty = nullptr;
+        RE::BSTSmartPointer<RE::BSScript::Array> arraySmartPtr = nullptr;
+        RE::BSScript::Array* arrayPtr = nullptr;
+        RE::BSScript::ObjectTypeInfo* info = nullptr;
     };
 
     ArrayPropertyData GetArrayProperty(RE::BSScript::Internal::VirtualMachine *vm, RE::VMStackID stackID, RE::VMHandle handle, 
@@ -136,6 +295,8 @@ namespace papyrusUtilEx {
 			return returnValue;
 		}
 		
+		RE::BSSpinLockGuard lock(bssVm->attachedScriptsLock);
+		
 		auto it = bssVm->attachedScripts.find(handle);
         if (it == bssVm->attachedScripts.end()) {
             logger::error("bssVm->attachedScripts couldn't find handle[{}] scriptName[{}] arrayProperty[{}]",
@@ -152,7 +313,8 @@ namespace papyrusUtilEx {
                     if (info) {
                         if (info->name == bsScriptName) {
                             logger::trace("script[{}] found attached to handle[{}]", bsScriptName, handle);
-                            returnValue.arrayProperty = script->GetProperty(bsArrayPropertyName);
+                            returnValue.scriptObject = RE::BSTSmartPointer<RE::BSScript::Object>(script);        // acquires a reference
+							returnValue.arrayProperty = script->GetProperty(bsArrayPropertyName);
 
                             if (!returnValue.arrayProperty) {
                                 returnValue.arrayProperty = script->GetVariable(bsArrayPropertyName);
@@ -188,6 +350,7 @@ namespace papyrusUtilEx {
                             if (!returnValue.info) { //could have no info* if rawtype is kNone from getting array from a native function such as Form.GetKeywords()
                                 logger::warn("arrayInfo* for [{}] not found in script[{}] on handle[{}]", 
 									bsArrayPropertyName, bsScriptName, handle);
+									returnValue.info = nullptr;
                                 // return returnValue;
                             }
                             returnValue.gotAllData = true;
@@ -219,11 +382,6 @@ namespace papyrusUtilEx {
             return false;
         }
 
-		logger::info("Array raw type[{:X}] [0][{:}] size[{}]",
-			static_cast<std::size_t>(arrayData.arrayPtr->type_info().GetRawType()),
-			static_cast<std::size_t>((*arrayData.arrayPtr)[0].GetType().GetRawType()),
-			arrayData.arrayPtr->size()
-		);
 		
 		RE::BSScript::TypeInfo type = DeriveElementType(arrayData.arrayPtr);
 		if (type.GetUnmangledRawType() == RE::BSScript::TypeInfo::RawType::kNone) {
@@ -259,6 +417,12 @@ namespace papyrusUtilEx {
             return false;
         }
 
+		logger::trace("Array raw type[{:X}] [0][{:}] size[{}]",
+			static_cast<std::size_t>(arrayData.arrayPtr->type_info().GetRawType()),
+			static_cast<std::size_t>((*arrayData.arrayPtr)[0].GetType().GetRawType()),
+			arrayData.arrayPtr->size()
+		);
+		
         if (size < 1) {
             size = 1;
         }
@@ -283,10 +447,11 @@ namespace papyrusUtilEx {
 
 		for (std::uint32_t j = 0; j < newArray->size() && j < 3; ++j) {
 			auto& v = (*newArray)[j];
-			logger::info("[PATCH] elem[{}] rawType[{:X}] isNone[{}] isObject[{}]",
-				j,
-				static_cast<std::size_t>(v.GetType().GetRawType()),
-				v.IsNoneObject(), v.IsObject());
+			// logger::trace("[PATCH] elem[{}] rawType[{:X}] isNone[{}] isObject[{}]",
+			// 	j,
+			// 	static_cast<std::size_t>(v.GetType().GetRawType()),
+			// 	v.IsNoneObject(), v.IsObject()
+			// );
 		}
 		
         arrayData.arrayProperty->SetNone();
@@ -345,72 +510,93 @@ namespace papyrusUtilEx {
 		// get derived types instead of none type.
 		RE::BSScript::TypeInfo typeA = DeriveElementType(arrayData_A.arrayPtr);
 		RE::BSScript::TypeInfo typeB = DeriveElementType(arrayData_B.arrayPtr);
-		RE::BSScript::TypeInfo  srcType = (typeB.GetUnmangledRawType() != RE::BSScript::TypeInfo::RawType::kNone) ? typeA : typeB;
+		RE::BSScript::TypeInfo  srcType = (typeB.GetUnmangledRawType() != RE::BSScript::TypeInfo::RawType::kNone) ? typeB : typeA;
 		if (srcType.GetUnmangledRawType() == RE::BSScript::TypeInfo::RawType::kNone) {
 			logger::error("couldn't determine element type for [{}] / [{}] -- both arrays untyped and all elements are None",
 						bsArrayPropertyName_A, bsArrayPropertyName_B);
 			return false;
 		}
 		
-		if (!TypeInfosMatch(typeA, typeB)){
+		TypeInfosMatchType matchType = TypeInfosMatch(typeA, typeB);
+		
+		if (matchType == TypeInfosMatchType::kDontMatch){
 			logger::error("these types don't match. PropertyA[{}] ScriptA[{}] handleA[{}] - PropertyB[{}] ScriptB[{}] handleB[{}]",
                 bsArrayPropertyName_A, bsScriptName_A, akHandle_A, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
 				return false;
 		}
 		
-		// if (!ArraysTypesMatch(arrayData_A.arrayPtr, arrayData_B.arrayPtr)) {
-		// 	logger::warn("A raw[{:X}] unmangled[{}] info[{}] | B raw[{:X}] unmangled[{}] info[{}]",
-		// 		static_cast<std::size_t>(arrayData_A.arrayPtr->type_info().GetRawType()),
-		// 		static_cast<std::uint32_t>(arrayData_A.arrayPtr->type_info().GetUnmangledRawType()),
-		// 		static_cast<void*>(arrayData_A.arrayPtr->type_info().GetTypeInfo()),
-		// 		static_cast<std::size_t>(arrayData_B.arrayPtr->type_info().GetRawType()),
-		// 		static_cast<std::uint32_t>(arrayData_B.arrayPtr->type_info().GetUnmangledRawType()),
-		// 		static_cast<void*>(arrayData_B.arrayPtr->type_info().GetTypeInfo()));
-							
-		// 		// return false;
-        // }
-		
-        int sizeA = arrayData_A.arrayPtr->size();
-        if (sizeA <= 0) {
-            logger::error("[{}] in script[{}] on handle[{}] not initialized",
-                bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
-            return false;
-        }
+		int sizeA = arrayData_A.arrayPtr->size();
+		if (sizeA <= 0) {
+			logger::error("[{}] in script[{}] on handle[{}] not initialized",
+				bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
+			return false;
+		}
 
-        int sizeB = arrayData_B.arrayPtr->size();
-        if (sizeB <= 0) {
-            logger::error("[{}] in script[{}] on handle[{}] not initialized",
-                bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-            return false;
-        }
-
-        int newSize = (sizeA + sizeB);
-        int i = 0;
-
-        RE::BSTSmartPointer<RE::BSScript::Array> newArray;
+		int sizeB = arrayData_B.arrayPtr->size();
+		if (sizeB <= 0) {
+			logger::error("[{}] in script[{}] on handle[{}] not initialized",
+				bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
+			return false;
+		}
 		
-        // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSize, newArray);
+		int newSize = (sizeA + sizeB);
+		int i = 0;
+
+		RE::BSTSmartPointer<RE::BSScript::Array> newArray;
 		
+		// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSize, newArray);
+			
 		if (!vm->CreateArray1(srcType, newSize, newArray) || !newArray) {
 			logger::error("CreateArray1 failed for [{}]", bsArrayPropertyName_A);
 			return false;
 		}
 		
-        //this worked to prevent ctd when saving in game.
+		//this worked to prevent ctd when saving in game.
 		//not needed with CreateArray1, only with CreateArray2
-        // newArray.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+		// newArray.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+		
+		if (matchType == TypeInfosMatchType::kExact){ //element types in the arrays are directly convertable, no hierarchy script checking necessary.
+			for (; i < sizeB; i++) {
+				newArray->data()[i] = arrayData_B.arraySmartPtr->data()[i];
+			}
 
-        for (i; i < sizeB; i++) {
-            newArray->data()[i] = arrayData_B.arraySmartPtr->data()[i];
-        }
+			int newIndex = i;
+			i = 0;
 
-        int newIndex = i;
-        i = 0;
+			for (; i < sizeA; i++, newIndex++) {
+				newArray->data()[newIndex] = arrayData_A.arraySmartPtr->data()[i];
+			}
+		}
+		else { //shares root
+			for (; i < sizeB; i++) {
+				newArray->data()[i] = arrayData_B.arraySmartPtr->data()[i];
+			}
 
-        for (i; i < sizeA; i++, newIndex++) {
-            newArray->data()[newIndex] = arrayData_A.arraySmartPtr->data()[i];
-        }
+			int newIndex = i;
+			i = 0;
 
+			for (; i < sizeA; i++, newIndex++) {
+				// newArray->data()[newIndex] = arrayData_A.arraySmartPtr->data()[i];
+				
+				bool canSet = false;
+				auto valueType = arrayData_A.arraySmartPtr->data()[i];
+				
+				if (valueType.IsObject()){
+					auto obj = valueType.GetObject();
+					if (obj) {
+						canSet = ScriptObjectCastsTo(obj, typeB);
+					}
+				}
+				
+				if (canSet){
+					newArray->data()[newIndex] = arrayData_A.arraySmartPtr->data()[i];
+				}
+				else {
+					newArray->data()[newIndex] = RE::BSScript::Variable(typeB); //typed none
+				}
+			}
+		}
+		
         arrayData_B.arrayProperty->SetNone();
         arrayData_B.arrayProperty->SetArray(newArray);
 
@@ -447,12 +633,14 @@ namespace papyrusUtilEx {
             return false;
         }
 
+		// logger::debug("className");
         std::string className = GetObjTypeInfoName(arrayData_A.info);
         if (className == "") {
             logger::debug("className for [{}] not found in script[{}] on handle[{}]. Most likely due to array being type kNone from a native array function.", 
 				bsArrayPropertyName_A, bsScriptName_A, akHandle_A);
         } 
 		
+		// logger::debug("classNameB");
 		std::string classNameB = GetObjTypeInfoName(arrayData_B.info);
         if (classNameB == "") {
             logger::debug("className for [{}] not found in script[{}] on handle[{}]. Most likely due to array being type kNone from a native array function.", 
@@ -465,14 +653,16 @@ namespace papyrusUtilEx {
 		// get derived types instead of none type.
 		RE::BSScript::TypeInfo typeA = DeriveElementType(arrayData_A.arrayPtr);
 		RE::BSScript::TypeInfo typeB = DeriveElementType(arrayData_B.arrayPtr);
-		RE::BSScript::TypeInfo  srcType = (typeB.GetUnmangledRawType() != RE::BSScript::TypeInfo::RawType::kNone) ? typeA : typeB;
+		RE::BSScript::TypeInfo srcType = (typeB.GetUnmangledRawType() != RE::BSScript::TypeInfo::RawType::kNone) ? typeB : typeA;
 		if (srcType.GetUnmangledRawType() == RE::BSScript::TypeInfo::RawType::kNone) {
 			logger::error("couldn't determine element type for [{}] / [{}] -- both arrays untyped and all elements are None",
 						bsArrayPropertyName_A, bsArrayPropertyName_B);
 			return false;
 		}
 		
-		if (!TypeInfosMatch(typeA, typeB)){
+		TypeInfosMatchType matchType = TypeInfosMatch(typeA, typeB);
+		
+		if (matchType == TypeInfosMatchType::kDontMatch){
 			logger::error("these types don't match. PropertyA[{}] ScriptA[{}] handleA[{}] - PropertyB[{}] ScriptB[{}] handleB[{}]",
                 bsArrayPropertyName_A, bsScriptName_A, akHandle_A, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
 				return false;
@@ -506,13 +696,36 @@ namespace papyrusUtilEx {
 		//only needed for createarray1, not createarray2
         // newArray.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-        for (i; i < sizeA; i++) {
-            newArray->data()[i] = arrayData_A.arraySmartPtr->data()[i];
-        }
-
-        arrayData_B.arrayProperty->SetNone();
-        arrayData_B.arrayProperty->SetArray(newArray);
-
+		if (matchType == TypeInfosMatchType::kExact){
+			for (; i < sizeA; i++) {
+				newArray->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+			}
+		}
+		else { //shares root
+			for (; i < sizeA; i++) {
+				// newArray->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+				
+				bool canSet = false;
+				auto valueType = arrayData_A.arraySmartPtr->data()[i];
+				
+				if (valueType.IsObject()){
+					auto obj = valueType.GetObject();
+					if (obj) {
+						canSet = ScriptObjectCastsTo(obj, typeB);
+					}
+				}
+				
+				if (canSet){
+					newArray->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+				}
+				else {
+					newArray->data()[i] = RE::BSScript::Variable(typeB); //typed none
+				}
+			}
+		}
+		
+		arrayData_B.arrayProperty->SetNone();
+		arrayData_B.arrayProperty->SetArray(newArray);
         logger::trace("scriptName[{}] array[{}] type[{}] on handle[{}] copied to \n scriptName[{}] array[{}] type[{}] on handle[{}]. New size[{}] Expected size[{}]",
             bsScriptName_A, bsArrayPropertyName_A, className, akHandle_A, bsScriptName_B, bsArrayPropertyName_B, className, akHandle_B, newArray->size(), sizeA);
 
@@ -635,7 +848,7 @@ namespace papyrusUtilEx {
             if (count > 1) {
                 int newSize = (oldSize - count);
                 if (newSize <= 0) {
-                    logger::info("[{}] in script[{}] on handle[{}] is filled entirely with the element at index[{}], setting size to 1",
+                    logger::debug("[{}] in script[{}] on handle[{}] is filled entirely with the element at index[{}], setting size to 1",
                         bsArrayPropertyName, bsScriptName, akHandle, index);
 
                     newSize = 1;
@@ -888,19 +1101,29 @@ namespace papyrusUtilEx {
 		// get derived types instead of none type.
 		RE::BSScript::TypeInfo typeA = DeriveElementType(arrayData_A.arrayPtr);
 		RE::BSScript::TypeInfo typeB = DeriveElementType(arrayData_B.arrayPtr);
-		RE::BSScript::TypeInfo  srcType = (typeB.GetUnmangledRawType() != RE::BSScript::TypeInfo::RawType::kNone) ? typeA : typeB;
-		if (srcType.GetUnmangledRawType() == RE::BSScript::TypeInfo::RawType::kNone) {
-			logger::error("couldn't determine element type for [{}] / [{}] -- both arrays untyped and all elements are None",
-						bsArrayPropertyName_A, bsArrayPropertyName_B);
+		// RE::BSScript::TypeInfo  srcType = (typeB.GetUnmangledRawType() != RE::BSScript::TypeInfo::RawType::kNone) ? typeB : typeA;
+		if (typeA.GetUnmangledRawType() == RE::BSScript::TypeInfo::RawType::kNone) {
+			logger::error("couldn't determine element type for [{}]. It's untyped and all elements are None",
+				bsArrayPropertyName_A
+			);
 			return false;
 		}
 		
-		if (!TypeInfosMatch(typeA, typeB)){
-			logger::error("these types don't match. PropertyA[{}] ScriptA[{}] handleA[{}] - PropertyB[{}] ScriptB[{}] handleB[{}]",
-                bsArrayPropertyName_A, bsScriptName_A, akHandle_A, bsArrayPropertyName_B, bsScriptName_B, akHandle_B);
-				return false;
+		if (typeB.GetUnmangledRawType() == RE::BSScript::TypeInfo::RawType::kNone) {
+			logger::error("couldn't determine element type for [{}]. It's untyped and all elements are None",
+				bsArrayPropertyName_B
+			);
+			return false;
 		}
-
+		
+		TypeInfosMatchType matchType = TypeInfosMatch(typeA, typeB);
+		
+		if (matchType == TypeInfosMatchType::kDontMatch){
+			logger::error("these types don't match. PropertyA[{}] ScriptA[{}] handleA[{}] - PropertyB[{}] ScriptB[{}] handleB[{}]",
+                bsArrayPropertyName_A, bsScriptName_A, akHandle_A, bsArrayPropertyName_B, bsScriptName_B, akHandle_B
+			);
+			return false;
+		}
 		
         int sizeA = arrayData_A.arrayPtr->size();
         if (sizeA <= 0) {
@@ -944,195 +1167,490 @@ namespace papyrusUtilEx {
 			return false;
 		}
 		
-        if (keep && replace) {
-            newSizeA = (endIndex - startIndex + 1);
-            newSizeB = (sizeA - newSizeA);
+		if (matchType == TypeInfosMatchType::kExact){
+			if (keep && replace) {
+				newSizeA = (endIndex - startIndex + 1);
+				newSizeB = (sizeA - newSizeA);
 
-            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
-            // newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+				// newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-			if (!bssVm->CreateArray1(srcType, newSizeA, newArray_A)){
-				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
-				return false;
+				if (!bssVm->CreateArray1(typeA, newSizeA, newArray_A)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
+					return false;
+				}
+				
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+				// newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+				if (!bssVm->CreateArray1(typeB, newSizeB, newArray_B)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
+					return false;
+				}
+				
+				int i = 0;
+				int ii = startIndex;
+				//copy the elements between startIndex and endIndex from array_A to newArray_A
+				for (ii; ii <= endIndex; i++, ii++) {
+					//logger::trace("newArray_A loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
+
+				i = 0;
+
+				//copy the remainder of indexes from array_A to array_B
+				for (i; i < startIndex; i++) {
+					//logger::trace("newArray_B loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+				}
+
+				ii = (endIndex + 1);
+
+				for (i; i < newSizeB; i++, ii++) {
+					//logger::trace("newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
 			}
-			
-            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
-            // newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+			else if (keep && !replace) {
+				newSizeA = (endIndex - startIndex + 1);
+				newSizeB = (sizeA - newSizeA);
+				newSizeB += sizeB;
 
-			if (!bssVm->CreateArray1(srcType, newSizeB, newArray_B)){
-				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
-				return false;
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+				// newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+				if (!bssVm->CreateArray1(typeA, newSizeA, newArray_A)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
+					return false;
+				}
+				
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+				// newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+				if (!bssVm->CreateArray1(typeB, newSizeB, newArray_B)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
+					return false;
+				}
+				
+				int i = 0;
+				int ii = startIndex;
+				//copy the elements between startIndex and endIndex from array_A to newArray_A
+				for (ii; ii <= endIndex; i++, ii++) {
+					//logger::trace("newArray_A loop1 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
+
+				i = 0;
+
+				//copy the original elements from array_B to newArray_B as we're merging not replacing
+				for (i; i < sizeB; i++) {
+					//logger::trace("newArray_B loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
+				}
+
+				ii = 0;
+
+				//copy the remainder of indexes from array_A to array_B
+				for (ii; ii < startIndex; i++, ii++) {
+					//logger::trace("newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
+
+				ii = (endIndex + 1);
+
+				for (i; i < newSizeB; i++, ii++) {
+					//logger::trace("newArray_B loop3 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
 			}
-			
-            int i = 0;
-            int ii = startIndex;
-            //copy the elements between startIndex and endIndex from array_A to newArray_A
-            for (ii; ii <= endIndex; i++, ii++) {
-                //logger::trace("newArray_A loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
-                newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-            }
+			else if (!keep && replace) {
+				newSizeB = (endIndex - startIndex + 1);
+				newSizeA = (sizeA - newSizeB);
 
-            i = 0;
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+				// newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            //copy the remainder of indexes from array_A to array_B
-            for (i; i < startIndex; i++) {
-                //logger::trace("newArray_B loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
-                newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[i];
-            }
+				if (!bssVm->CreateArray1(typeA, newSizeA, newArray_A)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
+					return false;
+				}
+				
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+				// newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            ii = (endIndex + 1);
+				if (!bssVm->CreateArray1(typeB, newSizeB, newArray_B)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
+					return false;
+				}
 
-            for (i; i < newSizeB; i++, ii++) {
-                //logger::trace("newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
-                newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-            }
-        }
-        else if (keep && !replace) {
-            newSizeA = (endIndex - startIndex + 1);
-            newSizeB = (sizeA - newSizeA);
-            newSizeB += sizeB;
+				int i = 0;
+				int ii = startIndex;
+				//copy the elements between startIndex and endIndex from array_A to newArray_B
+				for (ii; ii <= endIndex; i++, ii++) {
+					//logger::trace("newArray_B loop1 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
 
-            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
-            // newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+				i = 0;
 
-			if (!bssVm->CreateArray1(srcType, newSizeA, newArray_A)){
-				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
-				return false;
+				//copy the remainder of indexes from array_A to newArray_A
+				for (i; i < startIndex; i++) {
+					//logger::trace("newArray_A loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+				}
+
+				ii = (endIndex + 1);
+
+				for (i; i < newSizeA; i++, ii++) {
+					//logger::trace("newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
 			}
-			
-            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
-            // newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+			else if (!keep && !replace) {
+				newSizeB = (endIndex - startIndex + 1);
+				newSizeA = (sizeA - newSizeB);
+				newSizeB += sizeB;
 
-			if (!bssVm->CreateArray1(srcType, newSizeB, newArray_B)){
-				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
-				return false;
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+				// newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+				if (!bssVm->CreateArray1(typeA, newSizeA, newArray_A)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
+					return false;
+				}
+				
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+				// newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+				if (!bssVm->CreateArray1(typeB, newSizeB, newArray_B)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
+					return false;
+				}
+				
+				int i = 0;
+
+				//copy the original elements from array_B to newArray_B as we're merging not replacing
+				for (i; i < sizeB; i++) {
+					//logger::trace("newArray_B loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
+				}
+
+				int ii = startIndex;
+				//copy the elements between startIndex and endIndex from array_A to newArray_B
+				for (ii; ii <= endIndex; i++, ii++) {
+					//logger::trace("newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
+
+				i = 0;
+
+				//copy the remainder of indexes from array_A to newArray_A
+				for (i; i < startIndex; i++) {
+					//logger::trace("newArray_A loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+				}
+
+				ii = (endIndex + 1);
+
+				for (i; i < newSizeA; i++, ii++) {
+					//logger::trace("newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
 			}
-			
-            int i = 0;
-            int ii = startIndex;
-            //copy the elements between startIndex and endIndex from array_A to newArray_A
-            for (ii; ii <= endIndex; i++, ii++) {
-                //logger::trace("newArray_A loop1 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
-                newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-            }
+		}
+		else { //types share root 
+			if (keep && replace) {
+				newSizeA = (endIndex - startIndex + 1);
+				newSizeB = (sizeA - newSizeA);
 
-            i = 0;
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+				// newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            //copy the original elements from array_B to newArray_B as we're merging not replacing
-            for (i; i < sizeB; i++) {
-                //logger::trace("newArray_B loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
-                newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
-            }
+				if (!bssVm->CreateArray1(typeA, newSizeA, newArray_A)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
+					return false;
+				}
+				
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+				// newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            ii = 0;
+				if (!bssVm->CreateArray1(typeB, newSizeB, newArray_B)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
+					return false;
+				}
+				
+				int i = 0;
+				int ii = startIndex;
+				//copy the elements between startIndex and endIndex from array_A to newArray_A
+				for (; ii <= endIndex; i++, ii++) {
+					//logger::trace("newArray_A loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
 
-            //copy the remainder of indexes from array_A to array_B
-            for (ii; ii < startIndex; i++, ii++) {
-                //logger::trace("newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
-                newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-            }
+				i = 0;
 
-            ii = (endIndex + 1);
+				//copy the remainder of indexes from array_A to array_B
+				for (; i < startIndex; i++) {
+					//logger::trace("newArray_B loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					// newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+					
+					bool canSet = false;
+					auto valueType = arrayData_A.arraySmartPtr->data()[i];
+					
+					if (valueType.IsObject()){
+						auto obj = valueType.GetObject();
+						if (obj) {
+							canSet = ScriptObjectCastsTo(obj, typeB);
+						}
+					}
+					
+					if (canSet){
+						newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+					}
+					else {
+						newArray_B->data()[i] = RE::BSScript::Variable(typeB); //typed none
+					}
+				}
 
-            for (i; i < newSizeB; i++, ii++) {
-                //logger::trace("newArray_B loop3 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
-                newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-            }
-        }
-        else if (!keep && replace) {
-            newSizeB = (endIndex - startIndex + 1);
-            newSizeA = (sizeA - newSizeB);
+				ii = (endIndex + 1);
 
-            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
-            // newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
-
-			if (!bssVm->CreateArray1(srcType, newSizeA, newArray_A)){
-				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
-				return false;
+				for (; i < newSizeB; i++, ii++) {
+					//logger::trace("newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					// newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					
+					bool canSet = false;
+					auto valueType = arrayData_A.arraySmartPtr->data()[ii];
+					
+					if (valueType.IsObject()){
+						auto obj = valueType.GetObject();
+						if (obj) {
+							canSet = ScriptObjectCastsTo(obj, typeB);
+						}
+					}
+					
+					if (canSet){
+						newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					}
+					else {
+						newArray_B->data()[i] = RE::BSScript::Variable(typeB); //typed none
+					}
+				}
 			}
-			
-            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
-            // newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+			else if (keep && !replace) {
+				newSizeA = (endIndex - startIndex + 1);
+				newSizeB = (sizeA - newSizeA);
+				newSizeB += sizeB;
 
-			if (!bssVm->CreateArray1(srcType, newSizeB, newArray_B)){
-				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
-				return false;
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+				// newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+				if (!bssVm->CreateArray1(typeA, newSizeA, newArray_A)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
+					return false;
+				}
+				
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+				// newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+				if (!bssVm->CreateArray1(typeB, newSizeB, newArray_B)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
+					return false;
+				}
+				
+				int i = 0;
+				int ii = startIndex;
+				//copy the elements between startIndex and endIndex from array_A to newArray_A
+				for (ii; ii <= endIndex; i++, ii++) {
+					//logger::trace("newArray_A loop1 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
+
+				i = 0;
+
+				//copy the original elements from array_B to newArray_B as we're merging not replacing
+				for (i; i < sizeB; i++) {
+					//logger::trace("newArray_B loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
+				}
+
+				ii = 0;
+
+				//copy the remainder of indexes from array_A to array_B
+				for (; ii < startIndex; i++, ii++) {
+					//logger::trace("newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					// newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					
+					bool canSet = false;
+					auto valueType = arrayData_A.arraySmartPtr->data()[ii];
+					
+					if (valueType.IsObject()){
+						auto obj = valueType.GetObject();
+						if (obj) {
+							canSet = ScriptObjectCastsTo(obj, typeB);
+						}
+					}
+					
+					if (canSet){
+						newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					}
+					else {
+						newArray_B->data()[i] = RE::BSScript::Variable(typeB); //typed none
+					}
+				}
+
+				ii = (endIndex + 1);
+
+				for (i; i < newSizeB; i++, ii++) {
+					//logger::trace("newArray_B loop3 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					// newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					
+					bool canSet = false;
+					auto valueType = arrayData_A.arraySmartPtr->data()[ii];
+					
+					if (valueType.IsObject()){
+						auto obj = valueType.GetObject();
+						if (obj) {
+							canSet = ScriptObjectCastsTo(obj, typeB);
+						}
+					}
+					
+					if (canSet){
+						newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					}
+					else {
+						newArray_B->data()[i] = RE::BSScript::Variable(typeB); //typed none
+					}
+				}
 			}
+			else if (!keep && replace) {
+				newSizeB = (endIndex - startIndex + 1);
+				newSizeA = (sizeA - newSizeB);
 
-            int i = 0;
-            int ii = startIndex;
-            //copy the elements between startIndex and endIndex from array_A to newArray_B
-            for (ii; ii <= endIndex; i++, ii++) {
-                //logger::trace("newArray_B loop1 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
-                newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-            }
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+				// newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            i = 0;
+				if (!bssVm->CreateArray1(typeA, newSizeA, newArray_A)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
+					return false;
+				}
+				
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+				// newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
 
-            //copy the remainder of indexes from array_A to newArray_A
-            for (i; i < startIndex; i++) {
-                //logger::trace("newArray_A loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
-                newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
-            }
+				if (!bssVm->CreateArray1(typeB, newSizeB, newArray_B)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
+					return false;
+				}
 
-            ii = (endIndex + 1);
+				int i = 0;
+				int ii = startIndex;
+				//copy the elements between startIndex and endIndex from array_A to newArray_B
+				for (; ii <= endIndex; i++, ii++) {
+					//logger::trace("newArray_B loop1 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					// newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					
+					bool canSet = false;
+					auto valueType = arrayData_A.arraySmartPtr->data()[ii];
+					
+					if (valueType.IsObject()){
+						auto obj = valueType.GetObject();
+						if (obj) {
+							canSet = ScriptObjectCastsTo(obj, typeB);
+						}
+					}
+					
+					if (canSet){
+						newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					}
+					else {
+						newArray_B->data()[i] = RE::BSScript::Variable(typeB); //typed none
+					}
+				}
 
-            for (i; i < newSizeA; i++, ii++) {
-                //logger::trace("newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
-                newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-            }
-        }
-        else if (!keep && !replace) {
-            newSizeB = (endIndex - startIndex + 1);
-            newSizeA = (sizeA - newSizeB);
-            newSizeB += sizeB;
+				i = 0;
 
-			// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
-            // newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+				//copy the remainder of indexes from array_A to newArray_A
+				for (; i < startIndex; i++) {
+					//logger::trace("newArray_A loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+				}
 
-			if (!bssVm->CreateArray1(srcType, newSizeA, newArray_A)){
-				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
-				return false;
+				ii = (endIndex + 1);
+
+				for (; i < newSizeA; i++, ii++) {
+					//logger::trace("newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
 			}
-			
-            // bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
-            // newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+			else if (!keep && !replace) {
+				newSizeB = (endIndex - startIndex + 1);
+				newSizeA = (sizeA - newSizeB);
+				newSizeB += sizeB;
 
-			if (!bssVm->CreateArray1(srcType, newSizeB, newArray_B)){
-				logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
-				return false;
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeA, newArray_A);
+				// newArray_A.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+				if (!bssVm->CreateArray1(typeA, newSizeA, newArray_A)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_A, bsScriptName_A);
+					return false;
+				}
+				
+				// bssVm->CreateArray2(arrayData_B.arrayPtr->type(), className, newSizeB, newArray_B);
+				// newArray_B.get()->type_info().SetType(arrayData_B.arrayPtr->type_info().GetRawType());
+
+				if (!bssVm->CreateArray1(typeB, newSizeB, newArray_B)){
+					logger::error("CreateArray1 failed for [{}] on script[{}]", bsArrayPropertyName_B, bsScriptName_B);
+					return false;
+				}
+				
+				int i = 0;
+
+				//copy the original elements from array_B to newArray_B as we're merging not replacing
+				for (; i < sizeB; i++) {
+					//logger::trace("newArray_B loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
+				}
+
+				int ii = startIndex;
+				//copy the elements between startIndex and endIndex from array_A to newArray_B
+				for (; ii <= endIndex; i++, ii++) {
+					//logger::trace("newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					// newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					
+					bool canSet = false;
+					auto valueType = arrayData_A.arraySmartPtr->data()[ii];
+					
+					if (valueType.IsObject()){
+						auto obj = valueType.GetObject();
+						if (obj) {
+							canSet = ScriptObjectCastsTo(obj, typeB);
+						}
+					}
+					
+					if (canSet){
+						newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+					}
+					else {
+						newArray_B->data()[i] = RE::BSScript::Variable(typeB); //typed none
+					}
+				}
+
+				i = 0;
+
+				//copy the remainder of indexes from array_A to newArray_A
+				for (; i < startIndex; i++) {
+					//logger::trace("newArray_A loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
+				}
+
+				ii = (endIndex + 1);
+
+				for (i; i < newSizeA; i++, ii++) {
+					//logger::trace("newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
+					newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
+				}
 			}
-            
-            int i = 0;
-
-            //copy the original elements from array_B to newArray_B as we're merging not replacing
-            for (i; i < sizeB; i++) {
-                //logger::trace("newArray_B loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
-                newArray_B->data()[i] = arrayData_B.arraySmartPtr->data()[i];
-            }
-
-            int ii = startIndex;
-            //copy the elements between startIndex and endIndex from array_A to newArray_B
-            for (ii; ii <= endIndex; i++, ii++) {
-                //logger::trace("newArray_B loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
-                newArray_B->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-            }
-
-            i = 0;
-
-            //copy the remainder of indexes from array_A to newArray_A
-            for (i; i < startIndex; i++) {
-                //logger::trace("newArray_A loop1 i[{}] replace[{}] keep[{}]", i, replace, keep);
-                newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[i];
-            }
-
-            ii = (endIndex + 1);
-
-            for (i; i < newSizeA; i++, ii++) {
-                //logger::trace("newArray_A loop2 i[{}] ii[{}] replace[{}] keep[{}]", i, ii, replace, keep);
-                newArray_A->data()[i] = arrayData_A.arraySmartPtr->data()[ii];
-            }
-        }
+		}
 
         arrayData_A.arrayProperty->SetNone();
         arrayData_A.arrayProperty->SetArray(newArray_A);
