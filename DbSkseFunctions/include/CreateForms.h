@@ -15,9 +15,11 @@ namespace CreateForms {
 
 	RE::TESQuest* CreateQuest(RE::StaticFunctionTag*);
 
-	constexpr std::uint32_t createFormsRecord = 'STf9';
-	bool SaveForms(SKSE::SerializationInterface* ssi);
-	bool LoadForms(SKSE::SerializationInterface* ssi);
+	namespace Serialization {
+		constexpr std::uint32_t createFormsRecord = 'STf9';
+		bool SaveForms(SKSE::SerializationInterface* ssi);
+		bool LoadForms(SKSE::SerializationInterface* ssi, std::uint32_t version);
+	}
 	
 	
 	RE::TESForm* CreateForm(RE::StaticFunctionTag*, std::string baseScriptType, std::string scriptName);

@@ -81,6 +81,40 @@ std::vector<std::string> GetAllLoadedModDescriptionsAsStrings(int sortOption, in
 
 std::vector<std::string> GetAllLoadedModNamesAndDescriptionsAsStrings(int sortOption, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer);
 
+extern std::uint32_t utilRecord;
+
+bool SaveObjectReferenceBaseScripts(SKSE::SerializationInterface* ssi);
+
+bool LoadObjectReferenceBaseScripts(SKSE::SerializationInterface* ssi);
+
+void AttachObjectReferenceScriptToBaseForm(RE::StaticFunctionTag*, std::string scriptName, RE::TESForm* akForm, bool attachToCurrentRefs, bool attachToNewRefs);
+
+bool StopAttachingObjectReferenceScriptsToNewRefs(RE::StaticFunctionTag*, std::string scriptName, RE::TESForm* akForm);
+
+bool AttachScriptToForm(RE::StaticFunctionTag*, std::string scriptName, RE::TESForm* akForm, bool allowDuplicates = false);
+
+bool AttachScriptToAlias(RE::StaticFunctionTag*, std::string scriptName, RE::BGSBaseAlias* akAlias, bool allowDuplicates = false);
+
+std::vector<std::string> GetAllScriptsAttachedToForm(RE::StaticFunctionTag*, RE::TESForm* akForm, bool RemoveDuplicates);
+
+std::vector<std::string> GetScriptHierarchyOnForm(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string sScriptName);
+
+bool ScriptHasParentOnForm(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string sScriptName, std::string sParentScriptName);
+
+bool ScriptHasChildOnForm(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string sScriptName, std::string sChildScriptName);
+
+bool IsScriptAttachedToForm(RE::StaticFunctionTag*, std::string scriptName, RE::TESForm* akForm);
+
+std::vector<std::string> GetAllScriptsAttachedToAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, bool RemoveDuplicates);
+
+std::vector<std::string> GetScriptHierarchyOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, std::string sScriptName);
+
+bool ScriptHasParentOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, std::string sScriptName, std::string sParentScriptName);
+
+bool ScriptHasChildOnAlias(RE::StaticFunctionTag*, RE::BGSBaseAlias* akAlias, std::string sScriptName, std::string sChildScriptName);
+
+bool IsScriptAttachedToAlias(RE::StaticFunctionTag*, std::string scriptName, RE::BGSBaseAlias* akAlias);
+
 std::string GetThisScriptName(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag);
 
 std::string GetThisFunctionName(RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID, RE::StaticFunctionTag* functionTag);
@@ -114,6 +148,13 @@ std::string GetEffectsDescriptions(RE::BSTArray<RE::Effect*> effects);
 std::string GetMagicItemDescription(RE::MagicItem * magicItem);
 
 std::string GetDescription(RE::TESForm * akForm, std::string newLineReplacer);
+
+namespace descriptionHook {
+	//Call once from kDataLoaded. Safe to call more than once; later calls do nothing.
+	void Install();
+}
+
+bool SetFormDescription(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string desc);
 
 std::string GetFormDescription(RE::StaticFunctionTag*, RE::TESForm * akForm, int maxCharacters, std::string overMaxCharacterSuffix, std::string newLineReplacer, int noneStringType, std::string nullFormString);
 

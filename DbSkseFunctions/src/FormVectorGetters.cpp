@@ -1,5 +1,4 @@
-#include "FormVectorGetters.h"
-#include "GeneralFunctions.h"
+
 #include "RE/B/BGSBaseAlias.h"
 #include "RE/B/BGSRefAlias.h"
 #include "RE/B/BSCoreTypes.h"
@@ -7,6 +6,9 @@
 #include "RE/T/TESQuest.h"
 #include "RE/T/TESTopicInfo.h"
 #include "RE/T/TypeTraits.h"
+#include <unordered_set>
+#include "FormVectorGetters.h"
+#include "GeneralFunctions.h"
 #include "Utility.h"
 #include "SharedVariables.h"
 
@@ -38,6 +40,8 @@ std::vector<RE::TESObjectREFR*> GetAllContainerRefsThatContainForm(RE::StaticFun
     } 
 
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock);
+	
     for (auto& [id, form] : *allForms) {
 		if (gfuncs::IsFormValid(form, false, false)) {
             RE::TESObjectREFR* ref = form->AsReference();
@@ -63,6 +67,8 @@ std::vector<RE::TESObjectREFR*> FindLoadDoorsNearRef(RE::StaticFunctionTag*, RE:
 	const auto centerRefPosition = centerRef->GetPosition();
 	
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock);
+	
     for (auto& [id, form] : *allForms) {
 		if (gfuncs::IsFormValid(form, false, false)) {
 			// auto* ref = form->AsReference();
@@ -95,6 +101,7 @@ std::vector<RE::TESForm*> GetAllFormsThatUseTextureSet(RE::StaticFunctionTag*, R
 
     gfuncs::ConvertToLowerCase(modName);
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock);
 
     for (auto& [id, form] : *allForms) {
 		if (gfuncs::IsFormValid(form, false, false)) {
@@ -158,6 +165,7 @@ std::vector<RE::TESQuest*> GetAllActiveQuests(RE::StaticFunctionTag*) {
 std::vector<RE::TESForm*> GetAllConstructibleObjects(RE::StaticFunctionTag*, RE::TESForm* createdObject) {
     std::vector<RE::TESForm*> forms;
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock);
 
     if (gfuncs::IsFormValid(createdObject)) {
         for (auto& [id, form] : *allForms) {
@@ -188,6 +196,7 @@ std::vector<RE::TESObjectARMO*> GetAllArmorsForSlotMask(RE::StaticFunctionTag*, 
     std::vector<RE::TESObjectARMO*> armors;
 
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock);
 
     for (auto& [id, form] : *allForms) {
 		if (gfuncs::IsFormValid(form, false, false)) {
@@ -219,6 +228,7 @@ std::vector<RE::TESObjectCELL*> GetAllInteriorCells(RE::StaticFunctionTag*, RE::
     }
 
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock);
 
     if (matchMode == 1) {
         for (auto& [id, form] : *allForms) {
@@ -301,6 +311,7 @@ std::vector<RE::TESObjectCELL*> GetAllExteriorCells(RE::StaticFunctionTag*, RE::
     }
 
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock);
 
     if (matchMode == 1) {
         for (auto& [id, form] : *allForms) {
@@ -374,6 +385,7 @@ std::vector<RE::TESObjectCELL*> GetAttachedCells(RE::StaticFunctionTag*) {
     std::vector<RE::TESObjectCELL*> cells;
 
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock);
 
     for (auto& [id, form] : *allForms) {
         if (gfuncs::IsFormValid(form, false, false)) {
@@ -480,6 +492,8 @@ std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::strin
     if (nameMatchMode == 0) {
         if (formTypes.size() == 0 || formTypeMatchMode == -1) {
             const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			RE::BSReadLockGuard readLock(lock);
+	
             for (auto& [id, form] : *allForms) {
                 if (FormNameMatches(form, sFormName, false)) {
                     forms.push_back(form);
@@ -488,6 +502,8 @@ std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::strin
         }
         else if (formTypes.size() > 0 && formTypeMatchMode == 1) {
             const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			RE::BSReadLockGuard readLock(lock);
+			
             for (auto& [id, form] : *allForms) {
                 if (FormNameMatches(form, sFormName, false)) {
                     int formType = static_cast<int>(form->GetFormType());
@@ -502,6 +518,8 @@ std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::strin
         }
         else if (formTypes.size() > 0 && formTypeMatchMode == 0) {
             const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			RE::BSReadLockGuard readLock(lock);
+			
             for (auto& [id, form] : *allForms) {
                 if (FormNameMatches(form, sFormName, false)) {
                     int formType = static_cast<int>(form->GetFormType());
@@ -522,6 +540,8 @@ std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::strin
     else {
         if (formTypes.size() == 0 || formTypeMatchMode == -1) {
             const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			RE::BSReadLockGuard readLock(lock);
+			
             for (auto& [id, form] : *allForms) {
                 if (FormNameContains(form, sFormName, false)) {
                     forms.push_back(form);
@@ -530,6 +550,8 @@ std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::strin
         }
         else if (formTypes.size() > 0 && formTypeMatchMode == 1) {
             const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			RE::BSReadLockGuard readLock(lock);
+			
             for (auto& [id, form] : *allForms) {
                 if (FormNameContains(form, sFormName, false)) {
                     int formType = static_cast<int>(form->GetFormType());
@@ -544,6 +566,8 @@ std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::strin
         }
         else if (formTypes.size() > 0 && formTypeMatchMode == 0) {
             const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			RE::BSReadLockGuard readLock(lock);
+			
             for (auto& [id, form] : *allForms) {
                 if (FormNameContains(form, sFormName, false)) {
                     int formType = static_cast<int>(form->GetFormType());
@@ -566,48 +590,75 @@ std::vector<RE::TESForm*> GetAllFormsWithName(RE::StaticFunctionTag*, std::strin
 }
 
 std::vector<RE::TESForm*> GetAllFormsWithScriptAttached(RE::StaticFunctionTag*, RE::BSFixedString sScriptName, std::vector<int> formTypes, int formTypeMatchMode) {
-    std::vector<RE::TESForm*> forms;
-    if (formTypes.size() == 0 || formTypeMatchMode == -1) {
-        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
-        for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsScriptAttachedToForm(form, sScriptName, false)) {
-                forms.push_back(form);
-            }
-        }
-    }
-    else if (formTypes.size() > 0 && formTypeMatchMode == 1) {
-        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
-        for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsScriptAttachedToForm(form, sScriptName, false)) {
-                int formType = static_cast<int>(form->GetFormType());
-                for (int& i : formTypes) {
-                    if (i == formType) {
-                        forms.push_back(form);
-                    }
-                }
-            }
-        }
-    }
-    else if (formTypes.size() > 0 && formTypeMatchMode == 0) {
-        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
-        for (auto& [id, form] : *allForms) {
-            if (gfuncs::IsScriptAttachedToForm(form, sScriptName, false)) {
-                int formType = static_cast<int>(form->GetFormType());
-                bool matchedType = false;
-                for (int& i : formTypes) {
-                    if (i == formType) {
-                        matchedType = true;
-                        break;
-                    }
-                }
-                if (!matchedType) {
-                    forms.push_back(form);
-                }
-            }
-        }
-    }
-    gfuncs::RemoveDuplicates(forms);
-    return forms;
+	std::vector<RE::TESForm*> forms;
+
+	auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+	if (!bssVm){
+		return forms;
+	}
+
+	auto* policy = bssVm->GetObjectHandlePolicy();
+	if (!policy){
+		return forms;
+	}
+
+	// ---- stage 1: one pass over attachedScripts, ONE lock acquisition ----
+	// attachedScripts only holds handles that have scripts, so this is thousands of
+	// entries at most. The old code took this spin lock once per form in the game,
+	// which starved the main thread of the same lock for ~9 seconds.
+	std::unordered_set<RE::VMHandle> matchingHandles;
+	{
+		RE::BSSpinLockGuard scriptLock(bssVm->attachedScriptsLock);
+
+		for (auto& [handle, scripts] : bssVm->attachedScripts){
+			RE::VMHandle vmHandle = handle;
+			if (gfuncs::IsScriptAttachedToHandle(vmHandle, sScriptName, false)){ //no spinlock
+				matchingHandles.insert(handle);
+			}
+		}
+	}
+
+	if (matchingHandles.empty()){
+		return forms;
+	}
+
+	// ---- stage 2: one read-locked pass over the form map, NO vm lock held ----
+	std::unordered_set<int> wantedTypes(formTypes.begin(), formTypes.end());
+	const bool filterTypes = !wantedTypes.empty() && formTypeMatchMode != -1;
+	const bool excludeTypes = (formTypeMatchMode == 0);
+
+	forms.reserve(matchingHandles.size());
+
+	const auto& [allForms, formLock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(formLock);   //the old code bound this and never held it
+
+	if (!allForms){
+		return forms;
+	}
+
+	for (auto& [id, form] : *allForms){
+		if (!form){
+			continue;
+		}
+
+		RE::VMHandle handle = policy->GetHandleForObject(
+			static_cast<RE::VMTypeID>(form->GetFormType()), form);
+
+		if (!matchingHandles.contains(handle)){
+			continue;
+		}
+
+		if (filterTypes){
+			const bool matched = wantedTypes.contains(static_cast<int>(form->GetFormType()));
+			if (matched == excludeTypes){
+				continue;
+			}
+		}
+
+		forms.push_back(form);
+	}
+
+	return forms;
 }
 
 std::vector<RE::BGSBaseAlias*> GetAllAliasesWithScriptAttached(RE::StaticFunctionTag*, RE::BSFixedString sScriptName) {
@@ -615,30 +666,35 @@ std::vector<RE::BGSBaseAlias*> GetAllAliasesWithScriptAttached(RE::StaticFunctio
 
     std::vector<RE::BGSBaseAlias*> questItems;
 
-	auto* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
-        int ic = 0;
+    auto handles = gfuncs::GetHandlesWithScriptAttached(sScriptName);
+    if (handles.empty()){
+        return questItems;
+    }
 
-        for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
-            RE::TESForm* baseForm = *itr;
-            if (gfuncs::IsFormValid(baseForm)) {
-                RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                if (gfuncs::IsFormValid(quest)) {
-                    if (quest->aliases.size() > 0) {
-                        for (int i = 0; i < quest->aliases.size(); i++) {
-                            if (quest->aliases[i]) {
-                                RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
-                                if (gfuncs::IsScriptAttachedToHandle(handle, sScriptName)) {
-                                    questItems.push_back(quest->aliases[i]);
-                                }
-                            }
-                        }
-                    }
-                }
+    auto* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (!dataHandler){
+        return questItems;
+    }
+
+    for (RE::TESForm* baseForm : dataHandler->GetFormArray(RE::FormType::Quest)) {
+        RE::TESQuest* quest = gfuncs::IsFormValid(baseForm) ? baseForm->As<RE::TESQuest>() : nullptr;
+        if (!gfuncs::IsFormValid(quest)){
+            continue;
+        }
+
+        for (std::uint32_t i = 0; i < quest->aliases.size(); i++) {
+            RE::BGSBaseAlias* alias = quest->aliases[i];
+            if (!alias){
+                continue;
+            }
+
+            //no VM lock here -- just a hash lookup
+            if (handles.contains(gfuncs::GetHandle(alias))) {
+                questItems.push_back(alias);
             }
         }
     }
+
     return questItems;
 }
 
@@ -647,114 +703,50 @@ std::vector<RE::BGSRefAlias*> GetAllRefAliasesWithScriptAttached(RE::StaticFunct
 
     std::vector<RE::BGSRefAlias*> questItems;
 
-	auto* dataHandler = RE::TESDataHandler::GetSingleton();
-    if (dataHandler) {
-        RE::BSTArray<RE::TESForm*>* akArray = &(dataHandler->GetFormArray(RE::FormType::Quest));
+    auto handles = gfuncs::GetHandlesWithScriptAttached(sScriptName);
+    if (handles.empty()){
+        return questItems;
+    }
 
-        int ic = 0;
-        if (onlyQuestObjects && onlyFilled) {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
-                RE::TESForm* baseForm = *itr;
-                if (gfuncs::IsFormValid(baseForm)) {
-                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                    if (gfuncs::IsFormValid(quest)) {
-                        if (quest->aliases.size() > 0) {
-                            for (int i = 0; i < quest->aliases.size(); i++) {
-                                if (quest->aliases[i]) {
-                                    if (quest->aliases[i]->IsQuestObject()) {
-                                        RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
-                                        if (gfuncs::IsScriptAttachedToHandle(handle, sScriptName)) {
-                                            RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
-                                            if (refAlias) {
-                                                RE::TESObjectREFR* akRef = refAlias->GetReference();
-                                                if (gfuncs::IsFormValid(akRef)) {
-                                                    questItems.push_back(refAlias);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    auto* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (!dataHandler){
+        return questItems;
+    }
+
+    for (RE::TESForm* baseForm : dataHandler->GetFormArray(RE::FormType::Quest)) {
+        RE::TESQuest* quest = gfuncs::IsFormValid(baseForm) ? baseForm->As<RE::TESQuest>() : nullptr;
+        if (!gfuncs::IsFormValid(quest)){
+            continue;
         }
-        else if (onlyQuestObjects) {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
-                RE::TESForm* baseForm = *itr;
-                if (gfuncs::IsFormValid(baseForm)) {
-                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                    if (gfuncs::IsFormValid(quest)) {
-                        if (quest->aliases.size() > 0) {
-                            for (int i = 0; i < quest->aliases.size(); i++) {
-                                if (quest->aliases[i]) {
-                                    if (quest->aliases[i]->IsQuestObject()) {
-                                        RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
-                                        if (gfuncs::IsScriptAttachedToHandle(handle, sScriptName)) {
-                                            RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
-                                            if (refAlias) {
-                                                questItems.push_back(refAlias);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+
+        for (std::uint32_t i = 0; i < quest->aliases.size(); i++) {
+            RE::BGSBaseAlias* alias = quest->aliases[i];
+            if (!alias){
+                continue;
             }
-        }
-        else if (onlyFilled) {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
-                RE::TESForm* baseForm = *itr;
-                if (gfuncs::IsFormValid(baseForm)) {
-                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                    if (gfuncs::IsFormValid(quest)) {
-                        if (quest->aliases.size() > 0) {
-                            for (int i = 0; i < quest->aliases.size(); i++) {
-                                if (quest->aliases[i]) {
-                                    RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
-                                    if (gfuncs::IsScriptAttachedToHandle(handle, sScriptName)) {
-                                        RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
-                                        if (refAlias) {
-                                            RE::TESObjectREFR* akRef = refAlias->GetReference();
-                                            if (gfuncs::IsFormValid(akRef)) {
-                                                questItems.push_back(refAlias);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+
+            if (onlyQuestObjects && !alias->IsQuestObject()){
+                continue;
             }
-        }
-        else {
-            for (RE::BSTArray<RE::TESForm*>::iterator itr = akArray->begin(); itr != akArray->end() && ic < akArray->size(); itr++, ic++) {
-                RE::TESForm* baseForm = *itr;
-                if (gfuncs::IsFormValid(baseForm)) {
-                    RE::TESQuest* quest = baseForm->As<RE::TESQuest>();
-                    if (gfuncs::IsFormValid(quest)) {
-                        if (quest->aliases.size() > 0) {
-                            for (int i = 0; i < quest->aliases.size(); i++) {
-                                if (quest->aliases[i]) {
-                                    RE::VMHandle handle = gfuncs::GetHandle(quest->aliases[i]);
-                                    if (gfuncs::IsScriptAttachedToHandle(handle, sScriptName)) {
-                                        RE::BGSRefAlias* refAlias = static_cast<RE::BGSRefAlias*>(quest->aliases[i]);
-                                        if (refAlias) {
-                                            questItems.push_back(refAlias);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+
+            if (!handles.contains(gfuncs::GetHandle(alias))){
+                continue;
             }
+
+            //the old code used static_cast here, which is wrong for a non-ref alias
+            RE::BGSRefAlias* refAlias = skyrim_cast<RE::BGSRefAlias*>(alias);
+            if (!refAlias){
+                continue;
+            }
+
+            if (onlyFilled && !gfuncs::IsFormValid(refAlias->GetReference())){
+                continue;
+            }
+
+            questItems.push_back(refAlias);
         }
     }
+
     return questItems;
 }
 
@@ -1037,6 +1029,8 @@ std::vector<RE::TESObjectREFR*> GetAllObjectRefsInContainer(RE::StaticFunctionTa
     }
 
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock); 
+	
     for (auto& [id, form] : *allForms) {
 		if (gfuncs::IsFormValid(form, false, false)){
 			auto* ref = form->AsReference();

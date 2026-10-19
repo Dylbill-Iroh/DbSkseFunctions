@@ -373,6 +373,7 @@ void SaveActorRaces() {
         actorRacesSaved = true;
 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock);
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 RE::Actor* actor = form->As<RE::Actor>();

@@ -869,6 +869,8 @@ namespace gfuncs {
             /*if (!IsFormValid(itemReference)) {
                 msg = "Getting ref by comparing handle to all object references";
                 const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+				RE::BSReadLockGuard readLock(lock); 
+				
                 for (auto& [id, form] : *allForms) {
                     if (IsFormValid(form)) {
                         auto* ref = form->AsReference();
@@ -955,7 +957,32 @@ namespace gfuncs {
 		return false;
 	}
 	
-	std::vector<std::string> GetScriptsAttachedTohandle(RE::VMHandle& handle, bool RemoveDuplicates) {
+	//mutex locked = false
+	//Every VMHandle with a script named sScriptName attached, collected in ONE pass over
+	//attachedScripts under ONE spin lock acquisition. Call this once and test membership.
+	//Never call IsScriptAttachedToHandle in a loop over forms or aliases -- the main thread
+	//wants this same spin lock on every script call and will spin instead of rendering.
+	std::unordered_set<RE::VMHandle> GetHandlesWithScriptAttached(RE::BSFixedString sScriptName){
+		std::unordered_set<RE::VMHandle> handles;
+
+		auto* bssVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!bssVm){
+			return handles;
+		}
+
+		RE::BSSpinLockGuard scriptLock(bssVm->attachedScriptsLock);
+
+		for (auto& [handle, scripts] : bssVm->attachedScripts){
+			RE::VMHandle vmHandle = handle;   //the key is const, the param takes a non-const ref
+			if (IsScriptAttachedToHandle(vmHandle, sScriptName, false)){
+				handles.insert(handle);
+			}
+		}
+
+		return handles;
+	}
+	
+	std::vector<std::string> GetScriptsAttachedTohandle(RE::VMHandle& handle, bool RemoveDuplicates, bool spinLock) {
 		std::vector<std::string> v;
         if (handle == NULL) {
             logger::error("handle is null");
@@ -968,9 +995,35 @@ namespace gfuncs {
             return v;
         }
 
-		{ //scoped lock
+		if (spinLock){
 			RE::BSSpinLockGuard lock(bssVm->attachedScriptsLock);
-			
+			auto it = bssVm->attachedScripts.find(handle);
+			if (it != bssVm->attachedScripts.end()) {
+				//logger::error("it->second.size() = {}", it->second.size());
+				for (int i = 0; i < it->second.size(); i++) {
+					auto& attachedScript = it->second[i];
+					if (attachedScript) {
+						auto* script = attachedScript.get();
+						if (script) {
+							auto info = script->GetTypeInfo();
+							if (info) {
+								//logger::error("info->name = [{}]", info->name);
+								v.push_back((std::string)info->name);
+								auto* parentInfo = info->GetParent();
+								while (parentInfo){
+									v.push_back((std::string)parentInfo->name);
+									parentInfo = parentInfo->GetParent();
+								}
+							}
+						}
+					}
+				}
+			}
+			else {
+				logger::error("vm* couldnt find handle");
+			}
+		}
+		else {
 			auto it = bssVm->attachedScripts.find(handle);
 			if (it != bssVm->attachedScripts.end()) {
 				//logger::error("it->second.size() = {}", it->second.size());
@@ -1222,7 +1275,7 @@ namespace gfuncs {
 		return (scriptIndex != -1 && childScriptIndex != -1 && childScriptIndex < scriptIndex);
 	}
 	
-    bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName) {
+    bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName, bool spinLock) {
         if (handle == NULL) {
             logger::error("handle is null");
             return false;
@@ -1439,6 +1492,8 @@ namespace gfuncs {
 		bool isOwner = false;
 		if (checkIsOwner){
 			const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			RE::BSReadLockGuard readLock(lock); 
+			
 			for (auto& [id, akForm] : *allForms) {
 				auto* akRef = akForm->AsReference();
 				if (gfuncs::IsFormValid(akRef)){
@@ -1493,6 +1548,8 @@ namespace gfuncs {
         }
 
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (IsFormValid(form, false, false)) {
                 RE::Actor* actor = skyrim_cast<RE::Actor*>(form);
@@ -2402,6 +2459,7 @@ namespace gfuncs {
 
     RE::TESForm* FindNullForm() {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
 
         for (auto& [id, form] : *allForms) {
             if (form) {

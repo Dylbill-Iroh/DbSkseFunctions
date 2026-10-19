@@ -272,6 +272,8 @@ namespace objectRef {
 		//if 3D loaded or has parent cell, the ref is not in an inventory
 		if (ref->Is3DLoaded() || ref->GetParentCell()) {
 			const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			RE::BSReadLockGuard readLock(lock); 
+			
 			for (auto& [id, form] : *allForms) {
 				if (gfuncs::IsFormValid(form, false, false)){
 					auto* containerRef = form->AsReference();

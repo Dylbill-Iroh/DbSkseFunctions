@@ -62,6 +62,8 @@ function RemoveFormListAddedForm(formlist akList, form akForm) Global Native
 ;Add forms in akForms array to akList
 Function AddFormsToList(Form[] akForms, Formlist akList) Global Native
 
+bool Function SetFormPlayable(Form akForm, bool playable) Global Native
+
 ;if maxCharacters is greater than 0, limits the number of characters for descriptions. 
 ;If a description exceeds maxCharacters, adds the overMaxCharacterSuffix to the end of the description.
 ;if newLineReplacer is not empty "", replaces new lines in description with newLineReplacer
@@ -70,6 +72,9 @@ Function AddFormsToList(Form[] akForms, Formlist akList) Global Native
 ;if akForm is none, returns nullFormString
 String Function GetFormDescription(form akForm, int maxCharacters = 0, string overMaxCharacterSuffix = "...", string newLineReplacer = " ", int noneStringType = 0, string nullFormString = "Null") Global Native 
 
+;only works for form types that have a description, armor, magicEffect ect.
+;it's not save game persistent, so use the OnLoadGameGlobal event to maintain
+;requires bHookFormDescriptionEnabled set to 1 in the Data/Skse/Plugins/DbSkseFunctions.ini file.
 bool Function SetFormDescription(Form akForm, string desc) global native
 
 ;get form descriptions for akForms.
@@ -890,6 +895,13 @@ function SetBookRead(book akBook, bool read) Global Native
 ;if read is true, set all books in game as 'read', otherwise set all books in game as 'unread'
 function SetAllBooksRead(bool read) Global Native
 
+;Sets the current displayed text in the book menu. The book menu must be open for this to work. 
+;Use SetFormDescription on the book form to change the text for the actual book.
+;note that image tags will work with this function, E.G "<img src='img://Textures/Interface/Books/Illuminated_Letters/A_letter.png'>"
+;but the rest of the text replacement tags don't work, E.G <Alias-AliasName>. For those or globals just get directly from papyrus. GetDisplayName, GetValue ect. 
+;normal font tags do work, E.G "<p align=\"center\">", "<font face='$HandwrittenFont'>", "<font size='18'>" ect.
+bool function SetBookMenuText(string text) Global Native
+
 ;get source that the ActiveMagicEffect came from
 ;Could be a spell, enchantment, potion, or ingredient. Use GetType() to find out which.
 Form Function GetActiveEffectSource(ActiveMagicEffect akEffect) Global Native
@@ -1227,10 +1239,15 @@ ObjectReference[] Function GetEnableChildrenRefs(ObjectReference ref) Global Nat
 ;get all container refs, including actors, that have at least 1 of the akForm in their inventory.
 ObjectReference[] Function GetAllContainerRefsThatContainForm(form akForm) Global Native
 
-;UI functions. These are for use with skse's UI.psc script. Valid menuNames are the same as in UI.psc
+;UI functions ====================================================================================================================================
+;These are for use with skse's UI.psc script. Valid menuNames are the same as in UI.psc
 ;These will allow you to explore UI targets without needing adobe flash.
 ;Before using these functions make sure the menu is open with for example "If (UI.IsMenuOpen("InventoryMenu"))"
 ;Using these functions will also log the data to C:/Users/YourUserName/Documents/My Games/Skyrim Special Edition/SKSE/DbSkseFunctions.log
+
+;Search menuName's movie, starting at target (e.g. "_root"), for any object that has a member
+;named memberName. Returns the full path of each hit. maxDepth limits how far down to go.
+string[] Function FindUiMember(string menuName, string target, string memberName, int maxDepth = 5) Global Native
 
 ;Get all target members that the UI target has. 
 ;Example, start with "GetUiTargetMembers("InventoryMenu", "_root)"

@@ -3,6 +3,9 @@
 add_requires("ctre")
 add_requires("xbyak")
 
+-- for SetFormDescription, hooking GetDescription.
+add_requires("microsoft-detours")
+
 -- include subprojects
 includes("lib/commonlibsse-ng")
 
@@ -16,6 +19,7 @@ set_warnings("all")
 -- add common rules
 add_rules("mode.debug", "mode.releasedbg")
 add_rules("plugin.vsxmake.autoupdate")
+add_rules("plugin.compile_commands.autoupdate", { outputdir = "." })
 
 -- =====================================================================================================================
 -- How to configure full_array_conversions
@@ -56,7 +60,8 @@ target("DbSkseFunctions")
 
     -- Link the managed CTRE and Xbyak packages into this target
     add_packages("ctre", "xbyak")
-
+	add_packages("microsoft-detours")
+	
     -- Windows SDK headers define ANSI/Unicode macro pairs that collide with
     -- this project's function names:
     --   winspool.h : AddForm -> AddFormA   (also DeleteForm/GetForm/SetForm/EnumForms)

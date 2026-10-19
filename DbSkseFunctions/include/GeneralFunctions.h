@@ -1,5 +1,6 @@
 #pragma once
 // #include <functional>
+#include <unordered_set>
 #include "FormTypeTable.h"
 
 namespace gfuncs {
@@ -154,7 +155,9 @@ namespace gfuncs {
 	
 	bool RegisterObjectType(RE::BSScript::IVirtualMachine* vm, RE::VMTypeID type, const char* scriptName);
 	
-	std::vector<std::string> GetScriptsAttachedTohandle(RE::VMHandle& handle, bool RemoveDuplicates = true);
+	std::unordered_set<RE::VMHandle> GetHandlesWithScriptAttached(RE::BSFixedString sScriptName);
+	
+	std::vector<std::string> GetScriptsAttachedTohandle(RE::VMHandle& handle, bool RemoveDuplicates = true, bool spinLock = true);
 	
 	std::vector<std::string> GetScriptHierarchyForScriptOnHandle(RE::VMHandle& handle, std::string scriptName);
 	
@@ -166,7 +169,7 @@ namespace gfuncs {
 	
 	bool ScriptHasChild(std::string scriptName, std::string childScriptName);
 	
-    bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName);
+    bool IsScriptAttachedToHandle(RE::VMHandle& handle, RE::BSFixedString& sScriptName, bool spinLock = true);
 
     bool IsScriptAttachedToRef(RE::TESObjectREFR* ref, RE::BSFixedString sScriptName, bool checkIdentity = true);
 

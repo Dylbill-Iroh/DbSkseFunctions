@@ -2,6 +2,7 @@
 #include <mutex>
 #include <string.h>
 #include <unordered_map>
+#include <detours.h>
 #include "Utility.h"
 #include "GeneralFunctions.h"
 #include "RE/B/BGSBaseAlias.h"
@@ -11,6 +12,7 @@
 #include "Serialization.h"
 #include "editorID.hpp"
 #include "SharedVariables.h"
+#include "STLThunk.h"
 
 enum logLevel { trace, debug, info, warn, error, critical };
 enum debugLevel { notification, messageBox };
@@ -1392,6 +1394,8 @@ void AttachObjectReferenceScriptToBaseForm(RE::StaticFunctionTag*, std::string s
 		std::vector<RE::TESObjectREFR*> refsToUnattach;
 		
 		const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
 		for (auto& [id, form] : *allForms) {
 			auto* akRef = form ? form->AsReference() : nullptr;
 			if (akRef) {
@@ -2015,6 +2019,210 @@ std::string GetMagicItemDescription(RE::MagicItem* magicItem) {
         return GetEffectsDescriptions(magicItem->effects);
     }
     return "";
+}
+
+namespace descriptionHook {
+
+	namespace {
+		//TESDescription::GetDescription is NOT virtual -- the vtable ends at CopyComponent
+		//(slot 03) -- so it cannot be vtable hooked. But because it is non virtual there is
+		//exactly one copy of it in the exe and every form type's description goes through
+		//it, so this single entry hook covers Books, Weapons, Perks and the rest at once.
+		//
+		//SKSE's Trampoline::write_branch is NOT usable here: it is a one way redirect that
+		//returns a stub pointing back at our own thunk, so calling through it recurses until
+		//the stack dies. MinHook builds a real detour holding the displaced instructions,
+		//so originalFn is a genuine chain.
+		using GetDescription_t = void (*)(RE::TESDescription*, RE::BSString&, RE::TESForm*, std::uint32_t);
+
+		GetDescription_t originalFn = nullptr;
+
+		std::unordered_map<RE::TESDescription*, RE::FormID> descOwners;
+		std::unordered_map<RE::FormID, std::string>         descOverrides;
+		std::shared_mutex                                   descMutex;
+
+		//The game asks for descriptions while building inventory and magic menu lists, so
+		//the common case (nothing overridden) must not touch the mutex at all.
+		std::atomic<bool> hasAnyOverride{ false };
+		std::atomic<bool> installed{ false };
+
+		std::once_flag installOnce;
+
+		void DetourGetDescription(RE::TESDescription* self, RE::BSString& out,
+		                          RE::TESForm* parent, std::uint32_t fieldType)
+		{
+			//let the game fill `out` first, then replace it -- conservative, and it keeps
+			//whatever side effects GetDescription has. If you would rather skip the file
+			//read when an override exists, move this below the lookup and only call it
+			//when haveReplacement is false.
+			if (originalFn) {
+				originalFn(self, out, parent, fieldType);
+			}
+
+			if (!hasAnyOverride.load(std::memory_order_acquire) || !self) {
+				return;
+			}
+
+			std::string replacement;
+			bool haveReplacement = false;
+
+			{
+				std::shared_lock lock(descMutex);
+
+				auto owner = descOwners.find(self);
+				if (owner != descOwners.end()) {
+					auto ovr = descOverrides.find(owner->second);
+					if (ovr != descOverrides.end()) {
+						//copy out so the game's BSString allocator never runs under our lock
+						replacement = ovr->second;
+						haveReplacement = true;
+					}
+				}
+			}
+
+			if (haveReplacement) {
+				out = replacement.c_str();
+			}
+		}
+	}
+
+	bool IsInstalled() {
+		return installed.load(std::memory_order_acquire);
+	}
+
+	void Install() {
+		std::call_once(installOnce, [](){
+			REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(14399, 14552) };
+
+			//Detours differs from MinHook here: originalFn must already point at the TARGET
+			//before DetourAttach. On a successful commit Detours rewrites it to point at the
+			//trampoline it built, so afterwards calling originalFn runs the displaced
+			//instructions and continues into the real function.
+			originalFn = reinterpret_cast<GetDescription_t>(target.address());
+
+			if (DetourTransactionBegin() != NO_ERROR) {
+				logger::error("DetourTransactionBegin failed");
+				originalFn = nullptr;
+				return;
+			}
+
+			//Detours fixes up the instruction pointer of the threads you enumerate. We
+			//install at kDataLoaded, before anything has queried a description, so the
+			//main thread is the only one that could be inside the target.
+			if (DetourUpdateThread(GetCurrentThread()) != NO_ERROR) {
+				logger::error("DetourUpdateThread failed");
+				DetourTransactionAbort();
+				originalFn = nullptr;
+				return;
+			}
+
+			LONG error = DetourAttach(
+				reinterpret_cast<PVOID*>(&originalFn),
+				reinterpret_cast<PVOID>(&DetourGetDescription));
+
+			if (error != NO_ERROR) {
+				logger::error("DetourAttach failed for TESDescription::GetDescription, error[{}]", error);
+				DetourTransactionAbort();
+				originalFn = nullptr;
+				return;
+			}
+
+			error = DetourTransactionCommit();
+			if (error != NO_ERROR) {
+				logger::error("DetourTransactionCommit failed, error[{}]", error);
+				originalFn = nullptr;
+				return;
+			}
+
+			installed.store(true, std::memory_order_release);
+			logger::info("TESDescription::GetDescription hooked at [{:X}]", target.address());
+		});
+	}
+
+	bool SetOverride(RE::TESForm* akForm, std::string desc) {
+		if (!IsInstalled()) {
+			logger::error("Description hook is not installed, cannot set a description. Set bHookFormDescriptionEnabled to 1 in Data/Skse/Plugins/DbSkseFunctions.ini");
+			return false;
+		}
+
+		if (!gfuncs::IsFormValid(akForm)) {
+			return false;
+		}
+
+		auto* description = akForm->As<RE::TESDescription>();
+		if (!description) {
+			logger::debug("no TESDescription component on [{}]", gfuncs::GetFormNameAndId(akForm));
+			return false;
+		}
+
+		const RE::FormID formId = akForm->GetFormID();
+
+		{
+			std::unique_lock lock(descMutex);
+			descOwners[description] = formId;
+			descOverrides[formId]   = std::move(desc);
+		}
+
+		hasAnyOverride.store(true, std::memory_order_release);
+		return true;
+	}
+
+	bool ClearOverride(RE::TESForm* akForm) {
+		if (!gfuncs::IsFormValid(akForm)) {
+			return false;
+		}
+
+		const RE::FormID formId = akForm->GetFormID();
+
+		bool erased = false;
+		{
+			std::unique_lock lock(descMutex);
+
+			erased = (descOverrides.erase(formId) > 0);
+
+			if (auto* description = akForm->As<RE::TESDescription>()) {
+				descOwners.erase(description);
+			}
+
+			if (descOverrides.empty()) {
+				hasAnyOverride.store(false, std::memory_order_release);
+			}
+		}
+
+		return erased;
+	}
+
+	void ClearOverrideById(RE::FormID formId) {
+		std::unique_lock lock(descMutex);
+
+		descOverrides.erase(formId);
+
+		//the form may already be destroyed, so sweep descOwners by value rather than
+		//looking the component up again
+		for (auto it = descOwners.begin(); it != descOwners.end(); ) {
+			it = (it->second == formId) ? descOwners.erase(it) : std::next(it);
+		}
+
+		if (descOverrides.empty()) {
+			hasAnyOverride.store(false, std::memory_order_release);
+		}
+	}
+
+	std::string GetOverride(RE::TESForm* akForm) {
+		if (!gfuncs::IsFormValid(akForm)) {
+			return "";
+		}
+
+		std::shared_lock lock(descMutex);
+
+		auto it = descOverrides.find(akForm->GetFormID());
+		return (it != descOverrides.end()) ? it->second : "";
+	}
+} 
+
+bool SetFormDescription(RE::StaticFunctionTag*, RE::TESForm* akForm, std::string desc) {
+	logger::debug("desc[{}]", desc);
+	return descriptionHook::SetOverride(akForm, std::move(desc));
 }
 
 std::string GetDescription(RE::TESForm* akForm, std::string newLineReplacer) {

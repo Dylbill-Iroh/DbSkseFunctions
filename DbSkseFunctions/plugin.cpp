@@ -146,6 +146,7 @@ std::vector<RE::BSFixedString> itemMenus = {
 
 bool bActivateEventSinkEnabledByDefault = true; 
 bool bMenuOpenCloseEventSinkEnabled = true;
+bool bHookFormDescriptionEnabled = true;
 int iMaxArrowsSavedPerReference = 0;
 RE::TESForm* nullForm;
 RE::TESForm* xMarker;
@@ -197,6 +198,7 @@ void SetSettingsFromIniFile() {
 
     bActivateEventSinkEnabledByDefault = mINI::GetIniBool(ini, "Main", "bActivateEventSinkEnabledByDefault", true);
     bMenuOpenCloseEventSinkEnabled = mINI::GetIniBool(ini, "Main", "bMenuOpenCloseEventSinkEnabled", true);
+    bHookFormDescriptionEnabled = mINI::GetIniBool(ini, "Main", "bHookFormDescriptionEnabled", true);
 
     logger::info("iFrameUpdateInterval set to {}", sv::iFrameUpdateInterval);
     //logger::info("gameTimerPollingInterval set to {} milliseconds", gameTimerPollingInterval); //no longer used, uses iFrameUpdateInterval instead
@@ -204,6 +206,7 @@ void SetSettingsFromIniFile() {
     logger::info("iMaxArrowsSavedPerReference set to {} ", iMaxArrowsSavedPerReference);
     logger::info("bActivateEventSinkEnabledByDefault set to {} ", bActivateEventSinkEnabledByDefault);
     logger::info("bMenuOpenCloseEventSinkEnabled set to {} ", bMenuOpenCloseEventSinkEnabled);
+    logger::info("bHookFormDescriptionEnabled set to {} ", bHookFormDescriptionEnabled);
 }
 
 enum logLevel { trace, debug, info, warn, error, critical };
@@ -211,7 +214,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/* RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID,  */RE::StaticFunctionTag* functionTag) {
-    return float(10.10);
+    return float(10.11);
 } 
 
 std::vector<int> GetSkyrimVersion(RE::StaticFunctionTag*){
@@ -1719,6 +1722,8 @@ void UnregisterInvalidActorsForBowDrawAnimEvents() {
 void RegisterActorsForBowDrawAnimEvents() {
     if (eventDataPtrs[EventEnum_OnProjectileImpact]->sinkAdded || eventDataPtrs[EventEnum_HitEvent]->sinkAdded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock);
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 RE::TESObjectREFR* ref = form->AsReference();
@@ -1728,6 +1733,8 @@ void RegisterActorsForBowDrawAnimEvents() {
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock);
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 RE::TESObjectREFR* ref = form->AsReference();
@@ -6100,7 +6107,10 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("CountWhiteSpaces", "DbSkseFunctions", CountWhiteSpaces);
     vm->RegisterFunction("RemoveWhiteSpaces", "DbSkseFunctions", RemoveWhiteSpaces);
     vm->RegisterFunction("ModHasFormType", "DbSkseFunctions", ModHasFormType);
-    vm->RegisterFunction("GetFormDescription", "DbSkseFunctions", GetFormDescription);
+    
+	vm->RegisterFunction("SetFormDescription", "DbSkseFunctions", SetFormDescription);
+    
+	vm->RegisterFunction("GetFormDescription", "DbSkseFunctions", GetFormDescription);
     vm->RegisterFunction("GetFormDescriptions", "DbSkseFunctions", GetFormDescriptions);
     vm->RegisterFunction("GetFormDescriptionsFromList", "DbSkseFunctions", GetFormDescriptionsFromList);
     vm->RegisterFunction("GetFormNames", "DbSkseFunctions", GetFormNames);
@@ -6436,7 +6446,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             if (!nullForm) { nullForm = gfuncs::FindNullForm(); }
             sv::Install();
             gfuncs::Install();
-
+			
             auto* papyrusInterface = SKSE::GetPapyrusInterface();
             papyrusInterface->Register(BindPapyrusFunctions);
             papyrusInterface->Register(timers::BindPapyrusFunctions);
@@ -6461,6 +6471,11 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             papyrusInterface->Register(Message::BindPapyrusFunctions);
 			
             SetSettingsFromIniFile();
+			
+			if (bHookFormDescriptionEnabled){
+				descriptionHook::Install();
+			}
+			
             CreateEventSinks();
             SaveSkillBooks();
 			// int scriptsRegistered = 0;
@@ -6536,6 +6551,9 @@ void LoadCallback(SKSE::SerializationInterface* ssi) {
 			else if (record == conditions::Serialization::conditionsRecord){
 				conditions::Serialization::Load(ssi, version);
 			}
+			else if (record == CreateForms::Serialization::createFormsRecord){
+				CreateForms::Serialization::LoadForms(ssi, version);
+			}
 			
 			// used only for testing ResolveFormID on created forms.
 			// else if (record == CreateForms::createFormsRecord){
@@ -6575,6 +6593,7 @@ void SaveCallback(SKSE::SerializationInterface* ssi) {
 		SaveObjectReferenceBaseScripts(ssi);
 		timers::SaveTimers(ssi);
 		conditions::Serialization::Save(ssi);
+		CreateForms::Serialization::SaveForms(ssi);
 		
 		// used only for testing ResolveFormID on created forms.
 		// CreateForms::SaveForms(ssi);

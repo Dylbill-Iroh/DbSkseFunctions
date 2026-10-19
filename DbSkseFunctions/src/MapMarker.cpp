@@ -263,6 +263,8 @@ std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int 
 
     if (visibleFilter == 1 && canTravelToFilter == 1) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 auto* ref = form->AsReference();
@@ -283,6 +285,8 @@ std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int 
     }
     else if (visibleFilter == 1 && canTravelToFilter == 0) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 auto* ref = form->AsReference();
@@ -303,6 +307,8 @@ std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int 
     }
     else if (visibleFilter == 0 && canTravelToFilter == 1) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 auto* ref = form->AsReference();
@@ -323,6 +329,8 @@ std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int 
     }
     else if (visibleFilter == 0 && canTravelToFilter == 0) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 auto* ref = form->AsReference();
@@ -343,6 +351,8 @@ std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int 
     }
     else if (canTravelToFilter == 1) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 auto* ref = form->AsReference();
@@ -361,6 +371,8 @@ std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int 
     }
     else if (canTravelToFilter == 0) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 auto* ref = form->AsReference();
@@ -379,6 +391,8 @@ std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int 
     }
     else if (visibleFilter == 1) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 auto* ref = form->AsReference();
@@ -397,6 +411,8 @@ std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int 
     }
     else if (visibleFilter == 0) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 auto* ref = form->AsReference();
@@ -415,6 +431,8 @@ std::vector<RE::TESObjectREFR*> GetAllMapMarkerRefs(RE::StaticFunctionTag*, int 
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
             if (gfuncs::IsFormValid(form, false, false)) {
                 auto* ref = form->AsReference();

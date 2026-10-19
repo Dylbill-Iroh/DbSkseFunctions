@@ -1,15 +1,22 @@
 #include "CreateForms.h"
 #include "GeneralFunctions.h"
+#include "Serialization.h"
 #include "RE/B/BGSBaseAlias.h"
 #include "RE/B/BSCoreTypes.h"
 #include "RE/T/TESForm.h"
 #include "SKSE/Logger.h"
 #include <concepts>
 #include <cstdint>
+#include <mutex>
 #include <unordered_set>
 
 namespace CreateForms {
-		RE::BGSKeyword* CreateKeyword(RE::StaticFunctionTag*) {
+	std::unordered_set<RE::FormID> createdForms;
+	std::unordered_set<RE::FormID> formsToDelete;
+	std::mutex mutex;
+	
+	RE::BGSKeyword* CreateKeyword(RE::StaticFunctionTag*) {
+		std::lock_guard<std::mutex> lock(mutex);
 		logger::trace("called");
 
 		auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSKeyword>()->Create();
@@ -33,10 +40,12 @@ namespace CreateForms {
 			);
 		}
 		
+		createdForms.insert(newForm->GetFormID());
 		return newForm;
 	}
 
 	RE::BGSListForm* CreateFormList(RE::StaticFunctionTag*, RE::BGSListForm* formListFiller) {
+		std::lock_guard<std::mutex> lock(mutex);
 		logger::trace("called");
 
 		auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSListForm>()->Create();
@@ -46,7 +55,7 @@ namespace CreateForms {
 		}
 		else {
 			if (!newForm->GetFormEditorID()) {
-				newForm->SetFormEditorID(std::format("BGSListForm_{:08X}", newForm->GetFormID()).c_str());
+				newForm->SetFormEditorID(std::format("DbSkseListForm_{:08X}", newForm->GetFormID()).c_str());
 				logger::debug("assigned editorID[{}]", newForm->GetFormEditorID());
 			}
 			
@@ -68,10 +77,13 @@ namespace CreateForms {
 					});
 			}
 		}
+		
+		createdForms.insert(newForm->GetFormID());
 		return newForm;
 	}
 
 	RE::BGSColorForm* CreateColorForm(RE::StaticFunctionTag*, int color) {
+		std::lock_guard<std::mutex> lock(mutex);
 		logger::trace("called");
 
 		auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSColorForm>()->Create();
@@ -81,7 +93,7 @@ namespace CreateForms {
 		}
 		else {
 			if (!newForm->GetFormEditorID()) {
-				newForm->SetFormEditorID(std::format("BGSColorForm_{:08X}", newForm->GetFormID()).c_str());
+				newForm->SetFormEditorID(std::format("DbSkseColorForm_{:08X}", newForm->GetFormID()).c_str());
 				logger::debug("assigned editorID[{}]", newForm->GetFormEditorID());
 			}
 			
@@ -97,10 +109,12 @@ namespace CreateForms {
 			newForm->color = color;
 		}
 
+		createdForms.insert(newForm->GetFormID());
 		return newForm;
 	}
 
 	RE::BGSConstructibleObject* CreateConstructibleObject(RE::StaticFunctionTag*) {
+		std::lock_guard<std::mutex> lock(mutex);
 		logger::trace("called");
 
 		//RE::BGSConstructibleObject
@@ -111,7 +125,7 @@ namespace CreateForms {
 		}
 		else {
 			if (!newForm->GetFormEditorID()) {
-				newForm->SetFormEditorID(std::format("BGSConstructibleObject_{:08X}", newForm->GetFormID()).c_str());
+				newForm->SetFormEditorID(std::format("DbSkseConstructibleObject_{:08X}", newForm->GetFormID()).c_str());
 				logger::debug("assigned editorID[{}]", newForm->GetFormEditorID());
 			}
 			
@@ -125,10 +139,12 @@ namespace CreateForms {
 			);
 		}
 
+		createdForms.insert(newForm->GetFormID());
 		return newForm;
 	}
 
 	RE::BGSTextureSet* CreateTextureSet(RE::StaticFunctionTag*) {
+		std::lock_guard<std::mutex> lock(mutex);
 		logger::trace("called");
 
 		auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::BGSTextureSet>()->Create();
@@ -138,7 +154,7 @@ namespace CreateForms {
 		}
 		else {
 			if (!newForm->GetFormEditorID()) {
-				newForm->SetFormEditorID(std::format("BGSTextureSet_{:08X}", newForm->GetFormID()).c_str());
+				newForm->SetFormEditorID(std::format("DbSkseTextureSet_{:08X}", newForm->GetFormID()).c_str());
 				logger::debug("assigned editorID[{}]", newForm->GetFormEditorID());
 			}
 			
@@ -152,10 +168,12 @@ namespace CreateForms {
 			);
 		}
 
+		createdForms.insert(newForm->GetFormID());
 		return newForm;
 	}
 
 	RE::TESSound* CreateSoundMarker(RE::StaticFunctionTag*) {
+		std::lock_guard<std::mutex> lock(mutex);
 		logger::trace("called");
 
 		auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::TESSound>()->Create();
@@ -165,7 +183,7 @@ namespace CreateForms {
 		}
 		else {
 			if (!newForm->GetFormEditorID()) {
-				newForm->SetFormEditorID(std::format("TESSound_{:08X}", newForm->GetFormID()).c_str());
+				newForm->SetFormEditorID(std::format("DbSkseSound_{:08X}", newForm->GetFormID()).c_str());
 				logger::debug("assigned editorID[{}]", newForm->GetFormEditorID());
 			}
 			
@@ -179,10 +197,12 @@ namespace CreateForms {
 			);
 		}
 
+		createdForms.insert(newForm->GetFormID());
 		return newForm;
 	}
 
 	RE::TESQuest* CreateQuest(RE::StaticFunctionTag*) {
+		std::lock_guard<std::mutex> lock(mutex);
 		logger::trace("called");
 
 		auto* newForm = RE::IFormFactory::GetConcreteFormFactoryByType<RE::TESQuest>()->Create();
@@ -192,7 +212,7 @@ namespace CreateForms {
 		}
 		else {
 			if (!newForm->GetFormEditorID()) {
-				newForm->SetFormEditorID(std::format("TESQuest_{:08X}", newForm->GetFormID()).c_str());
+				newForm->SetFormEditorID(std::format("DbSkseQuest_{:08X}", newForm->GetFormID()).c_str());
 				logger::debug("assigned editorID[{}]", newForm->GetFormEditorID());
 			}
 			
@@ -206,88 +226,9 @@ namespace CreateForms {
 			);
 		}
 		
+		createdForms.insert(newForm->GetFormID());
 		return newForm;
 	}
-
-// ========================================================================================================================================
-// used for testing ResolveFormID on created forms. 
-// after testing, ResolveFormID was successful, but always the same as the original formId
-// even after changing load order of the mod .esp where the new forms were created / stored in a papyrus script.
-	std::unordered_set<RE::FormID> savedFormIds;
-
-	bool SaveForms(SKSE::SerializationInterface* ssi){
-		logger::debug("savedFormIds size[{}]", savedFormIds.size());
-		
-		if (!ssi->OpenRecord(createFormsRecord, 1)){
-			logger::warn("failed to open record STf9");
-			return false;
-		}
-		
-		std::size_t size = savedFormIds.size();
-		if (!ssi->WriteRecordData(size)){
-			logger::warn("failed to write savedFormIds size");
-			return false;
-		}
-		
-		int i = 0;
-		for (RE::FormID formId : savedFormIds){
-			if (!ssi->WriteRecordData(formId)){
-				logger::warn("i[{}]: failed to write formId[{:08X}]", i, formId);
-				return false;
-			}
-			i++;
-		}
-		
-		return true;
-	}
-
-	bool LoadForms(SKSE::SerializationInterface* ssi){
-		logger::debug("savedFormIds. current size[{}]", savedFormIds.size());
-		
-		std::size_t size = 0;
-		if (!ssi->ReadRecordData(size)){
-			logger::warn("failed to read record data for size");
-			return false;
-		}
-		
-		logger::debug("savedFormIds. loaded size[{}]", size);
-		
-		for (std::size_t i = 0; i < size; i++){
-			RE::FormID formId = 0; 
-			if (!ssi->ReadRecordData(formId)){
-				logger::warn("failed to read record data for formId");
-				return false;
-			}
-			
-			RE::FormID resolvedId = 0;
-			if (!ssi->ResolveFormID(formId, resolvedId)){
-				logger::warn("failed to resolve formId[{:08X}]", formId);
-				return false;
-			}
-			// else {
-			// 	logger::debug("formId[{:08X}] resolvedId[{:08X}]", formId, resolvedId);
-			// }
-			
-			RE::TESForm* akForm = RE::TESForm::LookupByID(resolvedId);
-			if (!gfuncs::IsFormValid(akForm, false, false)){
-				logger::warn("saved form, oldId[{:08X}] resolvedId[{:08X}] no longer exists", formId, resolvedId);
-				return false;
-			}
-			
-			if (resolvedId != formId){
-				logger::debug("resolvedId[{:08X}] does not match savedId[{:08X}], updating list.", resolvedId, formId);
-				auto it = savedFormIds.find(formId);
-				if (it != savedFormIds.end()){
-					savedFormIds.erase(it);
-				}
-				
-				savedFormIds.insert(resolvedId);
-			}
-		}
-		
-		return true;
-	}
-// ========================================================================================================================================
 
 	// A type the game can hand us a concrete factory for.
 	// Excludes rows 200-204 of DB_MASTER_TYPE_LIST: the aliases, ActiveEffect and
@@ -297,6 +238,7 @@ namespace CreateForms {
 
 	template <class T>
 	RE::TESForm* CreateFormOfType(const std::string& baseScriptType, const std::string& scriptName) {
+		std::lock_guard<std::mutex> lock(mutex);
 		//typeid(T).name()
 		if constexpr (!FactoryCreatableForm<T>) {
 			logger::warn("[{}] is not a creatable form type", baseScriptType);
@@ -322,7 +264,7 @@ namespace CreateForms {
 				return nullptr;
 			}
 
-			newForm->SetFormEditorID(std::format("{:08X}", newForm->GetFormID()).c_str());
+			newForm->SetFormEditorID(std::format("DbSkse{}_{:08X}", baseScriptType, newForm->GetFormID()).c_str());
 
 			if (!scriptName.empty()){
 				RE::BSTSmartPointer<RE::BSScript::Object> object = gfuncs::AttachPapyrusScriptToForm(newForm, scriptName.c_str());
@@ -334,11 +276,137 @@ namespace CreateForms {
 				}
 			}
 
-			savedFormIds.insert(newForm->GetFormID());
+			createdForms.insert(newForm->GetFormID());
 			return newForm;
 		}
 	}
 
+	void NotifyVMOfFormDeletion(RE::TESForm* akForm){
+		if (!akForm){
+			return;
+		}
+
+		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+		if (!vm){
+			return;
+		}
+
+		auto* policy = vm->GetObjectHandlePolicy();
+		if (!policy){
+			return;
+		}
+
+		RE::VMHandle handle = gfuncs::GetHandle(akForm);
+
+		if (handle == policy->EmptyHandle()){
+			return;
+		}
+
+		//unbinds every script on this handle and is what drives SKSE's form delete callback
+		vm->HandleCObjectDeletion(handle);
+	}
+	
+	// return -1 for error, not deleted 
+	// return 0 for marked for delete 
+	// return 1 for actually deleted
+	int DeleteFormCpp(RE::TESForm* akForm, bool eraseFromFormsToDelete = true){
+		std::lock_guard<std::mutex> lock(mutex);
+		
+		if (!gfuncs::IsFormValid(akForm)){
+			return -1;
+		}
+		
+		auto formId = akForm->GetFormID();
+		
+		auto it = createdForms.find(akForm->GetFormID());
+		if (it == createdForms.end()){
+			logger::warn("akForm {} was not created by DbSkseFunctions.dll, aborting delete", gfuncs::GetFormNameAndId(akForm));
+			return -1;
+		}
+		
+		if (!gfuncs::IsFormInUse(akForm)){
+			akForm->SetDelete(true);
+			NotifyVMOfFormDeletion(akForm);
+			createdForms.erase(it);
+			
+			if (eraseFromFormsToDelete){
+				auto itt = formsToDelete.find(formId);
+				if (itt != formsToDelete.end()){
+					formsToDelete.erase(itt);
+				}
+			}
+			
+			delete akForm;
+			return 1;
+		}
+		
+		formsToDelete.insert(akForm->GetFormID());
+		return 0;
+	}
+	
+	// return -1 for error, not deleted 
+	// return 0 for marked for delete 
+	// return 1 for actually deleted
+	int DeleteForm(RE::StaticFunctionTag*, RE::TESForm* akForm){
+		return DeleteFormCpp(akForm);
+	}
+	
+	void DeleteForms(){
+		std::unordered_set<RE::FormID> formsDeleted;
+		for (RE::FormID formId : formsToDelete){
+			if (DeleteFormCpp(RE::TESForm::LookupByID(formId), false) == 1){ //actually deleted
+				formsDeleted.insert(formId);
+			}
+		}
+		
+		std::lock_guard<std::mutex> lock(mutex);
+		for (RE::FormID formId : formsDeleted){ //erase from formsToDelete after iterating through the first time.
+			auto it = formsToDelete.find(formId);
+			if (it != formsToDelete.end()){
+				formsToDelete.erase(it);
+			}
+		}
+	}
+	
+	namespace Serialization {
+		enum Version : std::uint32_t {
+			kVersion1    = 1,   //first released version, conditions + linked forms + events
+			kCurrent = kVersion1,
+		};
+			
+		bool SaveForms(SKSE::SerializationInterface* ssi){
+			std::lock_guard<std::mutex> lock(mutex);
+			
+			if (!ssi->OpenRecord(createFormsRecord, Version::kCurrent)){
+				return false;
+			}
+			
+			if (!serialize::SaveFormIDUnorderedSet(createdForms, createFormsRecord, ssi, false)){
+				return false;
+			}
+			
+			if (!serialize::SaveFormIDUnorderedSet(formsToDelete, createFormsRecord, ssi, false)){
+				return false;
+			}
+			
+			return true;
+		}
+		
+		bool LoadForms(SKSE::SerializationInterface* ssi, std::uint32_t version){
+			std::lock_guard<std::mutex> lock(mutex);
+			
+			if (!serialize::LoadFormIdUnorderedSet(createdForms, createFormsRecord, ssi)){
+				return false;
+			}
+			
+			if (!serialize::LoadFormIdUnorderedSet(formsToDelete, createFormsRecord, ssi)){
+				return false;
+			}
+			
+			return true;
+		}
+	}
+	
 	RE::TESForm* CreateForm(RE::StaticFunctionTag*, std::string baseScriptType, std::string scriptName) {
 		logger::debug("baseScriptType[{}] scriptName[{}]", baseScriptType, scriptName);
 		
@@ -434,6 +502,41 @@ namespace CreateForms {
 	#endif
 	}
 	
+	bool GetFormPlayable(RE::TESForm* akForm){
+		if (!gfuncs::IsFormValid(akForm)){
+			return false;
+		}
+
+		//bit SET means non-playable, so playable is the bit being clear
+		return (akForm->formFlags & RE::TESForm::RecordFlags::kNonPlayable) == 0;
+	}
+
+	bool SetFormPlayable(RE::StaticFunctionTag*, RE::TESForm* akForm, bool playable){
+		if (!gfuncs::IsFormValid(akForm)){
+			return false;
+		}
+
+		constexpr std::uint32_t nonPlayable = RE::TESForm::RecordFlags::kNonPlayable;  // 1 << 2
+
+		const bool wasPlayable = (akForm->formFlags & nonPlayable) == 0;
+		if (wasPlayable == playable){
+			return true;  //already in the requested state
+		}
+
+		if (playable){
+			akForm->formFlags &= ~nonPlayable;   //clear the bit
+		}
+		else {
+			akForm->formFlags |= nonPlayable;    //set the bit
+		}
+
+		//SetDelete does AddChange(1) after touching the flags -- ChangeFlags::kFlags is that 1.
+		//Without it the game doesn't know the form's flags changed.
+		akForm->AddChange(RE::TESForm::ChangeFlags::kFlags);
+
+		return ((akForm->formFlags & nonPlayable) == 0) == playable;
+	}
+	
 	bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("CreateKeyword", "DbSkseFunctions", CreateKeyword);
 		vm->RegisterFunction("CreateFormList", "DbSkseFunctions", CreateFormList);
@@ -445,6 +548,7 @@ namespace CreateForms {
 		vm->RegisterFunction("CreateForm", "DbSkseFunctions", CreateForm);
 		vm->RegisterFunction("GetFormTypeForScript", "DbSkseFunctions", GetFormTypeForScript);
 		vm->RegisterFunction("GetScriptForFormType", "DbSkseFunctions", GetScriptForFormType);
+		vm->RegisterFunction("SetFormPlayable", "DbSkseFunctions", SetFormPlayable);
 		 
 		return true;
 	}

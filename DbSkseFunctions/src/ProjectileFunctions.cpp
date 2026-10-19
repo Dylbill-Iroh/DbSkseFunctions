@@ -900,6 +900,8 @@ std::vector<RE::TESObjectREFR*> GetAttachedProjectileRefs(RE::StaticFunctionTag*
     }
 
     const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+	RE::BSReadLockGuard readLock(lock); 
+	
     for (auto& [id, form] : *allForms) {
 		if (gfuncs::IsFormValid(form, false, false)) {
 			auto* akRef = form->AsReference();
@@ -958,6 +960,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileRefs(RE::TESObjectREFR* ref, 
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -974,6 +978,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileRefs(RE::TESObjectREFR* ref, 
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -990,6 +996,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileRefs(RE::TESObjectREFR* ref, 
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1006,6 +1014,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileRefs(RE::TESObjectREFR* ref, 
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1033,6 +1043,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* 
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1057,6 +1069,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* 
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1081,6 +1095,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* 
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1105,6 +1121,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileArrowRefs(RE::TESObjectREFR* 
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1139,6 +1157,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBarrierRefs(RE::TESObjectREFR
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1163,6 +1183,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBarrierRefs(RE::TESObjectREFR
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1187,6 +1209,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBarrierRefs(RE::TESObjectREFR
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1211,6 +1235,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBarrierRefs(RE::TESObjectREFR
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1245,6 +1271,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileConeRefs(RE::TESObjectREFR* r
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1269,6 +1297,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileConeRefs(RE::TESObjectREFR* r
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1293,6 +1323,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileConeRefs(RE::TESObjectREFR* r
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1317,6 +1349,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileConeRefs(RE::TESObjectREFR* r
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1351,6 +1385,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileFlamethrowerRefs(RE::TESObjec
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1375,6 +1411,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileFlamethrowerRefs(RE::TESObjec
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1399,6 +1437,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileFlamethrowerRefs(RE::TESObjec
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1423,6 +1463,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileFlamethrowerRefs(RE::TESObjec
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1457,6 +1499,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBeamRefs(RE::TESObjectREFR* r
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1481,6 +1525,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBeamRefs(RE::TESObjectREFR* r
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1505,6 +1551,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBeamRefs(RE::TESObjectREFR* r
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1529,6 +1577,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileBeamRefs(RE::TESObjectREFR* r
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1563,6 +1613,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileGrenadeRefs(RE::TESObjectREFR
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1587,6 +1639,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileGrenadeRefs(RE::TESObjectREFR
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1611,6 +1665,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileGrenadeRefs(RE::TESObjectREFR
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1635,6 +1691,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileGrenadeRefs(RE::TESObjectREFR
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1669,6 +1727,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileMissileRefs(RE::TESObjectREFR
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1693,6 +1753,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileMissileRefs(RE::TESObjectREFR
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1717,6 +1779,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileMissileRefs(RE::TESObjectREFR
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1741,6 +1805,8 @@ std::vector<RE::TESObjectREFR*> GetAllHitProjectileMissileRefs(RE::TESObjectREFR
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1799,6 +1865,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileRefs(RE::TESObjectREFR* ref,
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1815,6 +1883,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileRefs(RE::TESObjectREFR* ref,
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1831,6 +1901,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileRefs(RE::TESObjectREFR* ref,
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1847,6 +1919,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileRefs(RE::TESObjectREFR* ref,
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1873,6 +1947,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileArrowRefs(RE::TESObjectREFR*
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1897,6 +1973,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileArrowRefs(RE::TESObjectREFR*
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1921,6 +1999,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileArrowRefs(RE::TESObjectREFR*
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1945,6 +2025,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileArrowRefs(RE::TESObjectREFR*
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -1979,6 +2061,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBarrierRefs(RE::TESObjectREF
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2003,6 +2087,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBarrierRefs(RE::TESObjectREF
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2027,6 +2113,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBarrierRefs(RE::TESObjectREF
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2051,6 +2139,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBarrierRefs(RE::TESObjectREF
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2085,6 +2175,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileConeRefs(RE::TESObjectREFR* 
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2109,6 +2201,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileConeRefs(RE::TESObjectREFR* 
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2133,6 +2227,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileConeRefs(RE::TESObjectREFR* 
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2157,6 +2253,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileConeRefs(RE::TESObjectREFR* 
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2191,6 +2289,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileFlamethrowerRefs(RE::TESObje
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2215,6 +2315,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileFlamethrowerRefs(RE::TESObje
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2239,6 +2341,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileFlamethrowerRefs(RE::TESObje
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2263,6 +2367,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileFlamethrowerRefs(RE::TESObje
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2297,6 +2403,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBeamRefs(RE::TESObjectREFR* 
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2321,6 +2429,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBeamRefs(RE::TESObjectREFR* 
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2345,6 +2455,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBeamRefs(RE::TESObjectREFR* 
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2369,6 +2481,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileBeamRefs(RE::TESObjectREFR* 
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2403,6 +2517,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileGrenadeRefs(RE::TESObjectREF
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2427,6 +2543,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileGrenadeRefs(RE::TESObjectREF
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2451,6 +2569,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileGrenadeRefs(RE::TESObjectREF
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2475,6 +2595,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileGrenadeRefs(RE::TESObjectREF
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2509,6 +2631,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileMissileRefs(RE::TESObjectREF
 
     if (only3dLoaded && onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2533,6 +2657,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileMissileRefs(RE::TESObjectREF
     }
     else if (onlyEnabled) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2557,6 +2683,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileMissileRefs(RE::TESObjectREF
     }
     else if (only3dLoaded) {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
@@ -2581,6 +2709,8 @@ std::vector<RE::TESObjectREFR*> GetAllShotProjectileMissileRefs(RE::TESObjectREF
     }
     else {
         const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
         for (auto& [id, form] : *allForms) {
 			if (gfuncs::IsFormValid(form, false, false)) {
 				auto* akRef = form->AsReference();
