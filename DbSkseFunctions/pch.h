@@ -57,6 +57,8 @@ struct std::formatter<RE::BSFixedString, char> : std::formatter<std::string_view
 #undef PlaySound
 #undef GetObject
 #undef LoadString
+#undef min
+#undef max
 
 using namespace std::literals;
 namespace logger = SKSE::log;

@@ -1761,6 +1761,12 @@ std::string RemoveWhiteSpaces(RE::StaticFunctionTag*, std::string s){
 	return gfuncs::RemoveWhiteSpace(s);
 }
 
+// string Function JoinStrings(String[] arr, string delim)
+
+std::string JoinStrings(RE::StaticFunctionTag*, std::vector<std::string> arr, std::string delim){
+	return gfuncs::JoinStrings(arr, delim);
+}
+
 bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType) {
     logger::debug("modName[{}] formType[{}]", modName, formType);
 

@@ -70,6 +70,7 @@
 #include "StoryManager.h"
 #include "Scene.h"
 #include "Message.h"
+#include "Package.h"
 
 bool bPlayerIsInCombat = false;
 bool bRegisteredForPlayerCombatChange = false;
@@ -214,7 +215,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/* RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID,  */RE::StaticFunctionTag* functionTag) {
-    return float(10.11);
+    return float(10.12);
 } 
 
 std::vector<int> GetSkyrimVersion(RE::StaticFunctionTag*){
@@ -6106,6 +6107,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("IsWhiteSpace", "DbSkseFunctions", IsWhiteSpace);
     vm->RegisterFunction("CountWhiteSpaces", "DbSkseFunctions", CountWhiteSpaces);
     vm->RegisterFunction("RemoveWhiteSpaces", "DbSkseFunctions", RemoveWhiteSpaces);
+    vm->RegisterFunction("JoinStrings", "DbSkseFunctions", JoinStrings);
     vm->RegisterFunction("ModHasFormType", "DbSkseFunctions", ModHasFormType);
     
 	vm->RegisterFunction("SetFormDescription", "DbSkseFunctions", SetFormDescription);
@@ -6469,6 +6471,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             papyrusInterface->Register(Scene::BindPapyrusFunctions);
             papyrusInterface->Register(CreateForms::BindPapyrusFunctions);
             papyrusInterface->Register(Message::BindPapyrusFunctions);
+            papyrusInterface->Register(Package::BindPapyrusFunctions);
 			
             SetSettingsFromIniFile();
 			
@@ -6613,13 +6616,18 @@ void SaveCallback(SKSE::SerializationInterface* ssi) {
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
 	REL::Module::reset(); //make sure REL offsets are correct before touching them. Caused ctd when opening the game without this.
+	
 	SKSE::AllocTrampoline(450); // for the projectile impact hook
+	
+	//Load the address library now, while the working directory is still the game folder.
+	//IDDB loads lazily on first use, and by then another mod may have changed the working directory.
+	//To fix user reported error REL/IDDB.h(157): failed to open address library file
+	(void)REL::IDDB::get();
 	
     SetupLog("Data/SKSE/Plugins/DbSkseFunctions.ini");
 	logger::critical("REL base [{:X}]", REL::Module::get().base());
 	
     skseLoadInterface = skse; 
-	
 	
     SKSE::GetMessagingInterface()->RegisterListener(MessageListener);
 

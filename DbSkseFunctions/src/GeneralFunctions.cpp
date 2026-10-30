@@ -79,7 +79,40 @@ namespace gfuncs {
         transform(s.begin(), s.end(), s.begin(), ::tolower);
     }
 	
-	std::vector<std::string> StringSplit(std::string s, std::string delim) {
+	std::string RemoveWhiteSpace(std::string s){
+		s.erase(std::remove_if(s.begin(), s.end(), [](unsigned char c) {
+			return std::isspace(c);
+		}), s.end());
+		
+		return s;
+	}
+	
+	//remove all instances of toRemove sub string from s.
+	std::string RemoveSubStrings(std::string s, std::string toRemove){
+		if (toRemove.empty() || s.empty()){
+			return s;
+		}
+		
+		auto length = toRemove.length();
+		
+		size_t pos = s.find(toRemove);
+		while (pos != std::string::npos) {
+			// Erase the substring starting at pos with the given length
+			s.erase(pos, length);
+			
+			// Find the next occurrence from the beginning or current position
+			if (!s.empty()){
+				pos = s.find(toRemove); 
+			}
+			else {
+				break;
+			}
+		}
+		
+		return s;
+	}
+	
+	std::vector<std::string> SplitString(std::string s, std::string delim) {
 		std::vector<std::string> v;
 		
 		// Handle empty delimiter edge case to prevent an infinite loop
@@ -103,12 +136,29 @@ namespace gfuncs {
 		return v;
 	}
 	
-	std::string RemoveWhiteSpace(std::string s){
-		s.erase(std::remove_if(s.begin(), s.end(), [](unsigned char c) {
-			return std::isspace(c);
-		}), s.end());
+	std::string JoinStrings(std::vector<std::string> arr, std::string delim){
+		if (arr.empty()){
+			return "";
+		}
 		
-		return s;
+		std::string sReturn = "";
+		int max = arr.size() - 1; //no need to add delim after last entry
+		for (int i = 0; i < max; i++){
+			std::string s = arr[i];
+			sReturn = sReturn + s + delim;
+		}
+		
+		sReturn = sReturn + arr.back();
+		
+		return sReturn;
+	}
+	
+	bool StringToBool(std::string s){
+		return s == "1" || _stricmp(s.c_str(), "true") == 0;
+	}
+	
+	std::string BoolToString(bool b, std::string trueString, std::string falseString){
+		return b ? trueString : falseString;
 	}
 	
     std::string uint32_to_string(uint32_t value) {

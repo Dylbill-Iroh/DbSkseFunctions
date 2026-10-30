@@ -53,9 +53,17 @@ namespace gfuncs {
 
     void ConvertToLowerCase(std::string& s);
 
-	std::vector<std::string> StringSplit(std::string s, std::string delim);
+	std::vector<std::string> SplitString(std::string s, std::string delim);
 	
 	std::string RemoveWhiteSpace(std::string s);
+	
+	std::string RemoveSubStrings(std::string s, std::string toRemove);
+	
+	std::string JoinStrings(std::vector<std::string> arr, std::string delim);
+	
+	bool StringToBool(std::string s);
+	
+	std::string BoolToString(bool b, std::string trueString = "true", std::string falseString = "false");
 	
     std::string uint32_to_string(uint32_t value);
 

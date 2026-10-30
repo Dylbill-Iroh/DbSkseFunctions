@@ -129,6 +129,8 @@ int CountWhiteSpaces(RE::StaticFunctionTag*, std::string s);
 
 std::string RemoveWhiteSpaces(RE::StaticFunctionTag*, std::string s);
 
+std::string JoinStrings(RE::StaticFunctionTag*, std::vector<std::string> arr, std::string delim);
+
 bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType);
 
 std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm * akForm, std::string nullFormString);

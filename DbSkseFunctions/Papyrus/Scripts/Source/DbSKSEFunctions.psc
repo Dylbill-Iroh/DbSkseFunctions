@@ -34,6 +34,9 @@ Bool Function IsWhiteSpace(String c) Global Native
 int Function CountWhiteSpaces(String s) Global Native
 String Function RemoveWhiteSpaces(String s) Global Native
 
+;join the strings in the arr seperated by delim into a single string
+string Function JoinStrings(String[] arr, string delim) Global Native
+
 ;does the mod have at least 1 form of formType?
 Bool Function ModHasFormType(String modName, int formType) Global Native
 
@@ -1241,6 +1244,10 @@ ObjectReference[] Function GetAllContainerRefsThatContainForm(form akForm) Globa
 
 ;UI functions ====================================================================================================================================
 ;These are for use with skse's UI.psc script. Valid menuNames are the same as in UI.psc
+;The exception is that menuName "book" is supported by these functions, added in version 10.12, where as "book" is not currently supported by skse's UI functions.
+;"book" is for BookMenu.as: https://github.com/Mardoxx/skyrimui/blob/425aa8a31de31fb11fe78ee6cec799f4ba31af03/src/book/BookMenu.as and
+;"Book Menu" is for BookBottomBar: https://github.com/Mardoxx/skyrimui/blob/425aa8a31de31fb11fe78ee6cec799f4ba31af03/src/bookmenu/BookBottomBar.as and
+
 ;These will allow you to explore UI targets without needing adobe flash.
 ;Before using these functions make sure the menu is open with for example "If (UI.IsMenuOpen("InventoryMenu"))"
 ;Using these functions will also log the data to C:/Users/YourUserName/Documents/My Games/Skyrim Special Edition/SKSE/DbSkseFunctions.log
@@ -1276,7 +1283,52 @@ int function GetUITargetType(string menuName, string target) Global Native
 string function GetUITargetTypeAsString(string menuName, string target) Global Native
 
 ;Instead of UI.GetBool, UI.GetString ect, gets the current value of the target as string. Bools will be "true" or "false".
+;It also converts array types to a single string automatically. Array strings will look something like this: "a:[7||8||9]:a"
+;where there are bookends: "a:[" - "]:a" and array values are seperated by a "||" delimeter between the brackets. 
+;if you see "o:" it means the array value / element was an object type. If you see "a:[o:]:a" it means the array value / element is a nested array. 
+;using a string actionScriptArrayArg that contains either of those in the SetUiTargetValue function means internally it leaves the ui array value as is, unchanged.
+;example: SetUiTargetValue("someMenu", "_root.Menu_mc.someArray", "a:[7||o:||9]:a") , the flash someArray is changed to a length of 3, [0] = 7, [1] = keep value as is, unchanged, [2] = 9.
+;to get a papyrus string array use ActionScriptArrayArgToStringArray()
+;also see StringArrayToActionScriptArrayArg.
 string function GetUITargetValueAsString(string menuName, string target) Global Native
+
+; Invokes the ActionScript UI function at menuName / target with function params / args.
+; The args string[] array should match the action script function's args / params from left to right.
+; Arg types come from the strings themselves. "true" / "false" = bool type, numeric = number type (1, 2.2, ect...), otherwise it'll be a string type.
+; Prefixes can also force a type: "s:" for string, "n:" for number or "b:" for bool, or "a:" for array. For arrays, see StringArrayToActionScriptArrayArg.
+; E.G if args[1] = "s:true", args[1] will convert to string type instead of bool type internally. If the string arg is exactly "o:", it means leave the ui target as is.
+; Array element types are converted the same as single variable types.
+; Returns false if the menu isn't open, the target doesn't exist, or an arg is invalid.
+; The call itself runs on the UI thread shortly after this returns. 
+; Example:
+; function AttemptEquip(aiSlot: Number, abCheckOverList: Boolean): Void  // defined in InventoryMenu.as. Equips highlighted entry in inventory menu.
+; string[] args = new string[2]
+; args[0] = "0" ;0 for right hand, 1 for left hand
+; args[1] = "true"
+; DbSkseFunctions.InvokeUiTargetFunction("InventoryMenu", "_root.Menu_mc.AttemptEquip", args)
+bool function InvokeUiTargetFunction(string menuName, string target, string[] args)  Global Native
+
+;Sets the value of the menuName / target. Can set bool, number (int or float), string or arrays. 
+;for more info on arrays see the StringArrayToActionScriptArrayArg function or the GetUITargetValueAsString function.
+;The function detects the target type and sets accordingly. See InvokeUiTargetFunction for more info on setting value types.
+bool function SetUiTargetValue(string menuName, string target, string value) Global Native
+
+;convert a string array of action script args into a single string that can be used with SetUiTargetValue or InvokeUiTargetFunction for array types. 
+;E.G sArray[0] = "7", sArray[1] = "true", sArray[2] = "s:false" becomes "a:[7||true||s:false]:a" 
+;Then if you have an action script function like this you're trying to invoke:
+;function someFunction(someArray: Array, abBool: Boolean): Void
+;You can do this to use an array arg: 
+;string[] args = new string[2]
+;args[0] = StringArrayToActionScriptArrayArg(sArray)
+;args[1] = "false"
+;InvokeUiTargetFunction("MenuName", "_root.Menu_mc.someFunction", args)
+;See InvokeUiTargetFunction for more info on setting value types.
+string function StringArrayToActionScriptArrayArg(string[] arr) Global Native
+
+;convert a single string that was used for an action script array arg back into a string array. 
+;E.G "a:[7||true||s:false]:a" becomes args[0] = "7", args[1] = "true", args[2] = "s:false"
+;use with GetUITargetValueAsString for action script array types.
+string[] function ActionScriptArrayArgToStringArray(string asArrayArg) Global Native
 
 function TraceUiMenuTargetMembersData(string menu, string target, string asUserLog = "") Global
 	int iType = DbSkseFunctions.GetUITargetType(menu, target)
@@ -1888,4 +1940,301 @@ int Function GetNthResponseEmotionValue(TopicInfo akTopicInfo, int Index) Global
 ; Sets the emotion value (0-100) of the response at index. Returns true if it was set.
 bool Function SetNthResponseEmotionValue(TopicInfo akTopicInfo, int Index, int Value) Global Native
 
-;===================================================================================================================================
+;Package functions. ===================================================================================================================================
+; Actors already running a package may need Actor.EvaluatePackage() to pick up a change.
+; Setter functions are not save game persistent. Use the OnLoadGameGlobal event to maintain.
+
+; 1  = OffersServices
+; 2  = MustComplete
+; 3  = MaintainSpeedAtGoal
+; 4  = UnlocksDoorsAtPackageStart,
+; 5  = UnlocksDoorsAtPackageEnd
+; 6  = ContinueIfPCNear
+; 7  = OncePerDay
+; 8  = Created
+; 9  = PreferredSpeed,
+; 10 = AlwaysSneak
+; 11 = AllowSwimming
+; 12 = IgnoreCombat
+; 13 = WeaponsUnequipped
+; 14 = WeaponDrawn,
+; 15 = NoCombatAlert
+; 16 = WearSleepOutfit
+bool Function GetPackageFlagSet(Package akPackage, int flag) global native
+
+; 1  = OffersServices
+; 2  = MustComplete
+; 3  = MaintainSpeedAtGoal
+; 4  = UnlocksDoorsAtPackageStart,
+; 5  = UnlocksDoorsAtPackageEnd
+; 6  = ContinueIfPCNear
+; 7  = OncePerDay
+; 8  = Created
+; 9  = PreferredSpeed,
+; 10 = AlwaysSneak
+; 11 = AllowSwimming
+; 12 = IgnoreCombat
+; 13 = WeaponsUnequipped
+; 14 = WeaponDrawn,
+; 15 = NoCombatAlert
+; 16 = WearSleepOutfit
+Function SetPackageFlag(Package akPackage, int flag, bool set) global native
+
+; 0 = walk
+; 1 = jog
+; 2 = run
+; 3 = fast walk. 
+; Returns -1 if the PreferredSpeed flag (9) is off.
+int Function GetPackagePreferredSpeed(Package akPackage) global native
+
+; 0 = walk
+; 1 = jog
+; 2 = run
+; 3 = fast walk. 
+; Set with 0 to 3 also turns flag 9 on; set -1 turns it off.
+Function SetPackagePreferredSpeed(Package akPackage, int speed) global native
+
+; 1 HellosToPlayer
+; 2 RandomConversations
+; 3 ObserveCombatBehaviour
+; 4 GreetCorpseBehaviour,
+; 5 ReactionToPlayerActions
+; 6 FriendlyFireComments
+; 7 AggroRadiusBehavior
+; 8 AllowIdleChatter,
+; 9 WorldInteractions
+bool Function GetPackageInterruptFlag(Package akPackage, int flag) global native
+
+; 1 HellosToPlayer
+; 2 RandomConversations
+; 3 ObserveCombatBehaviour
+; 4 GreetCorpseBehaviour,
+; 5 ReactionToPlayerActions
+; 6 FriendlyFireComments
+; 7 AggroRadiusBehavior
+; 8 AllowIdleChatter,
+; 9 WorldInteractions
+Function SetPackageInterruptFlag(Package akPackage, int flag, bool set) global native
+
+; 0 = none, 1 = spectator, 2 = observe dead, 3 = guard warn, 4 = combat
+int Function GetPackageInterruptOverrideType(Package akPackage) global native
+
+; 0 = none, 1 = spectator, 2 = observe dead, 3 = guard warn, 4 = combat
+Function SetPackageInterruptOverrideType(Package akPackage, int type) global native
+
+; -1 none
+; 0 near reference
+; 1 in cell
+; 2 near package start location
+; 3 near editor location,
+; 4 object ID
+; 5 object type
+; 6 near linked reference
+; 7 at package location
+; 8 alias reference,
+; 9 alias location
+; 12 near self. 
+int Function GetPackageLocationType(Package akPackage) global native
+
+; -1 none
+; 0 near reference
+; 1 in cell
+; 2 near package start location
+; 3 near editor location,
+; 4 object ID
+; 5 object type
+; 6 near linked reference
+; 7 at package location
+; 8 alias reference,
+; 9 alias location
+; 12 near self. 
+; Only set types 2, 3 and 12, which need no data. Use the Ref / Form setters for the other types.
+bool Function SetPackageLocationType(Package akPackage, int type) global native
+
+; type 1 (cell) or 4 (object ID).
+Form Function GetPackageLocationForm(Package akPackage) global native
+
+;a cell sets type 1 (in cell), any other form sets type 4 (object ID)
+bool Function SetPackageLocationForm(Package akPackage, Form akForm) global native
+
+; for type 0 (near reference)
+ObjectReference Function GetPackageLocationRef(Package akPackage) global native
+
+; type 0 (near reference). Setting sets type to 0.
+bool Function SetPackageLocationRef(Package akPackage, ObjectReference akRef) global native
+
+int Function GetPackageLocationRadius(Package akPackage) global native
+Function SetPackageLocationRadius(Package akPackage, int radius) global native
+
+; ---- Target ----
+; 0 specific reference
+; 1 object ID
+; 2 object type
+; 3 linked reference
+; 4 ref alias,
+; 5 interrupt data
+; 6 self
+; 7 keyword. -1 if the package has no target.
+int Function GetPackageTargetType(Package akPackage) global native
+
+; Returns the reference (type 0) or the form (types 1 and 7).
+Form Function GetPackageTarget(Package akPackage) global native
+
+; An objectReference sets type 0, a keyword type 7, any other form type 1.
+bool Function SetPackageTarget(Package akPackage, Form akForm) global native
+
+; for target type 2 (object type):
+; kNone = 0,
+; kACTI = 1,
+; kARMO = 2,
+; kBOOK = 3,
+; kCONT = 4,
+; kDOOR = 5,
+; kINGR = 6,
+; kLIGH = 7,
+; kMISC = 8,
+; kFLOR = 9,
+; kFURN = 10,
+; kWEAP = 11,
+; kAMMO = 12,
+; kKEYM = 13,
+; kALCH = 14,
+; kFOOD = 15
+int Function GetPackageTargetObjectType(Package akPackage) global native
+
+; for target type 2 (object type):
+; kNone = 0,
+; kACTI = 1,
+; kARMO = 2,
+; kBOOK = 3,
+; kCONT = 4,
+; kDOOR = 5,
+; kINGR = 6,
+; kLIGH = 7,
+; kMISC = 8,
+; kFLOR = 9,
+; kFURN = 10,
+; kWEAP = 11,
+; kAMMO = 12,
+; kKEYM = 13,
+; kALCH = 14,
+; kFOOD = 15
+bool Function SetPackageTargetObjectType(Package akPackage, int objType) global native
+
+; ---- idles ----
+
+; 1 PickSequence, 2 OldPickConditions, 3 DoOnce, 4 LooseOnly, 5 NoSandbox
+bool Function GetPackageIdleFlagSet(Package akPackage, int flag) global native
+
+; 1 PickSequence, 2 OldPickConditions, 3 DoOnce, 4 LooseOnly, 5 NoSandbox
+Function SetPackageIdleFlag(Package akPackage, int flag, bool set) global native
+
+int Function GetPackageIdleCount(Package akPackage) global native
+Idle Function GetNthPackageIdle(Package akPackage, int index) global native
+
+; -1 if not found
+int Function GetPackageIdleIndex(Package akPackage, Idle akIdle) global native
+bool Function AddPackageIdle(Package akPackage, Idle akIdle) global native
+bool Function RemovePackageIdle(Package akPackage, Idle akIdle) global native
+
+; ---- Package Schedule ----
+; -1 means any for month (0-11), day of week, hour (0-23) and minute (0-59). 0 means any for date (1-31).
+
+; 0 to 11 or -1 for any month
+int Function GetPackageScheduleMonth(Package akPackage) global native
+
+; 0 to 11 or -1 for any month
+Function SetPackageScheduleMonth(Package akPackage, int month) global native
+
+; Day of week: -1 = any, 0 Sunday ... 6 Saturday, 7 weekdays, 8 weekends, 9 Mon/Wed/Fri, 10 Tue/Thu
+int Function GetPackageScheduleDayOfWeek(Package akPackage) global native
+
+; Day of week: -1 = any, 0 Sunday ... 6 Saturday, 7 weekdays, 8 weekends, 9 Mon/Wed/Fri, 10 Tue/Thu
+Function SetPackageScheduleDayOfWeek(Package akPackage, int day) global native
+
+; 0 for any or (1 -31)
+int Function GetPackageScheduleDate(Package akPackage) global native
+
+; 0 for any or (1 -31)
+Function SetPackageScheduleDate(Package akPackage, int date) global native
+
+; -1 for any or (0-23) 
+int Function GetPackageScheduleHour(Package akPackage) global native
+
+; -1 for any or (0-23) 
+Function SetPackageScheduleHour(Package akPackage, int hour) global native
+
+; -1 for any or (0-59)
+int Function GetPackageScheduleMinute(Package akPackage) global native
+
+; -1 for any or (0-59)
+Function SetPackageScheduleMinute(Package akPackage, int minute) global native
+
+; in minutes
+int Function GetPackageScheduleDuration(Package akPackage) global native
+
+; in minutes
+Function SetPackageScheduleDuration(Package akPackage, int minutes) global native
+
+CombatStyle Function GetPackageCombatStyle(Package akPackage) global native
+
+; none clears it
+Function SetPackageCombatStyle(Package akPackage, CombatStyle akStyle) global native
+
+; none clears it. Package.GetOwningQuest() reads it.
+Function SetPackageOwningQuest(Package akPackage, Quest akQuest) global native
+
+; procedure types
+; ExploreTravel = 0,
+; ExploreWander = 1,
+; xploreActivate = 2,
+; ExploreAcquire = 3,
+; Sleep = 4,
+; Eat = 5,
+; FollowWithEscort = 6,
+; AmbushFollow = 7,
+; EscortActor = 8,
+; EscortObject = 9,
+; Dialogue = 10,
+; Alarm = 11,
+; Activate = 12,
+; Greet = 13,
+; ObserveCombat = 14,
+; ObserveDialogue = 15,
+; TalkToDead = 16,
+; Flee = 17,
+; Trespass = 18,
+; GetUpFromChairBed = 19,
+; ExploreNPC = 20,
+; MountActor = 21,
+; DismountActor = 22,
+; DoNothing = 23,
+; ExploreAcquireGeneric = 24,
+; Accompany = 25,
+; UseItemAt = 26,
+; VampireFeed = 27,
+; Ambush = 28,
+; Surface = 29,
+; FleeNotCombat = 30,
+; SearchForAttacker = 31,
+; ClearMountPosition = 32,
+; WaitForDialogue = 33,
+; AvoidPlayer = 34,
+; Sandbox = 35,
+; Patrol = 36,
+; ReactToDestroyedObject = 37,
+; ReactToGrenadeOrMine = 38,
+; Guard = 39,
+; StealWarning = 40,
+; PickPocketWarning = 41,
+; UseWeapon = 42,
+; FollowWithoutEscort = 43,
+; MovementBlocked = 44,
+; Cannibal = 45,
+; Package = 46,
+; Landing = 47,
+; KeepAnEyeOn = 48
+int Function GetPackageProcedureType(Package akPackage) global native
+
+; Gets procedure type as string. See GetPackageProcedureType for available types
+string Function GetPackageProcedureTypeString(Package akPackage) global native

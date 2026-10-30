@@ -280,7 +280,7 @@ namespace papyrusUtilExArrayFunctions {
 		std::string arrayAs = "arrayas";
 		std::string sFunction = "function";
 		// size_t arrayAsLength = arrayAs.length();
-		std::vector<std::string> lines = gfuncs::StringSplit(fileContents, "\n");
+		std::vector<std::string> lines = gfuncs::SplitString(fileContents, "\n");
 		for (std::string line : lines){
 			size_t arrayAsIndex = line.find(arrayAs);
 			size_t iCommentIndex = line.find(";");
