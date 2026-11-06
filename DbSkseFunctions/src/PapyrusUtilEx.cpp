@@ -5,6 +5,7 @@
 #include "GeneralFunctions.h"
 #include "RE/B/BGSKeyword.h"
 #include "RE/B/BSCoreTypes.h"
+#include "RE/B/BSFixedString.h"
 #include "RE/B/BSTSmartPointer.h"
 #include "RE/F/FormTypes.h"
 #include "RE/O/Object.h"

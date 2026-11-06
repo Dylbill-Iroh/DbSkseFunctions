@@ -5,6 +5,7 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <string.h>
 #include <wingdi.h>
 #include "GeneralFunctions.h"
 #include "RE/B/BGSKeyword.h"
@@ -1859,6 +1860,30 @@ namespace gfuncs {
         return false;
     }
 
+	// Returns the index of the searchStr in s, or -1 if not found. Case insensitive.
+	int StringFind(const std::string& s, const std::string& searchStr) {
+		if (searchStr.empty()){
+			return -1;
+		}
+
+		// Search using a custom lambda to compare characters case-insensitively
+		auto it = std::search(
+			s.begin(), s.end(),
+			searchStr.begin(), searchStr.end(),
+			[](unsigned char ch1, unsigned char ch2) {
+				return std::tolower(ch1) == std::tolower(ch2);
+			}
+		);
+
+		// If the iterator reached the end, the substring was not found
+		if (it == s.end()) {
+			return -1;
+		}
+
+		// Calculate and return the index
+		return std::distance(s.begin(), it);
+	}
+	
     int GetIndexInVector(std::vector<uint32_t>& v, uint32_t& element) {
         if (element == NULL) {
             return -1;

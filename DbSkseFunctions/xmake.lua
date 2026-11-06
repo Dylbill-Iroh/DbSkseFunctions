@@ -7,7 +7,19 @@ add_requires("xbyak")
 add_requires("microsoft-detours")
 
 -- include subprojects
-includes("lib/commonlibsse-ng")
+-- includes("lib/commonlibsse-ng")
+
+-- include CommonLibSSE-NG: use the shared copy from the CommonLibSSE_PATH environment variable if it's set,
+-- otherwise fall back to the local submodule
+local commonlib_dir = os.getenv("CommonLibSSE_PATH")
+if commonlib_dir and os.isfile(path.join(commonlib_dir, "xmake.lua")) then
+    includes(commonlib_dir)
+else
+    if commonlib_dir then
+        print("${yellow}CommonLibSSE_PATH (%s) has no xmake.lua, using lib/commonlibsse-ng", commonlib_dir)
+    end
+    includes("lib/commonlibsse-ng")
+end
 
 -- set project constants
 set_project("DbSkseFunctions")
@@ -105,4 +117,30 @@ target("DbSkseFunctions")
             os.copydir(src_config_folder, dest_config_folder)
             cprint("${green}[deploy]: Config directory copied to output successfully!")
         end
+		
+		-- Copy the .dll and .pdb into each game's SKSE\Plugins folder after every build.
+        -- Use forward slashes (or doubled backslashes) in these paths.
+        local deploy_folders = {
+			"C:/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition AE 1-7-104/Data/SKSE/Plugins",
+			"C:/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition SE 1-5-97/Data/SKSE/Plugins"
+        }
+
+        local dll = target:targetfile()
+        local pdb = target:symbolfile()
+
+        for _, folder in ipairs(deploy_folders) do
+            -- Skip a game folder that doesn't exist, e.g. on another PC
+            local data_folder = path.directory(path.directory(folder))
+            if os.isdir(data_folder) then
+                os.mkdir(folder)
+                os.cp(dll, folder)
+                if pdb and os.isfile(pdb) then
+                    os.cp(pdb, folder)
+                end
+                cprint("${green}[deploy]: copied %s to %s", path.filename(dll), folder)
+            else
+                cprint("${yellow}[deploy]: skipped, folder not found: %s", data_folder)
+            end
+        end
     end)
+	

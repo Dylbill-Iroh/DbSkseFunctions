@@ -83,6 +83,138 @@ String Function GetSKSEVersion() Global
     return (skse.GetVersion() + "." + skse.GetVersionMinor() + "." + skse.GetVersionBeta())
 EndFunction 
 
+;Compare version int arrays
+;Returns -1 if VersionA < VersionB 
+;Returns 0 if they are equal
+;Returns 1 if VersionA > VersionB
+;If one array size is larger than the other, the other's size increases with the added elements being 0
+;E.G if versionB = [1, 9] and versionA has 4 elements, versionB becomes [1, 9, 0, 0]
+;No requirements
+int function CompareVersionIntArrays(int[] versionA, int[] versionB) Global
+	int minSize = versionA.Length 
+	
+	if versionB.Length < minSize 
+		minSize = versionB.Length
+	Endif
+	
+	int i = 0
+	while i < minSize
+		int numA = versionA[i]
+		int numB = versionB[i]
+		
+		if numA < numB
+			return -1
+		elseif numA > numB
+			return 1
+		endif
+		i += 1
+	EndWhile
+
+	if versionB.Length > versionA.Length 
+		while i < versionB.Length
+			int numA = 0
+			int numB = versionB[i]
+			
+			if numA < numB
+				return -1
+			elseif numA > numB
+				return 1
+			endif
+			i += 1
+		EndWhile
+		
+	elseif versionA.Length > versionB.Length 
+		while i < versionA.Length
+			int numA = versionA[i]
+			int numB = 0
+			
+			if numA < numB
+				return -1
+			elseif numA > numB
+				return 1
+			endif
+			i += 1
+		EndWhile
+	Endif
+	
+	return 0
+EndFunction
+
+;Compare version string arrays
+;Returns -1 if VersionA < VersionB 
+;Returns 0 if they are equal
+;Returns 1 if VersionA > VersionB
+;Assumes the arrays contain string int elements. E.G [0] = "2", [1] = "7" ect. 
+;If one array size is larger than the other, the other's size increases with the added elements being "0"
+;E.G if versionB = ["1", "9"] and versionA has 4 elements, versionB becomes ["1", "9", "0", "0"]
+;No requirements
+int function CompareVersionStringArrays(string[] versionA, string[] versionB) Global
+	int minSize = versionA.Length 
+	
+	if versionB.Length < minSize 
+		minSize = versionB.Length
+	Endif
+	
+	int i = 0
+	while i < minSize
+		int numA = versionA[i] as int
+		int numB = versionB[i] as int
+		
+		if numA < numB
+			return -1
+		elseif numA > numB
+			return 1
+		endif
+		i += 1
+	EndWhile
+
+	if versionB.Length > versionA.Length 
+		while i < versionB.Length
+			int numA = 0
+			int numB = versionB[i] as int
+			
+			if numA < numB
+				return -1
+			elseif numA > numB
+				return 1
+			endif
+			i += 1
+		EndWhile
+		
+	elseif versionA.Length > versionB.Length 
+		while i < versionA.Length
+			int numA = versionA[i] as int
+			int numB = 0
+			
+			if numA < numB
+				return -1
+			elseif numA > numB
+				return 1
+			endif
+			i += 1
+		EndWhile
+	Endif
+	
+	return 0
+EndFunction
+
+;Compare version strings.
+;Returns -1 if VersionA < VersionB 
+;Returns 0 if they are equal
+;Returns 1 if VersionA > VersionB
+;Assumes the version strings contain ints seperated by the delim. E.G "2-10-0-1" 
+;If one version has more numbers, the other has zeros added. E.G versionA = "2-10-0-1", versionB = "1-9", versionB becomes "1-9-0-0"
+;Requires SKSE
+int function CompareVersionStrings(string versionA, string versionB, string delim = "-") Global
+	if versionA == versionB 
+		return 0 
+	Endif
+	
+	string[] A = StringUtil.Split(versionA, delim)
+	string[] B = StringUtil.Split(versionB, delim)
+	return CompareVersionStringArrays(A, B)
+EndFunction
+
 ;show or hide creation kit markers in Game 
 ;If ShowMarkers == true, shows them, otherwise hides them.
 ;If moveToRef == None (default), moves player to either whiterun or markarth fast travel markers.
@@ -4608,9 +4740,6 @@ String Function RFindNextWhiteSpaceCharInString(String s, int startIndex = -1) g
     return ""
 EndFunction
 
-int Function RFindInString()
-EndFunction
-
 ;requires skse
 String Function RemoveWhiteSpaces(String s, Bool IncludeSpaces = True, Bool IncludeTabs = true, Bool IncludeNewLines = true) Global
     If IncludeSpaces 
@@ -4877,7 +5006,11 @@ EndFunction
 ;MyStringC == "A No, B No, C Yes"
 ;Requires SKSE
 String Function StringReplace(String TargetStr, String SearchStr, String ReplaceStr, Int Count = 0, Int StartIndex = 0) Global
-    Int C = 0
+    if searchStr == ""
+		return TargetStr 
+	Endif 
+	
+	Int C = 0
     Int CAdd = 1
     If Count == 0
         C = -1 
@@ -4905,6 +5038,34 @@ String Function StringReplace(String TargetStr, String SearchStr, String Replace
     EndWhile
     
     Return TargetStr
+EndFunction
+
+;replace instances of the searchStr in the TargetStr with the array args sequentially, forwards or backwards. 
+;Example: 
+;TargetStr = "{}: armor = {}" 
+;args = ["1", "iron boots"], 
+;returns "1: armor = iron boots"
+;requires skse
+string Function StringReplaceWithArrayArgs(string TargetStr, string[] args, string searchStr = "{}", bool backwards = false) Global 
+	if searchStr == ""
+		return TargetStr 
+	Endif 
+	
+	if !backwards
+		int i = 0 
+		while i < args.length 
+			TargetStr = StringReplace(TargetStr, searchStr, args[i], 1)
+			i += 1 
+		EndWhile
+	Else 
+		int i = args.length 
+		while i > 0
+			i -= 1
+			TargetStr = StringReplace(TargetStr, searchStr, args[i], 1)
+		EndWhile
+	Endif
+	
+	return TargetStr
 EndFunction
 
 ;insert the InsertStr to the TargetStr at the CharPosition and return new string. 

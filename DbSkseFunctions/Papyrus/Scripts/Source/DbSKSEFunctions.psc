@@ -37,6 +37,62 @@ String Function RemoveWhiteSpaces(String s) Global Native
 ;join the strings in the arr seperated by delim into a single string
 string Function JoinStrings(String[] arr, string delim) Global Native
 
+; go down the list and combine each arra_A element with arra_B element seperated by the seperator. 
+; E.G, array_A[0] = "apples" array_A[1] = "oranges" array_B[0] = "pears" array_B[1] = "dates" and seperator = "/"
+; returns a string array where [0] = "apples/pears" [1] = "oranges/dates"
+string[] function CombineStringElements(string[] array_A, string[] array_B, string seperator = "/") Global Native
+
+; get strings[index] from the indexes array. 
+; Example: indexes = [1, 2, 0, 2, 3], strings = ["A", "B", "C"], returns ["B", "C", "A", "C", ""]
+String[] Function GetStringIndexes(int[] indexes, string[] strings, string outOfBoundsString = "") Global Native
+
+; get all strings in the arr that contain the searchStr 
+; Essentially running StringUtil.Find(arr[i], searchStr) on every element in the arr, and adding to the return string array if found.
+; if foundIndex > -1, StringUtil.Find(arr[i], searchStr) must match the specified foundIndex. 
+; if foundIndex == -1 (default), foundIndex is ignored entirely.
+; So for example you can use string[] A_Strings = GetStringsThatContain(MyArray, "A", 0) to return all strings in arr that start with "A"
+string[] function GetStringsThatContain(string[] arr, string searchStr, int foundIndex = -1) Global Native
+
+; find the first or last string in the array that contains the searchStr and return its index in the array, or return -1 if not found.
+; Essentially running StringUtil.Find(arr[i], searchStr) on every element in the arr.
+; if foundIndex > -1, StringUtil.Find(arr[i], searchStr) must match the specified foundIndex. 
+; if foundIndex == -1 (default), foundIndex is ignored entirely.
+; So for example you can use int A_index = FindInStringArray(MyArray, "A", 0) to return the index of the first string in the array that starts with "A"
+int Function FindInStringArray(string[] arr, string searchStr, int foundIndex = -1, bool last = false) Global Native
+
+;Converts the string, which is an int or float number to english text. 
+;E.G "1" returns "one", "7.7" returns "seven point seven", "1001" returns "one thousand and one" ect.
+;capsType 0 = no capitals, 1 = the first word is capitalized, 2 = all words are capitalized. 
+;capsType may not work though based on how papyrus handles capital letters.
+string function ConvertNumberStringToEnglishText(string numString, int capsType = 0) Global Native
+
+;Convert the english text number to int. E.G "one" returns 1, "one thousand and one" returns 1001 ect.
+int function ConvertEnglishTextToInt(string text) Global Native
+
+;Convert the english text number to float. E.G "one point one" returns 1.1, "one thousand point 2" returns 1000.2 ect.
+float function ConvertEnglishTextToFloat(string text) Global Native
+
+;create an string array of size, filled with entries that start with startValue and go up or down by step numerically.
+;the type of sequence is derived from the startValue. 
+;If startValue is a number with no decimals, it uses int step, E.G "0", "77", "-8" ect. CreateSequentialStringArray(3, "1", 2, true) returns ["1", "3", "5"]
+;if it has a decimal, it uses float step, E.G "1.1", "12.2" ect. CreateSequentialStringArray(3, "7.0", 0.1, false) returns ["7.0", "6.9", "6.8"]
+;The number of decimals the entries will contain is clamped to the number of decimals in the startValue. CreateSequentialStringArray(3, "7.00", 0.1, false) returns ["7.00", "6.90", "6.80"]
+;Also supports enlgish text numbers. E.G CreateSequentialStringArray(3, "one", 1, true) returns ["one", "two", "3"]
+string[] function CreateSequentialStringArray(int size, string startValue = "0", float step = 1.0, bool up = true) Global Native
+
+;create an int array of size, filled with entries that start with startValue and go up or down by step.
+;examples:
+; CreateSequentialIntArray(4) returns [0, 1, 2, 3]
+; CreateSequentialIntArray(3, 3, 1, false) returns [3, 2, 1]
+int[] function CreateSequentialIntArray(int size, int startValue = 0, int step = 1, bool up = true) Global Native
+
+;create a float array of size, filled with entries that start with startValue and go up or down by step.
+;examples:
+; CreateSequentialFloatArray(4) returns [0.0, 1.0, 2.0, 3.0]
+; CreateSequentialFloatArray(3, 2.0, 0.1, false) returns [2.0, 1.9, 1.8]
+float[] function CreateSequentialFloatArray(int size, float startValue = 0.0, float step = 1.0, bool up = true) Global Native
+
+
 ;does the mod have at least 1 form of formType?
 Bool Function ModHasFormType(String modName, int formType) Global Native
 
@@ -350,6 +406,12 @@ ObjectReference[] function GetAllObjectRefsInContainer(ObjectReference container
 ;Get the container that the ref is currently in, if any.
 ObjectReference function GetRefContainer(ObjectReference ref) Global Native
 
+; Unlike ObjectReference.SetPosition, with this function you can specify a worldspace or interior cell to move the ref to first, before setting position and angle. 
+; Note that exterior cells will use the cell's worldspace. 
+; So, you can for instance, save position and angle using GetPositionX Y Z, GetAngleX Y Z, save the ref's parent cell, move the ref to another cell, 
+; then move it back to the original cell / position / angle with this function.
+bool function MoveRefToCellPosition(ObjectReference ref, Form cellOrWorldSpace, float afX, float afY, float afZ, float afXAngle = 0.0, float afYAngle = 0.0, float afZAngle = 0.0) Global Native
+
 ;Get the current gold value for the ref, adjusted for tempering and enchantments.
 ;If the ref is in a container, this function will only work if the ref is persistent. 
 ;Note that saving a persistent ref to a script property, putting it inside a container,
@@ -367,7 +429,7 @@ int function GetFormGoldValue(Form akForm) Global Native
 ;Calculate the sell or buy price of the akForm when bartering with the merchant. Can be off by 1 gold due to rounding errors.
 ;AkForm can be a base form or an objectReference.
 ;Note, if the akForm is an objectReference and the ref is in a container, this function will only work if the ref is persistent.
-;See the GetRefGoldValue for more details.
+;See GetRefGoldValue for more details.
 int function CalculateBarterValue(Actor merchant, Form akForm, bool buying) Global Native
 
 ;Sets or clears the Quest Object flag for the akAlias. Returns true if successful
@@ -1173,11 +1235,18 @@ ObjectReference function GetHighlightedMapMarker() Global Native
 
 ;For these functions the MapMarker ObjectReference must be a map marker with map marker data.
 ;In other words, IsMapMarker must return true;
+
 int function GetMapMarkerIconType(ObjectReference MapMarker) Global Native
+
+string function GetMapMarkerIconTypeString(ObjectReference MapMarker) Global Native
+
+int[] function GetMapMarkerIconTypes(ObjectReference[] MapMarkers) Global Native
 
 bool function SetMapMarkerIconType(ObjectReference MapMarker, int iconType) Global Native
 
 string function GetMapMarkerName(ObjectReference MapMarker) Global Native
+
+string[] function GetMapMarkerNames(ObjectReference[] MapMarkers) Global Native
 
 bool function SetMapMarkerName(ObjectReference MapMarker, String Name) Global Native
 
@@ -1187,6 +1256,20 @@ bool function SetMapMarkerVisible(ObjectReference MapMarker, bool visible) Globa
 ;Get is the vanilla ObjectReference function mapMarker.CanFastTravelToMarker()
 bool function SetCanFastTravelToMarker(ObjectReference MapMarker, bool canTravelTo) Global Native
 
+;-1 for mapMarker not valid, 
+;0 for disabled, 
+;1 for invisible, 
+;2 for visible but can't fast travel to, 
+;3 for visible and can fast travel to.
+int function GetMapMarkerVisibilityStatus(ObjectReference mapMarker) Global Native
+
+;-1 for mapMarker not valid, 
+;0 for disabled, 
+;1 for invisible, 
+;2 for visible but can't fast travel to, 
+;3 for visible and can fast travel to.
+int[] function GetMapMarkerVisibilityStatuses(ObjectReference[] mapMarkers) Global Native
+	
 ;Is the ref currently visible on the local map? Only works if the local map menu is open.
 ;Use the OnLocalMapOpenedGlobal event from DbSkseEvents. 
 bool function IsRefVisibleOnLocalMap(ObjectReference ref) Global Native
@@ -1199,6 +1282,8 @@ ObjectReference[] function GetRefsVisibleOnTheLocalMap() Global Native
 ObjectReference[] Function FindLoadDoorsNearRef(ObjectReference centerRef, float radius) global native
 
 Form function GetCellOrWorldSpaceOriginForRef(ObjectReference ref) Global Native
+
+Form[] function GetCellOrWorldSpaceOriginForRefs(ObjectReference[] refs) Global Native
 
 ;This function is usefull if you have to move a map marker from one worldspace to another using MoveTo and have it display on the world map.
 ;This function will only be successfull if the passed in ref has been moved from its original worldspace or interior cell so...
@@ -1218,6 +1303,28 @@ ObjectReference[] function GetCurrentMapMarkerRefs(int visibleFilter = -1, int c
 ;  0 = (false) only get markers that are not visible or can't be fast traveled to 
 ;  1 = (true)  only get markers that are visible or that can be fast traveled to
 ObjectReference[] function GetAllMapMarkerRefs(int visibleFilter = -1, int canTravelToFilter = -1) Global Native
+
+; For all sort options: -1 = unsorted, 0 = ascending, 1 = descending.
+; iconTypeSort and OriginSort group the markers; nameSort orders them within each group.
+; Only one of iconTypeSort / OriginSort can be used. If both are set, iconTypeSort wins.
+; Example: nameSort 0, iconTypeSort 1 ->
+;   iconType 66: MarkerA, MarkerB
+;   iconType 65: MarkerA, MarkerB ...
+; Names compare case-insensitively. Markers that keep the same position keep their input order.
+; For OriginSort, that sorts by GetCellOrWorldSpaceOriginForRef form names.
+; None / invalid refs go to the end.
+ObjectReference[] function SortMapMarkers(ObjectReference[] mapMarkers, int nameSort = 0, int iconTypeSort = -1, int OriginSort = -1) Global Native
+
+; If matches = true, return a new array of mapMarkers whose iconType is in the iconTypes list.
+; If matches = false, return a new array of mapMarkers whose iconType is NOT in the iconTypes list.
+ObjectReference[] function FilterMapMarkersByIconType(ObjectReference[] mapMarkers, int[] iconTypes, bool matches = true) Global Native
+
+; If matches = true, return a new array of mapMarkers whose origin (GetCellOrWorldSpaceOriginForRef) is in the origins list.
+; If matches = false, return a new array of mapMarkers whose origin (GetCellOrWorldSpaceOriginForRef) is NOT in the origins list.
+ObjectReference[] function FilterMapMarkersByOrigin(ObjectReference[] mapMarkers, Form[] origins, bool matches = true) Global Native
+
+; Log map maker name, icon string, formid and cell or worldspace origin for all map markers in the passed in array to DbSkseFunctions.Log
+function LogMapMarkerRefs(ObjectReference[] mapMarkers) Global Native
 
 ;This function isn't working yet. Technically it's being set successfully internally but can't get it to display in game. 
 ;At least with VisualEffect.play(). I'm working on a fix for this.

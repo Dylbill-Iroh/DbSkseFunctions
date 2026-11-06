@@ -2,35 +2,6 @@
 
 #include <shared_mutex>
 
-//class SharedUIVariables {
-//public:
-//    // State variables
-//    std::vector<std::string> openedMenus;
-//    std::string lastMenuOpened = "";
-//    bool gamePaused = false;
-//    bool inMenuMode = false;
-//    std::chrono::system_clock::time_point lastTimeMenuWasOpened;
-//    std::chrono::system_clock::time_point lastTimeGameWasPaused;
-//    RE::TESObjectREFR* menuRef = nullptr;
-//    RE::TESObjectREFR* lastPlayerActivatedRef = nullptr;
-//
-//    // read/write
-//    void update(std::function<void(SharedUIVariables&)> updater) {
-//        //std::unique_lock lock(mutex);
-//        updater(*this);
-//    }
-//
-//    void read(std::function<void(const SharedUIVariables&)> reader) const {
-//        //std::shared_lock lock(mutex);
-//        reader(*this);
-//    }
-//
-//private:
-//    mutable std::shared_mutex mutex;
-//};
-//
-//extern SharedUIVariables sharedVars;
-
 float GetGameHoursPassed(RE::StaticFunctionTag*);
 
 float GameHoursToRealTimeSeconds(RE::StaticFunctionTag*, float gameHours);
@@ -131,6 +102,8 @@ std::string RemoveWhiteSpaces(RE::StaticFunctionTag*, std::string s);
 
 std::string JoinStrings(RE::StaticFunctionTag*, std::vector<std::string> arr, std::string delim);
 
+std::vector<std::string> CombineStringElements(RE::StaticFunctionTag*, std::vector<std::string> array_A, std::vector<std::string> array_B, std::string seperator);
+
 bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType);
 
 std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm * akForm, std::string nullFormString);
@@ -186,3 +159,6 @@ bool FormNameMatches(RE::TESForm * akForm, std::string & sFormName, bool checkId
 
 bool FormNameContains(RE::TESForm * akForm, std::string & sFormName, bool checkIdentity = true);
 
+namespace Utility {
+	bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm);
+}

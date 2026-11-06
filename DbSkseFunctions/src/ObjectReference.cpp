@@ -399,6 +399,51 @@ namespace objectRef {
 		return std::max(buying ? 1 : 0, static_cast<int>(std::roundf(rValue)));
 	}
 	
+	//Engine MoveTo (TESObjectREFR::MoveTo_Impl). Private in CommonLib, so called through our own relocation.
+	//An empty target handle moves to the given cell / worldspace and position instead of to another reference.
+	void MoveRefToLocation(RE::TESObjectREFR* a_ref, RE::TESObjectCELL* a_cell, RE::TESWorldSpace* a_world,
+	const RE::NiPoint3& a_pos, const RE::NiPoint3& a_rot) {
+		
+		using func_t = void(RE::TESObjectREFR*, const RE::ObjectRefHandle&, RE::TESObjectCELL*, RE::TESWorldSpace*,
+			const RE::NiPoint3&, const RE::NiPoint3&);
+		static REL::Relocation<func_t> func{ RELOCATION_ID(56227, 56626) };
+		func(a_ref, RE::ObjectRefHandle(), a_cell, a_world, a_pos, a_rot);
+	}
+
+	//cellOrWorldSpace: an interior cell, or a worldspace for exteriors (the exterior cell is found from the position).
+	//Rotation is in degrees, like Papyrus GetAngleX/Y/Z.
+	bool MoveRefToCellPosition(RE::StaticFunctionTag*, RE::TESObjectREFR* akRef, RE::TESForm* cellOrWorldSpace,
+	float x, float y, float z, float angleX, float angleY, float angleZ) {
+		
+		if (!gfuncs::IsFormValid(akRef) || !gfuncs::IsFormValid(cellOrWorldSpace)) {
+			return false;
+		}
+
+		RE::TESObjectCELL* cell = cellOrWorldSpace->As<RE::TESObjectCELL>();
+		RE::TESWorldSpace* world = cellOrWorldSpace->As<RE::TESWorldSpace>();
+		
+		if (gfuncs::IsFormValid(cell)){
+			if (!cell->IsInteriorCell()){
+				world = cell->GetRuntimeData().worldSpace;   //exterior cell: use its worldspace
+				cell = nullptr;
+			}
+			else {
+				world = nullptr;
+			}
+		}
+		else if (gfuncs::IsFormValid(world)){
+			cell = nullptr;
+		}
+		else {
+			logger::warn("[{}] is not a cell or worldspace", gfuncs::GetFormDataString(cellOrWorldSpace));
+			return false;
+		}
+		
+		constexpr float kDegToRad = 0.017453292f;
+		MoveRefToLocation(akRef, cell, world, { x, y, z }, { angleX * kDegToRad, angleY * kDegToRad, angleZ * kDegToRad });
+		return true;
+	}
+	
     bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("GetAshPileLinkedRef", "DbSkseFunctions", GetAshPileLinkedRef);
         vm->RegisterFunction("GetClosestObjectFromRef", "DbSkseFunctions", GetClosestObjectFromRef);
@@ -411,6 +456,7 @@ namespace objectRef {
         vm->RegisterFunction("GetRefGoldValue", "DbSkseFunctions", GetRefGoldValue);
         vm->RegisterFunction("GetFormGoldValue", "DbSkseFunctions", GetFormGoldValue);
         vm->RegisterFunction("CalculateBarterValue", "DbSkseFunctions", CalculateBarterValue);
+        vm->RegisterFunction("MoveRefToCellPosition", "DbSkseFunctions", MoveRefToCellPosition);
         
 		vm->RegisterFunction("IsFormInUse", "DbSkseFunctions", IsFormInUse);
 		vm->RegisterFunction("PromoteObjectRefPersistence", "DbSkseFunctions", PromoteObjectRefPersistence);

@@ -334,3 +334,67 @@ Function WriteForceSetIniFunction(String inputFilePath, string outputFilePath, s
     Endif
     MiscUtil.WriteToFile(outputFilePath, "EndFunction")
 EndFunction
+
+;for WriteCreateIniFileFunction, intended to be used with PapyrusIniManipulator
+function WriteCreateIniFuncs(string sourceScriptPath, string fileContents, string searchFunction, string writeFunction) Global
+	int i = -1
+	i = StringUtil.Find(fileContents, searchFunction)
+	int fileLength = StringUtil.GetLength(fileContents)
+	
+	int count = 0
+	string iniPaths
+	
+	while i > -1 
+		int iEnd = StringUtil.find(fileContents, "\n", i)
+		if iEnd == -1 
+			iEnd = fileLength
+		Endif 
+		
+		string sLine = StringUtil.Substring(fileContents, i, iEnd - i)
+		string sFunctionParams = DbMiscFunctions.GetStringBetweenOuterCharacters(sLine)
+		if sFunctionParams != ""
+			count += 1
+			string[] params = PapyrusUtil.StringSplit(sFunctionParams, ",")
+			string iniPath = (params[0] + "||" + params[1] + "||" + params[2] + "||")
+			if StringUtil.Find(iniPaths, iniPath) == -1 ;prevent writing duplicates
+				iniPaths = iniPaths + iniPath
+				MiscUtil.WriteToFile(sourceScriptPath, "\n\t" + "if !PapyrusIniManipulator.IniDataExists(2, " + params[0] + ", " + params[1] + ", " + params[2] + ")")
+				MiscUtil.WriteToFile(sourceScriptPath, "\n\t\t" + "PapyrusIniManipulator." + writeFunction + "(" + sFunctionParams + ", bforce = true)")
+				MiscUtil.WriteToFile(sourceScriptPath, "\n\t" + "Endif" + "\n")
+			Endif
+		Endif
+		
+		if iEnd == fileLength
+			i = -1 
+		Else 
+			i = StringUtil.Find(fileContents, searchFunction, iEnd)
+		Endif
+	EndWhile
+	
+	if count > 0
+		MiscUtil.WriteToFile(sourceScriptPath, "\n\n")
+	Endif
+EndFunction
+
+; searches the source script path for PapyrusIniManipulator push / pull functions and writes a function to create those inis in the sourceScriptPath
+;E.G "Data/Scripts/Source/MyScript.psc"
+bool function WriteCreateIniFileFunction(string sourceScriptPath) Global
+	debug.Notification("writing create ini function")
+	
+	if (!MiscUtil.FileExists(sourceScriptPath))
+		return false 
+	endif
+	
+	string fileContents = MiscUtil.ReadFromFile(sourceScriptPath)
+	
+	MiscUtil.WriteToFile(sourceScriptPath, "\n" + "function CreateIniFile()")
+	
+	WriteCreateIniFuncs(sourceScriptPath, fileContents, "PullBoolFromIni", "PushBoolToIni")
+	WriteCreateIniFuncs(sourceScriptPath, fileContents, "PullIntFromIni", "PushIntToIni")
+	WriteCreateIniFuncs(sourceScriptPath, fileContents, "PullFloatFromIni", "PushFloatToIni")
+	WriteCreateIniFuncs(sourceScriptPath, fileContents, "PullStringFromIni", "PushStringToIni")
+	
+	MiscUtil.WriteToFile(sourceScriptPath, "EndFunction")
+	
+	Debug.MessageBox("done WriteCreateIniFileFunction")
+EndFunction 

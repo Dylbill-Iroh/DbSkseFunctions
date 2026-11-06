@@ -4,6 +4,7 @@
 #include "RE/L/LocalMapCamera.h"
 #include "RE/N/NiPoint3.h"
 #include "RE/T/TESFullName.h"
+#include "RE/T/TypeTraits.h"
 #include "UIGfx.h"
 #include "RE/B/BSCoreTypes.h"
 #include "RE/B/BSPointerHandle.h"
@@ -15,6 +16,8 @@
 #include "REL/Module.h"
 #include "SharedVariables.h"
 #include "Serialization.h"
+#include "magic_enum/magic_enum.hpp"
+#include "magic_enum/magic_enum_all.hpp"
 #include <cstddef>
 #include <format>
 
@@ -239,6 +242,49 @@ bool SetCanFastTravelToMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMark
     else {
         return true; 
     }
+}
+
+//return -1 for mapMarker not valid, 0 for disabled, 1 for invisible, 2 for visible but can't fast travel to, 3 for visible and can fast travel to.
+int GetMapMarkerVisibilityStatus(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker){
+	if (!gfuncs::IsFormValid(mapMarker)){
+		return -1;
+	}
+	
+	auto* marker = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
+    if (!marker) {
+        logger::warn("mapMarker ref[{}] isn't a mapMarker", gfuncs::GetFormName(mapMarker));
+        return -1;
+    }
+
+    if (!marker->mapData) {
+        logger::warn("marker->mapData for ref[{}] doesn't exist", gfuncs::GetFormName(mapMarker));
+        return -1;
+    }
+
+	if (mapMarker->IsDisabled()){
+		return 0;
+	}
+	
+	bool visible = marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible);
+	bool canTravelTo = marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo);
+	
+	if (visible && canTravelTo){
+		return 3;
+	}
+	else if (visible && !canTravelTo){
+		return 2;
+	}
+	else {
+		return 1;
+	}
+}
+
+std::vector<int> GetMapMarkerVisibilityStatuses(RE::StaticFunctionTag*, std::vector<RE::TESObjectREFR*> mapMarkers){ 
+	std::vector<int> v; 
+	for (auto* marker : mapMarkers){
+		v.push_back(GetMapMarkerVisibilityStatus(nullptr, marker));
+	}
+	return v;
 }
 
 // Get all map markers valid for the current worldspace or interior cell grid
@@ -709,18 +755,27 @@ RE::TESForm* GetCellOrWorldSpaceOriginForRef(RE::StaticFunctionTag*, RE::TESObje
 
     auto* originData = ref->extraList.GetByType<RE::ExtraStartingWorldOrCell>();
     if (!originData) {
-        logger::debug("originData for ref({}) not found, getting current worldspace or cell.", gfuncs::GetFormDataString(ref));
+        logger::trace("originData for ref({}) not found, getting current worldspace or cell.", gfuncs::GetFormDataString(ref));
 
         //origin data on a reference will only exist if it has been moved from its original worldspace or interior cell
         return GetRefWorldSpaceOrCell(ref);
     }
 
     if (!gfuncs::IsFormValid(originData->startingWorldOrCell)) {
-        logger::debug("originData->startingWorldOrCell for ref({}) doesn't exist, getting current worldspace or cell.", gfuncs::GetFormDataString(ref));
+        logger::trace("originData->startingWorldOrCell for ref({}) doesn't exist, getting current worldspace or cell.", gfuncs::GetFormDataString(ref));
         return GetRefWorldSpaceOrCell(ref);
     }
 
     return originData->startingWorldOrCell;
+}
+
+std::vector<RE::TESForm*> GetCellOrWorldSpaceOriginForRefs(RE::StaticFunctionTag*, std::vector<RE::TESObjectREFR*> refs){
+	std::vector<RE::TESForm*> v; 
+	for (auto* ref : refs){
+		v.push_back(GetCellOrWorldSpaceOriginForRef(nullptr, ref));
+	}
+	
+	return v;
 }
 
 bool SetCellOrWorldSpaceOriginForRef(RE::StaticFunctionTag*, RE::TESObjectREFR* ref, RE::TESForm* cellOrWorldSpace) {
@@ -866,23 +921,230 @@ int GetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     logger::trace("Getting Map Marker Type");
     if (!gfuncs::IsFormValid(mapMarker)) {
         logger::warn("GetMapMarkerIconType: mapMarker doesn't exist");
-        return false;
+        return -1;
     }
 
     auto* mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
 
     if (!mapMarkerData) {
         logger::warn("GetMapMarkerIconType Warning, map marker list not found.");
-        return false;
+        return -1;
     }
 
     if (!mapMarkerData->mapData) {
         logger::warn("GetMapMarkerIconType Warning, mapData not found.");
-        return false;
+        return -1;
     }
 
     return static_cast<int>(mapMarkerData->mapData->type.get());
 } 
+
+std::string GetMapMarkerIconTypeString(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
+    logger::trace("Getting Map Marker Type");
+    if (!gfuncs::IsFormValid(mapMarker)) {
+        logger::warn("GetMapMarkerIconType: mapMarker doesn't exist");
+        return "";
+    }
+
+    auto* mapMarkerData = mapMarker->extraList.GetByType<RE::ExtraMapMarker>();
+
+    if (!mapMarkerData) {
+        logger::warn("GetMapMarkerIconType Warning, map marker list not found.");
+        return "";
+    }
+
+    if (!mapMarkerData->mapData) {
+        logger::warn("GetMapMarkerIconType Warning, mapData not found.");
+        return "";
+    }
+
+    return static_cast<std::string>(magic_enum::enum_name(mapMarkerData->mapData->type.get()));
+} 
+
+struct MapMarkerSortEntry {
+	RE::TESObjectREFR* ref = nullptr;
+	bool               valid = false;
+	std::string        name = "";
+	int                iconType = -1;
+	std::string        origin = "";
+};
+
+//reads the sort values directly so non-markers don't spam GetMapMarkerName / GetMapMarkerIconType warnings
+MapMarkerSortEntry GetMapMarkerSortEntry(RE::TESObjectREFR* ref, bool needOrigin) {
+	MapMarkerSortEntry entry;
+	entry.ref = ref;
+	entry.valid = gfuncs::IsFormValid(ref);
+	if (!entry.valid) {
+		return entry;
+	}
+
+	auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+	
+	if (marker) {
+		if (marker->mapData){
+			const char* name = marker->mapData->locationName.GetFullName();
+			entry.name = name ? name : "";
+			entry.iconType = static_cast<int>(marker->mapData->type.get());
+		}
+	}
+
+	if (needOrigin) {
+		if (auto* origin = GetCellOrWorldSpaceOriginForRef(nullptr, ref)) {
+			const char* originName = origin->GetName();
+			entry.origin = originName ? originName : "";
+		}
+	}
+	return entry;
+}
+
+//For all sort options: -1 = unsorted, 0 = ascending, 1 = descending.
+//iconTypeSort and OriginSort group the markers; nameSort orders them within each group.
+//Only one of iconTypeSort / OriginSort can be used. If both are set, iconTypeSort wins.
+//Example: nameSort 0, iconTypeSort 1 ->
+//  iconType 66: MarkerA, MarkerB
+//  iconType 65: MarkerA, MarkerB ...
+//Names compare case-insensitively. Markers that keep the same position keep their input order.
+//None / invalid refs go to the end.
+std::vector<RE::TESObjectREFR*> SortMapMarkers(RE::StaticFunctionTag*, std::vector<RE::TESObjectREFR*> mapMarkers, int nameSort, int iconTypeSort, int OriginSort) {
+		
+	auto normalize = [](int sort) { return (sort == 0 || sort == 1) ? sort : -1; };
+	nameSort = normalize(nameSort);
+	iconTypeSort = normalize(iconTypeSort);
+	OriginSort = normalize(OriginSort);
+
+	if (iconTypeSort != -1 && OriginSort != -1) {
+		logger::warn("can't sort by both icon type and origin, using icon type only");
+		OriginSort = -1;
+	}
+
+	if (nameSort == -1 && iconTypeSort == -1 && OriginSort == -1) {
+		return mapMarkers;
+	}
+
+	std::vector<MapMarkerSortEntry> entries;
+	entries.reserve(mapMarkers.size());
+	for (auto* ref : mapMarkers) {
+		entries.push_back(GetMapMarkerSortEntry(ref, OriginSort != -1));
+	}
+
+	auto compareStrings = [](const std::string& a, const std::string& b) {
+		return _stricmp(a.c_str(), b.c_str());
+	};
+
+	std::stable_sort(entries.begin(), entries.end(), [&](const MapMarkerSortEntry& a, const MapMarkerSortEntry& b) {
+		//invalid refs last
+		if (a.valid != b.valid) {
+			return a.valid;
+		}
+		if (!a.valid) {
+			return false;
+		}
+
+		//group first: icon type or origin
+		if (iconTypeSort != -1 && a.iconType != b.iconType) {
+			return iconTypeSort == 0 ? a.iconType < b.iconType : a.iconType > b.iconType;
+		}
+		if (OriginSort != -1) {
+			const int c = compareStrings(a.origin, b.origin);
+			if (c != 0) {
+				return OriginSort == 0 ? c < 0 : c > 0;
+			}
+		}
+
+		//then name within the group
+		if (nameSort != -1) {
+			const int c = compareStrings(a.name, b.name);
+			if (c != 0) {
+				return nameSort == 0 ? c < 0 : c > 0;
+			}
+		}
+		return false;
+	});
+
+	std::vector<RE::TESObjectREFR*> sorted;
+	sorted.reserve(entries.size());
+	for (auto& entry : entries) {
+		sorted.push_back(entry.ref);
+	}
+	return sorted;
+}
+
+std::vector<RE::TESObjectREFR*> FilterMapMarkersByIconType(RE::StaticFunctionTag*, std::vector<RE::TESObjectREFR*> mapMarkers, std::vector<int> iconTypes, bool matches){
+	std::vector<RE::TESObjectREFR*> v; 
+	if (iconTypes.empty() || mapMarkers.empty()){
+		return v;
+	}
+	
+	if (matches){
+		for (auto* marker : mapMarkers){
+			int type = GetMapMarkerIconType(nullptr, marker);
+			if (std::find(iconTypes.begin(), iconTypes.end(), type) != iconTypes.end()){
+				v.push_back(marker);
+			}
+		}
+	}
+	else {
+		for (auto* marker : mapMarkers){
+			int type = GetMapMarkerIconType(nullptr, marker);
+			if (std::find(iconTypes.begin(), iconTypes.end(), type) == iconTypes.end()){
+				v.push_back(marker);
+			}
+		}
+	}
+	
+	return v;
+}
+
+std::vector<RE::TESObjectREFR*> FilterMapMarkersByOrigin(RE::StaticFunctionTag*, std::vector<RE::TESObjectREFR*> mapMarkers, std::vector<RE::TESForm*> origins, bool matches){
+	std::vector<RE::TESObjectREFR*> v; 
+	if (origins.empty() || mapMarkers.empty()){
+		return v;
+	}
+	
+	if (matches){
+		for (auto* marker : mapMarkers){
+			RE::TESForm* origin = GetCellOrWorldSpaceOriginForRef(nullptr, marker);
+			if (std::find(origins.begin(), origins.end(), origin) != origins.end()){
+				v.push_back(marker);
+			}
+		}
+	}
+	else {
+		for (auto* marker : mapMarkers){
+			RE::TESForm* origin = GetCellOrWorldSpaceOriginForRef(nullptr, marker);
+			if (std::find(origins.begin(), origins.end(), origin) == origins.end()){
+				v.push_back(marker);
+			}
+		}
+	}
+	return v;
+}
+
+std::vector<std::string> GetMapMarkerNames(RE::StaticFunctionTag*, std::vector<RE::TESObjectREFR*> mapMarkers){
+	std::vector<std::string> v;
+	if (mapMarkers.empty()){
+		return v;
+	}
+	
+	for (auto* marker : mapMarkers){
+		v.push_back(GetMapMarkerName(nullptr, marker));
+	}
+	
+	return v;
+}
+
+std::vector<int> GetMapMarkerIconTypes(RE::StaticFunctionTag*, std::vector<RE::TESObjectREFR*> mapMarkers){
+	std::vector<int> v;
+	if (mapMarkers.empty()){
+		return v;
+	}
+	
+	for (auto* marker : mapMarkers){
+		v.push_back(GetMapMarkerIconType(nullptr, marker));
+	}
+	
+	return v;
+}
 
 bool ShouldAddToPlayerMapMarkers(RE::TESObjectREFR* objRef) {
 	auto* player = RE::PlayerCharacter::GetSingleton();
@@ -1012,7 +1274,6 @@ RE::TESObjectREFR* GetHighlightedMapMarker(RE::StaticFunctionTag*) {
 	return nullptr;
 }
 
-
 bool CreateMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef, std::string name, int iconType, bool visible, bool canTravelTo) {
     if (!gfuncs::IsFormValid(objRef)) {
         logger::warn("objRef invalid");
@@ -1141,6 +1402,28 @@ bool DestroyMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* objRef) {
     return objRef->extraList.RemoveByType(RE::ExtraDataType::kMapMarker); ;
 } 
 
+void LogMapMarkerRefs(RE::StaticFunctionTag*, std::vector<RE::TESObjectREFR*> mapMarkers){
+	std::uint32_t i = 0; 
+	
+	for (auto* marker : mapMarkers){
+		if (!gfuncs::IsFormValid(marker)){
+			logger::info("[{}]: marker is none", i);
+			continue;
+		}
+		
+		std::string name = GetMapMarkerName(nullptr, marker);
+		std::string sIcon = GetMapMarkerIconTypeString(nullptr, marker);
+		RE::TESForm* origin = GetCellOrWorldSpaceOriginForRef(nullptr, marker);
+		std::string sOrigin = gfuncs::GetFormDataString(origin);
+		RE::FormID id = marker->GetFormID(); 
+		
+		logger::info("[{}]: name[{}] icon[{}] formId[{:08X}] origin form: --{}--", 
+			i, name, sIcon, id, sOrigin
+		);
+		i++;
+	}
+}
+
 namespace MapMarker {
 	bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     	vm->RegisterFunction("IsMapMarker", "DbSkseFunctions", IsMapMarker);
@@ -1153,12 +1436,22 @@ namespace MapMarker {
 		vm->RegisterFunction("GetMapMarkerName", "DbSkseFunctions", GetMapMarkerName);
 		vm->RegisterFunction("SetMapMarkerIconType", "DbSkseFunctions", SetMapMarkerIconType);
 		vm->RegisterFunction("GetMapMarkerIconType", "DbSkseFunctions", GetMapMarkerIconType);
+		vm->RegisterFunction("GetMapMarkerIconTypeString", "DbSkseFunctions", GetMapMarkerIconTypeString);
 		vm->RegisterFunction("SetMapMarkerVisible", "DbSkseFunctions", SetMapMarkerVisible);
 		vm->RegisterFunction("SetCanFastTravelToMarker", "DbSkseFunctions", SetCanFastTravelToMarker);
+		vm->RegisterFunction("GetMapMarkerVisibilityStatus", "DbSkseFunctions", GetMapMarkerVisibilityStatus);
+		vm->RegisterFunction("GetMapMarkerVisibilityStatuses", "DbSkseFunctions", GetMapMarkerVisibilityStatuses);
 		vm->RegisterFunction("GetAllMapMarkerRefs", "DbSkseFunctions", GetAllMapMarkerRefs);
 		vm->RegisterFunction("GetCurrentMapMarkerRefs", "DbSkseFunctions", GetCurrentMapMarkerRefs);
 		vm->RegisterFunction("GetCellOrWorldSpaceOriginForRef", "DbSkseFunctions", GetCellOrWorldSpaceOriginForRef);
+		vm->RegisterFunction("GetCellOrWorldSpaceOriginForRefs", "DbSkseFunctions", GetCellOrWorldSpaceOriginForRefs);
 		vm->RegisterFunction("SetCellOrWorldSpaceOriginForRef", "DbSkseFunctions", SetCellOrWorldSpaceOriginForRef);
+		vm->RegisterFunction("SortMapMarkers", "DbSkseFunctions", SortMapMarkers);
+		vm->RegisterFunction("FilterMapMarkersByIconType", "DbSkseFunctions", FilterMapMarkersByIconType);
+		vm->RegisterFunction("FilterMapMarkersByOrigin", "DbSkseFunctions", FilterMapMarkersByOrigin);
+		vm->RegisterFunction("GetMapMarkerNames", "DbSkseFunctions", GetMapMarkerNames);
+		vm->RegisterFunction("GetMapMarkerIconTypes", "DbSkseFunctions", GetMapMarkerIconTypes);
+		vm->RegisterFunction("LogMapMarkerRefs", "DbSkseFunctions", LogMapMarkerRefs);
         return true;
     }
-}
+} 

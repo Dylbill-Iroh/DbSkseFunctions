@@ -242,6 +242,9 @@ namespace gfuncs {
 
     bool StringContainsStringInVector(std::vector<std::string>& v, std::string value);
 
+	// Returns the index of the searchStr in s, or -1 if not found. Case insensitive.
+	int StringFind(const std::string& s, const std::string& searchStr);
+	
     template <typename T>
 	bool VectorContains(const std::vector<T*>& vec, T* value) {
 		return std::find(vec.begin(), vec.end(), value) != vec.end();

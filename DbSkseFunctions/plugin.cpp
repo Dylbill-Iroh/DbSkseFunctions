@@ -29,7 +29,7 @@
 #include "REL/Module.h"
 #include "SKSE/API.h"
 #include "SKSE/Logger.h"
-#include "lib/commonlibsse-ng/include/REL/Version.h"
+#include "REL/Version.h"
 #include "mini/ini.h"
 #include "logger.h"
 #include "GeneralFunctions.h"
@@ -215,7 +215,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/* RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID,  */RE::StaticFunctionTag* functionTag) {
-    return float(10.12);
+    return float(10.13); 
 } 
 
 std::vector<int> GetSkyrimVersion(RE::StaticFunctionTag*){
@@ -4191,6 +4191,18 @@ void HandleMenuOpenCloseEvent(bool opening, std::string sMenuName) {
 struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
     bool sinkAdded = false;
 
+	//Some plugins send MenuOpenCloseEvents whose menuName isn't a real string-pool entry, so
+	//BSFixedString::size() (and anything that converts it to string_view / std::string, including
+	//logger formatting) can read a garbage length. The text itself is still null-terminated, so
+	//measure it ourselves with a cap.
+	std::string_view GetSafeMenuName(const RE::MenuOpenCloseEvent* event) {
+		const char* raw = event ? event->menuName.c_str() : nullptr;
+		if (!raw) {
+			return {};
+		}
+		return std::string_view(raw, strnlen(raw, 256));
+	}
+
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*/*source*/) {
         //this sink is for managing timers and GetCurrentMenuOpen function.
 		auto* ui = RE::UI::GetSingleton();
@@ -4207,13 +4219,19 @@ struct MenuOpenCloseEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> 
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        if (IsBadReadPtr(event, sizeof(event))) {
+        if (IsBadReadPtr(event, sizeof(RE::MenuOpenCloseEvent))) {
             logger::warn("event IsBadReadPtr");
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        //logger::trace("Menu Open Close Event, menu[{}], opened[{}]", event->menuName, event->opening);
-        std::string sMenuName = std::string(event->menuName);
+		const std::string_view menuName = GetSafeMenuName(event);
+		if (menuName.empty()) {
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+		//logger::trace("Menu Open Close Event, menu[{}], opened[{}]", menuName, event->opening);
+		std::string sMenuName(menuName);
+		
         bool opening = event->opening;
 			
 		if (sMenuName == RE::MainMenu::MENU_NAME && opening){
@@ -6080,58 +6098,9 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetVersion", "DbSkseFunctions", GetThisVersion);
     vm->RegisterFunction("GetSkyrimVersion", "DbSkseFunctions", GetSkyrimVersion);
     vm->RegisterFunction("GetSkyrimVersionString", "DbSkseFunctions", GetSkyrimVersionString);
-    
-	vm->RegisterFunction("GetAllScriptsAttachedToAlias", "DbSkseFunctions", GetAllScriptsAttachedToAlias);
-	
-	vm->RegisterFunction("GetAllScriptsAttachedToForm", "DbSkseFunctions", GetAllScriptsAttachedToForm);
-	
-	vm->RegisterFunction("GetScriptHierarchyOnForm", "DbSkseFunctions", GetScriptHierarchyOnForm);
-	vm->RegisterFunction("ScriptHasParentOnForm", "DbSkseFunctions", ScriptHasParentOnForm);
-	vm->RegisterFunction("ScriptHasChildOnForm", "DbSkseFunctions", ScriptHasChildOnForm);
-	vm->RegisterFunction("IsScriptAttachedToForm", "DbSkseFunctions", IsScriptAttachedToForm);
-	
-	vm->RegisterFunction("GetScriptHierarchyOnAlias", "DbSkseFunctions", GetScriptHierarchyOnAlias);
-	vm->RegisterFunction("ScriptHasParentOnAlias", "DbSkseFunctions", ScriptHasParentOnAlias);
-	vm->RegisterFunction("ScriptHasChildOnAlias", "DbSkseFunctions", ScriptHasChildOnAlias);
-	vm->RegisterFunction("IsScriptAttachedToAlias", "DbSkseFunctions", IsScriptAttachedToAlias);
-	
-	vm->RegisterFunction("AttachObjectReferenceScriptToBaseForm", "DbSkseFunctions", AttachObjectReferenceScriptToBaseForm);
-	vm->RegisterFunction("StopAttachingObjectReferenceScriptsToNewRefs", "DbSkseFunctions", StopAttachingObjectReferenceScriptsToNewRefs);
-	vm->RegisterFunction("AttachScriptToForm", "DbSkseFunctions", AttachScriptToForm);
-	vm->RegisterFunction("AttachScriptToAlias", "DbSkseFunctions", AttachScriptToAlias);
-	
-	vm->RegisterFunction("GetThisScriptName", "DbSkseFunctions", GetThisScriptName);
-    vm->RegisterFunction("GetThisFunctionName", "DbSkseFunctions", GetThisFunctionName);
-    vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
-    vm->RegisterFunction("SetClipBoardText", "DbSkseFunctions", SetClipBoardText);
-    vm->RegisterFunction("IsWhiteSpace", "DbSkseFunctions", IsWhiteSpace);
-    vm->RegisterFunction("CountWhiteSpaces", "DbSkseFunctions", CountWhiteSpaces);
-    vm->RegisterFunction("RemoveWhiteSpaces", "DbSkseFunctions", RemoveWhiteSpaces);
-    vm->RegisterFunction("JoinStrings", "DbSkseFunctions", JoinStrings);
-    vm->RegisterFunction("ModHasFormType", "DbSkseFunctions", ModHasFormType);
-    
-	vm->RegisterFunction("SetFormDescription", "DbSkseFunctions", SetFormDescription);
-    
-	vm->RegisterFunction("GetFormDescription", "DbSkseFunctions", GetFormDescription);
-    vm->RegisterFunction("GetFormDescriptions", "DbSkseFunctions", GetFormDescriptions);
-    vm->RegisterFunction("GetFormDescriptionsFromList", "DbSkseFunctions", GetFormDescriptionsFromList);
-    vm->RegisterFunction("GetFormNames", "DbSkseFunctions", GetFormNames);
-    vm->RegisterFunction("GetFormNamesFromList", "DbSkseFunctions", GetFormNamesFromList);
-    vm->RegisterFunction("GetFormEditorId", "DbSkseFunctions", GetFormEditorId);
-    vm->RegisterFunction("GetFormEditorIds", "DbSkseFunctions", GetFormEditorIds);
-    vm->RegisterFunction("GetFormEditorIdsFromList", "DbSkseFunctions", GetFormEditorIdsFromList);
-    vm->RegisterFunction("GetLoadedModNames", "DbSkseFunctions", GetLoadedModNames);
-    vm->RegisterFunction("GetLoadedLightModNames", "DbSkseFunctions", GetLoadedLightModNames);
-    vm->RegisterFunction("GetAllLoadedModNames", "DbSkseFunctions", GetAllLoadedModNames);
-    vm->RegisterFunction("GetLoadedModDescriptions", "DbSkseFunctions", GetLoadedModDescriptions);
-    vm->RegisterFunction("GetLoadedLightModDescriptions", "DbSkseFunctions", GetLoadedLightModDescriptions);
-    vm->RegisterFunction("GetAllLoadedModDescriptions", "DbSkseFunctions", GetAllLoadedModDescriptions);
-    vm->RegisterFunction("SortFormArray", "DbSkseFunctions", SortFormArray);
-    vm->RegisterFunction("FormListToArray", "DbSkseFunctions", FormListToArray);
-    vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
     vm->RegisterFunction("GetEnableChildrenRefs", "DbSkseFunctions", GetEnableChildrenRefs);
     vm->RegisterFunction("GetAllContainerRefsThatContainForm", "DbSkseFunctions", GetAllContainerRefsThatContainForm);
-	vm->RegisterFunction("FindLoadDoorsNearRef", "DbSkseFunctions", FindLoadDoorsNearRef);
+    vm->RegisterFunction("FindLoadDoorsNearRef", "DbSkseFunctions", FindLoadDoorsNearRef);
     vm->RegisterFunction("GetAllFormsThatUseTextureSet", "DbSkseFunctions", GetAllFormsThatUseTextureSet);
     vm->RegisterFunction("GetAllActiveQuests", "DbSkseFunctions", GetAllActiveQuests);
     vm->RegisterFunction("GetAllConstructibleObjects", "DbSkseFunctions", GetAllConstructibleObjects);
@@ -6185,15 +6154,7 @@ bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("GetCollisionLayerName", "DbSkseFunctions", GetCollisionLayerName);
     vm->RegisterFunction("GetLastPlayerActivatedRef", "DbSkseFunctions", GetLastPlayerActivatedRef);
     vm->RegisterFunction("GetLastPlayerMenuActivatedRef", "DbSkseFunctions", GetLastPlayerMenuActivatedRef);
-    vm->RegisterFunction("GetGameHoursPassed", "DbSkseFunctions", GetGameHoursPassed);
-    vm->RegisterFunction("GameHoursToRealTimeSeconds", "DbSkseFunctions", GameHoursToRealTimeSeconds);
-    vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused);
-    vm->RegisterFunction("IsInMenu", "DbSkseFunctions", IsInMenu);
-    vm->RegisterFunction("IsLocalMapMenuOpen", "DbSkseFunctions", IsLocalMapMenuOpen);
-    vm->RegisterFunction("GetLastMenuOpened", "DbSkseFunctions", GetLastMenuOpened);
-    vm->RegisterFunction("RefreshItemMenu", "DbSkseFunctions", RefreshItemMenu);
     vm->RegisterFunction("IsItemMenuOpen", "DbSkseFunctions", IsItemMenuOpenNative);
-    vm->RegisterFunction("LoadMostRecentSaveGame", "DbSkseFunctions", LoadMostRecentSaveGame);
     vm->RegisterFunction("ExecuteConsoleCommand", "DbSkseFunctions", ExecuteConsoleCommand);
     vm->RegisterFunction("GetConsoleSelectedRef", "DbSkseFunctions", GetConsoleSelectedRef);
     vm->RegisterFunction("GetCurrentMusicType", "DbSkseFunctions", GetCurrentMusicType);
@@ -6472,6 +6433,7 @@ void MessageListener(SKSE::MessagingInterface::Message* message) {
             papyrusInterface->Register(CreateForms::BindPapyrusFunctions);
             papyrusInterface->Register(Message::BindPapyrusFunctions);
             papyrusInterface->Register(Package::BindPapyrusFunctions);
+            papyrusInterface->Register(Utility::BindPapyrusFunctions);
 			
             SetSettingsFromIniFile();
 			

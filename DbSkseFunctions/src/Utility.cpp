@@ -1,8 +1,12 @@
 #include <Windows.h>
+#include <cctype>
+#include <format>
 #include <mutex>
 #include <string.h>
+#include <string>
 #include <unordered_map>
 #include <detours.h>
+#include <vector>
 #include "Utility.h"
 #include "GeneralFunctions.h"
 #include "RE/B/BGSBaseAlias.h"
@@ -1767,6 +1771,648 @@ std::string JoinStrings(RE::StaticFunctionTag*, std::vector<std::string> arr, st
 	return gfuncs::JoinStrings(arr, delim);
 }
 
+//go down the list and combine each arra_A element with arra_B element seperated by the seperator. 
+//E.G, array_A[0] = "apples" array_A[1] = "oranges" array_B[0] = "pears" array_B[1] = "dates" seperator = "/"
+//returns a string array where [0] = "apples/pears" [1] = "oranges/dates"
+std::vector<std::string> CombineStringElements(RE::StaticFunctionTag*, std::vector<std::string> array_A, std::vector<std::string> array_B, std::string seperator){
+	std::vector<std::string> v;
+	auto aSize = array_A.size();
+	auto bSize = array_B.size();
+	auto minSize = aSize < bSize ? aSize : bSize;
+	
+	for (std::uint32_t i = 0; i < minSize; i++){
+		std::string s = array_A[i] + seperator + array_B[i];
+		v.push_back(s);
+	}
+	
+	if (aSize > bSize){
+		for (std::uint32_t i = minSize; i < aSize; i++){
+			v.push_back(array_A[i]);
+		}
+	}
+	else if (bSize > aSize){
+		for (std::uint32_t i = minSize; i < bSize; i++){
+			v.push_back(array_B[i]);
+		}
+	}
+	
+	return v;
+}
+
+std::vector<std::string> GetStringIndexes(RE::StaticFunctionTag*, std::vector<int> indexes, std::vector<std::string> strings, std::string outOfBoundsString){
+	std::vector<std::string> v;
+	
+	int size = strings.size();
+	for (int i : indexes){
+		if (i < 0 || i >= size){
+			v.push_back(outOfBoundsString);
+		}
+		else {
+			v.push_back(strings[i]);
+		}
+	}
+	return v;
+}
+
+// string[] function GetStringsThatContain(string[] arr, string searchStr, int foundIndex = -1) Global Native
+std::vector<std::string> GetStringsThatContain(RE::StaticFunctionTag*, std::vector<std::string> arr, std::string searchStr, int foundIndex){
+	std::vector<std::string> v; 
+	if (searchStr.empty()){
+		return v;
+	}
+	
+	for (std::string s : arr){
+		int index = gfuncs::StringFind(s, searchStr);
+		if (index > -1){
+			if (index == foundIndex || foundIndex < 0){
+				v.push_back(s);
+			}
+		}
+	}
+	
+	return v;
+}
+
+// int Function FindInStringArray(string[] arr, string searchStr, bool last = false) Global Native
+int FindInStringArray(RE::StaticFunctionTag*, std::vector<std::string> arr, std::string searchStr, int foundIndex, bool last){
+	if (searchStr.empty()){
+		return -1;
+	}
+	
+	if (!last){
+		for (int i = 0; i < arr.size(); i++){
+			std::string s = arr[i];
+			int index = gfuncs::StringFind(s, searchStr);
+			if (index > -1){
+				if (index == foundIndex || foundIndex < 0){
+					return i;
+				}
+			}
+		}
+	}
+	else {
+		for (int i = arr.size() - 1; i >= 0; i--){
+			std::string s = arr[i];
+			int index = gfuncs::StringFind(s, searchStr);
+			if (index > -1){
+				if (index == foundIndex || foundIndex < 0){
+					return i;
+				}
+			}
+		}
+	}
+	
+	return -1;
+}
+
+inline constexpr std::array<std::string_view, 20> numTextOnes{
+	"zero", "one", "two", "three", "four", "five",
+	"six", "seven", "eight", "nine", "ten",
+	"eleven", "twelve", "thirteen", "fourteen",
+	"fifteen", "sixteen", "seventeen", "eighteen", "nineteen"
+};
+
+inline constexpr std::array<std::string_view, 10> numTextTens{
+	"", "", "twenty", "thirty", "forty", "fifty",
+	"sixty", "seventy", "eighty", "ninety"
+};
+
+inline constexpr std::array<std::string_view, 5> numTextScales{
+	"", "thousand", "million", "billion", "trillion"
+};
+
+inline std::string IntToTextUnderThousand(std::uint16_t number){
+	if (number < 20) {
+		return std::string(numTextOnes[number]);
+	}
+
+	if (number < 100) {
+		std::string result(numTextTens[number / 10]);
+
+		if (number % 10 != 0) {
+			result += "-" + std::string(numTextOnes[number % 10]);
+		}
+
+		return result;
+	}
+
+	std::string result(numTextOnes[number / 100]);
+	result += " hundred";
+
+	const auto remainder = number % 100;
+
+	if (remainder != 0) {
+		result += " and ";
+		result += IntToTextUnderThousand(
+			static_cast<std::uint16_t>(remainder)
+		);
+	}
+
+	return result;
+}
+
+inline std::string IntToText(std::int64_t number){
+	if (number == 0) {
+		return "zero";
+	}
+
+	// Avoid overflow when negating INT64_MIN.
+	const bool negative = number < 0;
+
+	std::uint64_t remaining = negative
+		? static_cast<std::uint64_t>(-(number + 1)) + 1
+		: static_cast<std::uint64_t>(number);
+
+	std::string result;
+
+	if (negative) {
+		result = "negative ";
+	}
+
+	std::array<std::uint16_t, 7> groups{};
+	std::size_t groupCount = 0;
+
+	while (remaining > 0) {
+		groups[groupCount++] =
+			static_cast<std::uint16_t>(remaining % 1000);
+
+		remaining /= 1000;
+	}
+
+	bool hasPreviousGroup = false;
+
+	for (std::size_t i = groupCount; i-- > 0;) {
+		if (groups[i] == 0) {
+			continue;
+		}
+
+		if (hasPreviousGroup) {
+			result += " ";
+		}
+
+		// British convention: "one thousand and one"
+		// rather than "one thousand one".
+		if (hasPreviousGroup && i == 0 && groups[i] < 100) {
+			result += "and ";
+		}
+
+		result += IntToTextUnderThousand(groups[i]);
+
+		if (i > 0) {
+			result += " ";
+			result += numTextScales[i];
+		}
+
+		hasPreviousGroup = true;
+	}
+
+	return result;
+}
+
+inline std::string DoubleToText(double number, int decimalPlaces = -1){
+	if (!std::isfinite(number)) {
+		return number != number
+			? "not a number"
+			: (number < 0 ? "negative infinity" : "infinity");
+	}
+
+	// Convert the integer portion.
+	const bool negative = std::signbit(number);
+
+	long double absolute = std::fabs(
+		static_cast<long double>(number)
+	);
+
+	if (absolute >
+		static_cast<long double>(
+			std::numeric_limits<std::int64_t>::max()
+		)) {
+		return "number out of range";
+	}
+
+	const auto integerPart =
+		static_cast<std::int64_t>(absolute);
+
+	long double fraction = absolute - integerPart;
+
+	std::string result = IntToText(integerPart);
+
+	// No fractional component.
+	if (fraction == 0.0L) {
+		return negative && integerPart == 0
+			? "negative zero"
+			: result;
+	}
+
+	result += " point";
+
+	// Automatically determine decimal precision when unspecified.
+	if (decimalPlaces < 0) {
+		decimalPlaces = 6;
+	}
+
+	// Limit precision to avoid unreasonable output.
+	decimalPlaces = std::min(decimalPlaces, 15);
+
+	for (int i = 0; i < decimalPlaces; ++i) {
+		fraction *= 10.0L;
+
+		const int digit = static_cast<int>(fraction);
+
+		result += " ";
+		result += numTextOnes[std::clamp(digit, 0, 9)];
+
+		fraction -= digit;
+
+		if (fraction < 1e-12L) {
+			break;
+		}
+	}
+
+	if (negative && integerPart == 0) {
+		result.insert(0, "negative ");
+	}
+
+	return result;
+}
+
+struct ParsedNumber
+{
+	long double value = 0.0L;
+	bool isFloat = false;
+	int decimalPlaces = 0;
+};
+
+inline std::optional<ParsedNumber> TextToNumber(std::string text){
+	static const std::unordered_map<std::string, int> values{
+		{"zero", 0}, {"one", 1}, {"two", 2},
+		{"three", 3}, {"four", 4}, {"five", 5},
+		{"six", 6}, {"seven", 7}, {"eight", 8},
+		{"nine", 9}, {"ten", 10}, {"eleven", 11},
+		{"twelve", 12}, {"thirteen", 13}, {"fourteen", 14},
+		{"fifteen", 15}, {"sixteen", 16}, {"seventeen", 17},
+		{"eighteen", 18}, {"nineteen", 19},
+		{"twenty", 20}, {"thirty", 30}, {"forty", 40},
+		{"fifty", 50}, {"sixty", 60}, {"seventy", 70},
+		{"eighty", 80}, {"ninety", 90}
+	};
+
+	// Normalize text.
+	std::transform(text.begin(), text.end(), text.begin(),
+		[](unsigned char c) {
+			return static_cast<char>(std::tolower(c));
+		});
+
+	std::replace(text.begin(), text.end(), '-', ' ');
+
+	// Tokenize.
+	std::vector<std::string> tokens;
+	std::string token;
+
+	for (char c : text) {
+		if (std::isspace(static_cast<unsigned char>(c))) {
+			if (!token.empty()) {
+				tokens.push_back(std::move(token));
+				token.clear();
+			}
+		}
+		else {
+			token += c;
+		}
+	}
+
+	if (!token.empty()) {
+		tokens.push_back(std::move(token));
+	}
+
+	if (tokens.empty()) {
+		return std::nullopt;
+	}
+
+	ParsedNumber result;
+
+	std::size_t index = 0;
+	bool negative = false;
+
+	if (tokens[index] == "negative" || tokens[index] == "minus") {
+		negative = true;
+
+		if (++index >= tokens.size()) {
+			return std::nullopt;
+		}
+	}
+
+	// Parse integer portion.
+	std::uint64_t total = 0;
+	std::uint64_t current = 0;
+
+	bool foundNumber = false;
+	bool foundPoint = false;
+
+	for (; index < tokens.size(); ++index) {
+		const auto& word = tokens[index];
+
+		if (word == "point") {
+			foundPoint = true;
+			++index;
+			break;
+		}
+
+		if (word == "and") {
+			continue;
+		}
+
+		if (auto it = values.find(word); it != values.end()) {
+			current += it->second;
+			foundNumber = true;
+		}
+		else if (word == "hundred") {
+			if (current == 0 || current > 9) {
+				return std::nullopt;
+			}
+
+			current *= 100;
+		}
+		else if (word == "thousand") {
+			if (current == 0) {
+				return std::nullopt;
+			}
+
+			total += current * 1000;
+			current = 0;
+		}
+		else if (word == "million") {
+			if (current == 0) {
+				return std::nullopt;
+			}
+
+			total += current * 1000000;
+			current = 0;
+		}
+		else if (word == "billion") {
+			if (current == 0) {
+				return std::nullopt;
+			}
+
+			total += current * 1000000000ULL;
+			current = 0;
+		}
+		else if (word == "trillion") {
+			if (current == 0) {
+				return std::nullopt;
+			}
+
+			total += current * 1000000000000ULL;
+			current = 0;
+		}
+		else {
+			return std::nullopt;
+		}
+
+		if (total > 9223372036854775808ULL) {
+			return std::nullopt;
+		}
+	}
+
+	total += current;
+
+	if (!foundNumber || total > 9223372036854775808ULL) {
+		return std::nullopt;
+	}
+
+	long double value = static_cast<long double>(total);
+
+	// Parse decimal portion.
+	if (foundPoint) {
+		result.isFloat = true;
+
+		if (index >= tokens.size()) {
+			return std::nullopt;
+		}
+
+		long double multiplier = 0.1L;
+
+		for (; index < tokens.size(); ++index) {
+			auto it = values.find(tokens[index]);
+
+			// Decimal digits must be spoken individually.
+			if (it == values.end() || it->second < 0 || it->second > 9) {
+				return std::nullopt;
+			}
+
+			value += static_cast<long double>(it->second) * multiplier;
+
+			multiplier *= 0.1L;
+			++result.decimalPlaces;
+		}
+	}
+
+	if (negative) {
+		value = -value;
+	}
+
+	result.value = value;
+
+	return result;
+}
+
+enum class NumType{kInt, kFloat, kString};
+
+NumType GetNumType(std::string s){
+	std::string sInts = "0123456789";
+	int periodCount = 0;
+	
+	for (int i = 0; i < s.size(); i++){
+		auto c = s.at(i);
+		if (c == '.'){
+			periodCount++;
+			if (periodCount > 1){
+				return NumType::kString;
+			}
+		}
+		else if (sInts.find(c) == std::string::npos){
+			return NumType::kString;
+		}
+	}
+	
+	return periodCount == 1 ? NumType::kFloat : NumType::kInt;
+}
+
+int GetNumOfDecimals(std::string sFloat){
+	auto i = sFloat.rfind('.');
+	if (i == std::string::npos){
+		return 0;
+	}
+	return sFloat.size() - 1 - i;
+}
+
+std::string ConvertNumberStringToEnglishText(RE::StaticFunctionTag*, std::string numString, int capsType){
+	std::string s; 
+	
+	if (GetNumType(numString) == NumType::kFloat){
+		s = DoubleToText(std::stod(numString));
+	}
+	else{
+		s = IntToText(std::stoll(numString));
+	}
+	
+	if (!s.empty()){
+		if (capsType >= 1){
+			s[0] = std::toupper(s[0]);
+		}
+		
+		if (capsType == 2){
+			bool isSpace = false;
+			for (std::uint32_t i = 1; i < s.size(); i++){
+				if (std::isspace(s[i] != isSpace)){
+					isSpace = !isSpace;
+					if (!isSpace){ //went from whitespace to none whitespace, E.G s[i] is the start of a new word.
+						s[i] = std::toupper(s[i]);
+					}
+				}
+			}
+		}
+	}
+	
+	return s;
+}
+
+
+int ConvertEnglishTextToInt(RE::StaticFunctionTag*, std::string text){
+	auto parsed = TextToNumber(text);
+	if (parsed){
+		return int(parsed->value);
+	}
+	
+	return 0;
+}
+
+float ConvertEnglishTextToFloat(RE::StaticFunctionTag*, std::string text){
+	auto parsed = TextToNumber(text);
+	if (parsed){
+		return float(parsed->value);
+	}
+	
+	return 0;
+}
+
+std::vector<std::string> CreateSequentialStringArray(RE::StaticFunctionTag*, int size, std::string startValue, float step, bool up) {
+	if (size <= 0){
+		return std::vector<std::string>();
+	}
+	
+	std::vector<std::string> v(size);
+	auto numType = GetNumType(startValue);
+	int iStep = int(step);
+	
+	if (numType == NumType::kInt){
+		int iStartValue = std::stoi(startValue);
+		
+		v[0] = startValue;
+		
+		if (up){
+			for (int i = 1; i < size; ++i) {
+				v[i] = std::to_string(iStartValue + (i * iStep)); 
+			}
+		}
+		else {
+			for (int i = 1; i < size; ++i) {
+				v[i] = std::to_string(iStartValue - (i * iStep)); 
+			}
+		}
+	}
+	else if (numType == NumType::kFloat){
+		float fStartValue = std::stof(startValue);
+		
+		float value = 2.5f;
+
+		int precision = GetNumOfDecimals(startValue);
+		
+		std::string s = std::format("{:.2f}", value);
+
+		v[0] = startValue;
+		
+		if (up){
+			for (int i = 1; i < size; ++i) {
+				v[i] = std::format("{:.{}f}", fStartValue + (float(i) * step), precision);
+			}
+		}
+		else {
+			for (int i = 1; i < size; ++i) {
+				v[i] = std::format("{:.{}f}", fStartValue - (float(i) * step), precision);
+			}
+		}
+	}
+	else {
+		auto parsed = TextToNumber(startValue);
+
+		long double start = 0;
+		int precision = 0;
+		
+		if (parsed) {
+			start = parsed->value;
+			precision = parsed->decimalPlaces;
+		}
+
+		if (up){
+			for (int i = 0; i < size; ++i) {
+				long double value = start + (static_cast<long double>(i) * step);
+				v[i] = DoubleToText( static_cast<double>(value), precision);
+			}
+		}
+		else {
+			for (int i = 0; i < size; ++i) {
+				long double value = start - (static_cast<long double>(i) * step);
+				v[i] = DoubleToText(static_cast<double>(value), precision);
+			}
+		}
+	}
+	
+    return v;
+}
+
+std::vector<int> CreateSequentialIntArray(RE::StaticFunctionTag*, int size, int startValue, int step, bool up) {
+	if (size <= 0){
+		return std::vector<int>();
+	}
+	
+    std::vector<int> v(size);
+	v[0] = startValue;
+	
+	if (up){
+		for (int i = 1; i < size; ++i) {
+			v[i] = startValue + (i * step); 
+		}
+	}
+	else {
+		for (int i = 1; i < size; ++i) {
+			v[i] = startValue - (i * step); 
+		}
+	}
+    return v;
+}
+
+std::vector<float> CreateSequentialFloatArray(RE::StaticFunctionTag*, int size, float startValue, float step, bool up) {
+	if (size <= 0){
+		return std::vector<float>();
+	}
+	
+    std::vector<float> v(size);
+	v[0] = startValue;
+	
+	if (up){
+		for (float i = 1; i < size; ++i) {
+			v[i] = startValue + (i * step); 
+		}
+	}
+	else {
+		for (float i = 1; i < size; ++i) {
+			v[i] = startValue - (i * step); 
+		}
+	}
+    return v;
+}
+
 bool ModHasFormType(RE::StaticFunctionTag*, std::string modName, int formType) {
     logger::debug("modName[{}] formType[{}]", modName, formType);
 
@@ -2542,4 +3188,75 @@ bool FormNameContains(RE::TESForm* akForm, std::string& sFormName, bool checkIde
         }
     }
     return akFormNameContainsSFormName;
+}
+
+namespace Utility {
+	bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
+        logger::trace("Binding Utility Papyrus Functions");
+
+        vm->RegisterFunction("GetAllScriptsAttachedToAlias", "DbSkseFunctions", GetAllScriptsAttachedToAlias);
+        vm->RegisterFunction("GetAllScriptsAttachedToForm", "DbSkseFunctions", GetAllScriptsAttachedToForm);
+        vm->RegisterFunction("GetScriptHierarchyOnForm", "DbSkseFunctions", GetScriptHierarchyOnForm);
+        vm->RegisterFunction("ScriptHasParentOnForm", "DbSkseFunctions", ScriptHasParentOnForm);
+        vm->RegisterFunction("ScriptHasChildOnForm", "DbSkseFunctions", ScriptHasChildOnForm);
+        vm->RegisterFunction("IsScriptAttachedToForm", "DbSkseFunctions", IsScriptAttachedToForm);
+        vm->RegisterFunction("GetScriptHierarchyOnAlias", "DbSkseFunctions", GetScriptHierarchyOnAlias);
+        vm->RegisterFunction("ScriptHasParentOnAlias", "DbSkseFunctions", ScriptHasParentOnAlias);
+        vm->RegisterFunction("ScriptHasChildOnAlias", "DbSkseFunctions", ScriptHasChildOnAlias);
+        vm->RegisterFunction("IsScriptAttachedToAlias", "DbSkseFunctions", IsScriptAttachedToAlias);
+        vm->RegisterFunction("AttachObjectReferenceScriptToBaseForm", "DbSkseFunctions", AttachObjectReferenceScriptToBaseForm);
+        vm->RegisterFunction("StopAttachingObjectReferenceScriptsToNewRefs", "DbSkseFunctions", StopAttachingObjectReferenceScriptsToNewRefs);
+        vm->RegisterFunction("AttachScriptToForm", "DbSkseFunctions", AttachScriptToForm);
+        vm->RegisterFunction("AttachScriptToAlias", "DbSkseFunctions", AttachScriptToAlias);
+        vm->RegisterFunction("GetThisScriptName", "DbSkseFunctions", GetThisScriptName);
+        vm->RegisterFunction("GetThisFunctionName", "DbSkseFunctions", GetThisFunctionName);
+        vm->RegisterFunction("GetClipBoardText", "DbSkseFunctions", GetClipBoardText);
+        vm->RegisterFunction("SetClipBoardText", "DbSkseFunctions", SetClipBoardText);
+        vm->RegisterFunction("IsWhiteSpace", "DbSkseFunctions", IsWhiteSpace);
+        vm->RegisterFunction("CountWhiteSpaces", "DbSkseFunctions", CountWhiteSpaces);
+        vm->RegisterFunction("RemoveWhiteSpaces", "DbSkseFunctions", RemoveWhiteSpaces);
+        vm->RegisterFunction("JoinStrings", "DbSkseFunctions", JoinStrings);
+        vm->RegisterFunction("CombineStringElements", "DbSkseFunctions", CombineStringElements);
+		
+        vm->RegisterFunction("GetStringIndexes", "DbSkseFunctions", GetStringIndexes); 
+		
+        vm->RegisterFunction("GetStringsThatContain", "DbSkseFunctions", GetStringsThatContain); 
+        vm->RegisterFunction("FindInStringArray", "DbSkseFunctions", FindInStringArray); 
+        vm->RegisterFunction("ConvertNumberStringToEnglishText", "DbSkseFunctions", ConvertNumberStringToEnglishText); 
+        vm->RegisterFunction("ConvertEnglishTextToInt", "DbSkseFunctions", ConvertEnglishTextToInt); 
+        vm->RegisterFunction("ConvertEnglishTextToFloat", "DbSkseFunctions", ConvertEnglishTextToFloat); 
+        vm->RegisterFunction("CreateSequentialStringArray", "DbSkseFunctions", CreateSequentialStringArray); 
+        vm->RegisterFunction("CreateSequentialIntArray", "DbSkseFunctions", CreateSequentialIntArray); 
+        vm->RegisterFunction("CreateSequentialFloatArray", "DbSkseFunctions", CreateSequentialFloatArray); 
+		
+        vm->RegisterFunction("ModHasFormType", "DbSkseFunctions", ModHasFormType);
+        vm->RegisterFunction("SetFormDescription", "DbSkseFunctions", SetFormDescription);
+        vm->RegisterFunction("GetFormDescription", "DbSkseFunctions", GetFormDescription);
+        vm->RegisterFunction("GetFormDescriptions", "DbSkseFunctions", GetFormDescriptions);
+        vm->RegisterFunction("GetFormDescriptionsFromList", "DbSkseFunctions", GetFormDescriptionsFromList);
+        vm->RegisterFunction("GetFormNames", "DbSkseFunctions", GetFormNames);
+        vm->RegisterFunction("GetFormNamesFromList", "DbSkseFunctions", GetFormNamesFromList);
+        vm->RegisterFunction("GetFormEditorId", "DbSkseFunctions", GetFormEditorId);
+        vm->RegisterFunction("GetFormEditorIds", "DbSkseFunctions", GetFormEditorIds);
+        vm->RegisterFunction("GetFormEditorIdsFromList", "DbSkseFunctions", GetFormEditorIdsFromList);
+        vm->RegisterFunction("GetLoadedModNames", "DbSkseFunctions", GetLoadedModNames);
+        vm->RegisterFunction("GetLoadedLightModNames", "DbSkseFunctions", GetLoadedLightModNames);
+        vm->RegisterFunction("GetAllLoadedModNames", "DbSkseFunctions", GetAllLoadedModNames);
+        vm->RegisterFunction("GetLoadedModDescriptions", "DbSkseFunctions", GetLoadedModDescriptions);
+        vm->RegisterFunction("GetLoadedLightModDescriptions", "DbSkseFunctions", GetLoadedLightModDescriptions);
+        vm->RegisterFunction("GetAllLoadedModDescriptions", "DbSkseFunctions", GetAllLoadedModDescriptions);
+        vm->RegisterFunction("SortFormArray", "DbSkseFunctions", SortFormArray);
+        vm->RegisterFunction("FormListToArray", "DbSkseFunctions", FormListToArray);
+        vm->RegisterFunction("AddFormsToList", "DbSkseFunctions", AddFormsToList);
+        vm->RegisterFunction("GetGameHoursPassed", "DbSkseFunctions", GetGameHoursPassed);
+        vm->RegisterFunction("GameHoursToRealTimeSeconds", "DbSkseFunctions", GameHoursToRealTimeSeconds);
+        vm->RegisterFunction("IsGamePaused", "DbSkseFunctions", IsGamePaused);
+        vm->RegisterFunction("IsInMenu", "DbSkseFunctions", IsInMenu);
+        vm->RegisterFunction("IsLocalMapMenuOpen", "DbSkseFunctions", IsLocalMapMenuOpen);
+        vm->RegisterFunction("GetLastMenuOpened", "DbSkseFunctions", GetLastMenuOpened);
+        vm->RegisterFunction("RefreshItemMenu", "DbSkseFunctions", RefreshItemMenu);
+        vm->RegisterFunction("LoadMostRecentSaveGame", "DbSkseFunctions", LoadMostRecentSaveGame);
+
+        return true;
+    }
 }
