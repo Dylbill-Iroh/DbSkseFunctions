@@ -1,5 +1,6 @@
 #include "mINIHelper.h"
 #include "mini/ini.h"
+#include "GeneralFunctions.h"
 
 namespace mINI {
 	//Added by Dylbill
@@ -43,7 +44,8 @@ namespace mINI {
 	int GetIniInt(mINI::INIStructure& ini, std::string section, std::string key, int iDefault) {
 		std::string s = GetIniString(ini, section, key);
 		if (s != "") {
-			return std::stoi(s);
+			// return std::stoi(s);
+			return gfuncs::ParseNumber<int>(s).value_or(iDefault);
 		}
 		else {
 			return iDefault;
@@ -53,7 +55,8 @@ namespace mINI {
 	float GetIniFloat(mINI::INIStructure& ini, std::string section, std::string key, float fDefault) {
 		std::string s = GetIniString(ini, section, key);
 		if (s != "") {
-			return std::stof(s);
+			// return std::stof(s);
+			return gfuncs::ParseNumber<float>(s).value_or(fDefault);
 		}
 		else {
 			return fDefault;

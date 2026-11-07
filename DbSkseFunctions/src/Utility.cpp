@@ -1753,7 +1753,7 @@ bool SetClipBoardText(RE::StaticFunctionTag*, std::string sText) {
 }
 
 bool IsWhiteSpace(RE::StaticFunctionTag*, std::string s) {
-    return isspace(int(s.at(0)));
+    return !s.empty() && std::isspace(static_cast<unsigned char>(s[0]));
 }
 
 int CountWhiteSpaces(RE::StaticFunctionTag*, std::string s) {
@@ -2250,10 +2250,14 @@ std::string ConvertNumberStringToEnglishText(RE::StaticFunctionTag*, std::string
 	std::string s; 
 	
 	if (GetNumType(numString) == NumType::kFloat){
-		s = DoubleToText(std::stod(numString));
+		// s = DoubleToText(std::stod(numString));
+		auto result = gfuncs::ParseNumber<double>(numString);
+		s = result ? DoubleToText(result.value()) : "";
 	}
 	else{
-		s = IntToText(std::stoll(numString));
+		// s = IntToText(std::stoll(numString));
+		auto result = gfuncs::ParseNumber<double>(numString);
+		s = result ? IntToText(result.value()) : "";
 	}
 	
 	if (!s.empty()){
@@ -2264,7 +2268,7 @@ std::string ConvertNumberStringToEnglishText(RE::StaticFunctionTag*, std::string
 		if (capsType == 2){
 			bool isSpace = false;
 			for (std::uint32_t i = 1; i < s.size(); i++){
-				if (std::isspace(s[i] != isSpace)){
+				if (std::isspace(static_cast<unsigned char>(s[i]) != isSpace)){
 					isSpace = !isSpace;
 					if (!isSpace){ //went from whitespace to none whitespace, E.G s[i] is the start of a new word.
 						s[i] = std::toupper(s[i]);
@@ -2306,7 +2310,9 @@ std::vector<std::string> CreateSequentialStringArray(RE::StaticFunctionTag*, int
 	int iStep = int(step);
 	
 	if (numType == NumType::kInt){
-		int iStartValue = std::stoi(startValue);
+		// int iStartValue = std::stoi(startValue);
+		auto result = gfuncs::ParseNumber<int>(startValue);
+		int iStartValue = result ? result.value() : 0;
 		
 		v[0] = startValue;
 		
@@ -2322,7 +2328,9 @@ std::vector<std::string> CreateSequentialStringArray(RE::StaticFunctionTag*, int
 		}
 	}
 	else if (numType == NumType::kFloat){
-		float fStartValue = std::stof(startValue);
+		// float fStartValue = std::stof(startValue);
+		auto result = gfuncs::ParseNumber<float>(startValue);
+		float fStartValue = result ? result.value() : 0;
 		
 		float value = 2.5f;
 
@@ -2448,7 +2456,7 @@ std::string GetFormEditorId(RE::StaticFunctionTag*, RE::TESForm* akForm, std::st
         return nullFormString;
     }
     else {
-        std::string editorId = akForm->GetFormEditorID();
+        std::string editorId = gfuncs::SafeString(akForm->GetFormEditorID());
         if (editorId == "") {
             editorId = clib_util::editorID::get_editorID(akForm);
         }
@@ -3149,7 +3157,7 @@ bool FormNameMatches(RE::TESForm* akForm, std::string& sFormName, bool checkIden
     if (gfuncs::IsFormValid(akForm, false, checkIdentity)) {
         auto* ref = akForm->AsReference();
         if (gfuncs::IsFormValid(ref)) {
-            nameMatches = (ref->GetDisplayFullName() == sFormName);
+            nameMatches = (gfuncs::SafeString(ref->GetDisplayFullName()) == sFormName);
             if (!nameMatches) {
                 RE::TESForm* baseForm = ref->GetBaseObject();
                 if (gfuncs::IsFormValid(baseForm)) {
@@ -3170,7 +3178,7 @@ bool FormNameContains(RE::TESForm* akForm, std::string& sFormName, bool checkIde
     if (gfuncs::IsFormValid(akForm, false, checkIdentity)) {
         auto* ref = akForm->AsReference();
         if (gfuncs::IsFormValid(ref)) {
-            akFormName = (ref->GetDisplayFullName());
+            akFormName = gfuncs::SafeString(ref->GetDisplayFullName());
             if (akFormName != "") {
                 akFormNameContainsSFormName = (akFormName.find(sFormName) != std::string::npos);
             }

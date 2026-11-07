@@ -9,15 +9,19 @@
 #include <cstddef>
 
 namespace keyword {
-    std::string GetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword) {
-        logger::trace("");
-        if (!gfuncs::IsFormValid(akKeyword)) {
-            logger::warn("akKeyword doesn't exist");
-            return "";
-        }
-        return std::string(akKeyword->GetFormEditorID());
-    }
-
+	std::string GetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword) {
+		logger::trace("");
+		if (!gfuncs::IsFormValid(akKeyword)) {
+			logger::warn("akKeyword doesn't exist");
+			return "";
+		}
+		const char* editorID = akKeyword->GetFormEditorID();
+		if (!editorID) {
+			return "";
+		}
+		return std::string(editorID, strnlen(editorID, 512));
+	}
+	
     void SetKeywordString(RE::StaticFunctionTag*, RE::BGSKeyword* akKeyword, std::string keywordString) {
         logger::trace("{}", keywordString);
 
@@ -43,7 +47,8 @@ namespace keyword {
 				if (gfuncs::IsFormValid(baseForm)) {
 					RE::BGSKeyword* keyword = baseForm->As<RE::BGSKeyword>();
                 	if (gfuncs::IsFormValid(keyword)) {
-						if (keyword->GetFormEditorID() == keywordString){
+						std::string sKeyword = GetKeywordString(nullptr, keyword);
+						if (_stricmp(sKeyword.c_str(), keywordString.c_str()) == 0){
 							v.push_back((keyword));
 						}
 					}

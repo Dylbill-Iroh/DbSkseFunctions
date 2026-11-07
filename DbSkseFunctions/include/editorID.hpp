@@ -2,6 +2,7 @@
 
 #include <libloaderapi.h>
 #include <string>
+#include "GeneralFunctions.h"
 
 namespace clib_util::editorID
 {
@@ -37,7 +38,7 @@ namespace clib_util::editorID
 		case RE::FormType::StoryManagerQuestNode:
 		case RE::FormType::StoryManagerEventNode:
 		case RE::FormType::SoundRecord:
-			return a_form->GetFormEditorID();
+			return gfuncs::SafeString(a_form->GetFormEditorID());
 		default:
 			{
 				static auto tweaks = GetModuleHandleW(L"po3_Tweaks");

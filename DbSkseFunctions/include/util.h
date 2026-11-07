@@ -1,5 +1,7 @@
 #pragma once
 #include <ranges>
+#include "GeneralFunctions.h"
+#include "RE/C/CFilter.h"
 
 #define PI 3.1415926535897932f
 #define TWOTHIRDS_PI 2.0943951023931955f
@@ -418,7 +420,8 @@ namespace FormUtil
             {
                 if (formIDString.length() == 0) return nullptr; 
 
-                uint32_t formID = std::stoi(formIDString, 0, 16); 
+                // uint32_t formID = std::stoi(formIDString, 0, 16); 
+				uint32_t formID = gfuncs::ParseNumber<std::uint32_t>(formIDString, 16).value_or(0);
                 return GetFormFromMod(formID,modname); 
             } 
 
@@ -447,7 +450,9 @@ namespace FormUtil
                 if (relativeFormIDString.length() == 0) return -1; 
 
 
-                uint32_t relativeFormID = std::stoi(relativeFormIDString,  0, 16); 
+                // uint32_t relativeFormID = std::stoi(relativeFormIDString,  0, 16); 
+				uint32_t relativeFormID = gfuncs::ParseNumber<std::uint32_t>(relativeFormIDString, 16).value_or(0);
+				
                 return GetFormIDFromMod(relativeFormID, modName); 
             }
 
@@ -550,22 +555,22 @@ namespace NifUtil
     {
         static bool ToggleMeshCollision(RE::NiAVObject* root,RE::bhkWorld* world, bool collisionState)
         {
-            constexpr auto no_collision_flag = static_cast<std::uint32_t>(RE::CFilter::Flag::kNoCollision);
+            constexpr auto no_collision_flag = static_cast<std::uint32_t>(RE::CFilter::Flags::kNoCollision);
 					if (root && world) {
 						
-							RE::BSWriteLockGuard locker(world->worldLock);
+						RE::BSWriteLockGuard locker(world->worldLock);
 
-							RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_col) -> RE::BSVisit::BSVisitControl {
-								if (auto hkpBody = a_col->body ? static_cast<RE::hkpWorldObject*>(a_col->body->referencedObject.get()) : nullptr; hkpBody) {
-									auto& filter = hkpBody->collidable.broadPhaseHandle.collisionFilterInfo;
-									if (!collisionState) {
-										filter |= no_collision_flag;
-									} else {
-										filter &= ~no_collision_flag;
-									}
+						RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_col) -> RE::BSVisit::BSVisitControl {
+							if (auto hkpBody = a_col->body ? static_cast<RE::hkpWorldObject*>(a_col->body->referencedObject.get()) : nullptr; hkpBody) {
+								auto& filter = hkpBody->collidable.broadPhaseHandle.collisionFilterInfo;
+								if (!collisionState) {
+									filter |= no_collision_flag;
+								} else {
+									filter &= ~no_collision_flag;
 								}
-								return RE::BSVisit::BSVisitControl::kContinue;
-							});
+							}
+							return RE::BSVisit::BSVisitControl::kContinue;
+						});
 					}
                     else 
                     {
@@ -575,7 +580,7 @@ namespace NifUtil
         }
          static bool RemoveMeshCollision(RE::NiAVObject* root,RE::bhkWorld* world, bool collisionState)
         {
-            constexpr auto no_collision_flag = static_cast<std::uint32_t>(RE::CFilter::Flag::kNoCollision);
+            constexpr auto no_collision_flag = static_cast<std::uint32_t>(RE::CFilter::Flags::kNoCollision);
 					if (root && world) {
 						
 							RE::BSWriteLockGuard locker(world->worldLock);

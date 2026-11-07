@@ -215,7 +215,7 @@ enum debugLevel { notification, messageBox };
 
 //papyrus functions=============================================================================================================================
 float GetThisVersion(/* RE::BSScript::Internal::VirtualMachine* vm, const RE::VMStackID stackID,  */RE::StaticFunctionTag* functionTag) {
-    return float(10.13); 
+    return float(10.14); 
 } 
 
 std::vector<int> GetSkyrimVersion(RE::StaticFunctionTag*){

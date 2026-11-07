@@ -122,7 +122,8 @@ target("DbSkseFunctions")
         -- Use forward slashes (or doubled backslashes) in these paths.
         local deploy_folders = {
 			"C:/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition AE 1-7-104/Data/SKSE/Plugins",
-			"C:/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition SE 1-5-97/Data/SKSE/Plugins"
+			"C:/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition SE 1-5-97/Data/SKSE/Plugins",
+			"C:/MODS/My Mods/DbMiscFunctions/DbMiscFunctions/Releases/DbMiscFunctions/SKSE/Plugins"
         }
 
         local dll = target:targetfile()

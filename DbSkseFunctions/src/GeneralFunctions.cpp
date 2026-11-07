@@ -39,6 +39,11 @@ namespace gfuncs {
     enum logLevel { trace, debug, info, warn, error, critical };
     enum debugLevel { notification, messageBox };
 
+	// Game const char* -> std::string. nullptr becomes "" (e.g. the editor ID of a form created at runtime).
+    std::string SafeString(const char* s, std::size_t maxLen) {
+        return s ? std::string(s, strnlen(s, maxLen)) : std::string();
+    }
+	
     void LogAndMessage(std::string message, int logLevel, int debugLevel) {
         switch (logLevel) {
         case trace:
@@ -77,10 +82,12 @@ namespace gfuncs {
     }
 	
     void ConvertToLowerCase(std::string& s) {
-        transform(s.begin(), s.end(), s.begin(), ::tolower);
-    }
+		std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+			return static_cast<char>(std::tolower(c));
+		});
+	}
 	
-	std::string RemoveWhiteSpace(std::string s){
+	std::string RemoveWhiteSpace(std::string s){ 
 		s.erase(std::remove_if(s.begin(), s.end(), [](unsigned char c) {
 			return std::isspace(c);
 		}), s.end());
@@ -200,17 +207,24 @@ namespace gfuncs {
 	int FindNextWhiteSpaceIndexInString(std::string s, int startIndex, bool searchBackwards = false){
 		int length = s.length();
 		if (!searchBackwards){
+			if (startIndex < 0){
+				startIndex = 0;
+			}
 			for (int i = startIndex; i < length; i++){
 				char c = s.at(i);
-				if (std::isspace(c)){
+				if (std::isspace(static_cast<unsigned char>(c))){
 					return i;
 				}
 			}
 		}	
 		else {
-			for (int i = length; i >= 0; i--){
+			if (startIndex < 0 || startIndex >= length){
+				startIndex = length - 1;
+			}
+			
+			for (int i = startIndex; i >= 0; i--){
 				char c = s.at(i);
-				if (std::isspace(c)){
+				if (std::isspace(static_cast<unsigned char>(c))){
 					return i;
 				}
 			}
@@ -223,7 +237,7 @@ namespace gfuncs {
 		if (!searchBackwards){
 			for (int i = startIndex; i < length; i++){
 				char c = s.at(i);
-				if (!std::isspace(c)){
+				if (!std::isspace(static_cast<unsigned char>(c))){
 					return i;
 				}
 			}
@@ -231,7 +245,7 @@ namespace gfuncs {
 		else {
 			for (int i = length; i >= 0; i--){
 				char c = s.at(i);
-				if (!std::isspace(c)){
+				if (!std::isspace(static_cast<unsigned char>(c))){
 					return i;
 				}
 			}
@@ -298,6 +312,7 @@ namespace gfuncs {
             }
         }
         return (count >= minNumber);
+		
     }
     //get the int after start char in string s. Example: GetIntAfterCharInString("arrows (21)") returns 21
     int GetIntAfterCharInString(std::string s, char startChar, int iDefault, int startIndex) {
@@ -307,18 +322,21 @@ namespace gfuncs {
         int i = startIndex;
         while (i < L) {
             if (s.at(i) == startChar) {
-                if (isdigit(s.at(i + 1))) {
-                    iStart = i + 1;
-                    i++;
-                    break;
-                }
+				int iNext = (i + 1);
+				if (iNext < L){
+					if (isdigit(static_cast<unsigned char>(s.at(iNext)))) {
+						iStart = iNext;
+						i++;
+						break;
+					}
+				}
             }
             i++;
         }
 
         if (iStart != -1) {
             while (i < L) {
-                if (!isdigit(s.at(i))) {
+                if (!isdigit(static_cast<unsigned char>(s.at(i)))) {
                     iEnd = i;
                     break;
                 }
@@ -327,7 +345,7 @@ namespace gfuncs {
             if (iEnd == -1) {
                 iEnd = L;
             }
-            return stoi(s.substr(iStart, (iEnd - iStart)));
+			return ParseNumber<int>(s.substr(iStart, iEnd - iStart)).value_or(iDefault);
         }
         return iDefault;
     }
@@ -437,7 +455,7 @@ namespace gfuncs {
             return nullFormString;
         }
         else {
-            std::string editorId = akForm->GetFormEditorID();
+			std::string editorId = SafeString(akForm->GetFormEditorID());
             if (editorId == "") {
                 editorId = clib_util::editorID::get_editorID(akForm);
             }
@@ -446,7 +464,7 @@ namespace gfuncs {
                 if (IsFormValid(ref)) {
                     RE::TESForm* baseForm = ref->GetBaseObject(); 
                     if (IsFormValid(baseForm)) {
-                        editorId = baseForm->GetFormEditorID();
+                        editorId = editorId = SafeString(baseForm->GetFormEditorID());
                         if (editorId == "") {
                             editorId = clib_util::editorID::get_editorID(baseForm);
                         }

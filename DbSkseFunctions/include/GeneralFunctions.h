@@ -49,6 +49,35 @@ namespace gfuncs {
 	// It promotes this form as an owner of the ref with the BGSDynamicPersistenceManager.
 	extern const RE::FormID promotedPersistenceDefaultFormID; 
 	
+	// Game const char* -> std::string. nullptr becomes "" (e.g. the editor ID of a form created at runtime).
+    std::string SafeString(const char* s, std::size_t maxLen = 4096);
+	
+	// Never throws, unlike std::stoi / std::stof. Skips leading whitespace and a "+" (and "0x" for base 16),
+    // ignores anything after the number, like stoi. Returns nullopt if there's no number or it's out of range.
+    template <class T>
+    std::optional<T> ParseNumber(std::string_view s, int base = 10) {
+        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) {
+            s.remove_prefix(1);
+        }
+        if (!s.empty() && s.front() == '+') {
+            s.remove_prefix(1);
+        }
+        if (base == 16 && s.size() > 1 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+            s.remove_prefix(2);
+        }
+        T value{};
+        std::from_chars_result result;
+        if constexpr (std::is_floating_point_v<T>) {
+            result = std::from_chars(s.data(), s.data() + s.size(), value);
+        } else {
+            result = std::from_chars(s.data(), s.data() + s.size(), value, base);
+        }
+        if (result.ec != std::errc()) {
+            return std::nullopt;
+        }
+        return value;
+    }
+	
     void LogAndMessage(std::string message, int logLevel = 0, int debugLevel = 0);
 
     void ConvertToLowerCase(std::string& s);

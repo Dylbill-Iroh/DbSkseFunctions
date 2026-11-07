@@ -1453,12 +1453,14 @@ namespace papyrusUtilExArrayFunctions {
 			}
 			else if constexpr (std::same_as<T, std::int32_t>){
 				for (const auto value : arr) { 
-					v.push_back(std::stoi(value));
+					// v.push_back(std::stoi(value)); //using safe parse number to avoid potential crashes
+					v.push_back(gfuncs::ParseNumber<std::int32_t>(value).value_or(0));
 				}
 			}
 			else if constexpr (std::same_as<T, float>){
 				for (const auto value : arr) { 
-					v.push_back(std::stof(value));
+					// v.push_back(std::stof(value)); //using safe parse number to avoid potential crashes
+					gfuncs::ParseNumber<float>(value).value_or(0.0f);
 				}
 			}
 		}
