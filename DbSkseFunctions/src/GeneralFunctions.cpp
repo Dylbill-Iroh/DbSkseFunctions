@@ -81,6 +81,146 @@ namespace gfuncs {
         }*/
     }
 	
+	inline bool IsDigit(char c) { return c >= '0' && c <= '9'; }
+
+	inline int LowerChar(char c) { return std::tolower(static_cast<unsigned char>(c)); }
+
+	struct Number {
+		bool             negative = false;
+		std::string_view whole;     // without leading zeros, "" for 0
+		std::string_view fraction;  // without trailing zeros, "" for none
+	};
+
+	// True if a number starts at s[i] (a digit, or a '-' directly before a digit that isn't joined to a word).
+	inline bool NumberStartsAt(std::string_view s, size_t i) {
+		if (i >= s.size()) {
+			return false;
+		}
+		if (IsDigit(s[i])) {
+			return true;
+		}
+		if (s[i] == '-' && i + 1 < s.size() && IsDigit(s[i + 1])) {
+			return i == 0 || !std::isalnum(static_cast<unsigned char>(s[i - 1]));
+		}
+		return false;
+	}
+
+	// If a number starts at s[i], or after whitespace at s[i] ("text 5", "text\t5"), returns where the number starts.
+	// Otherwise returns std::string_view::npos.
+	inline size_t FindNumberStart(std::string_view s, size_t i) {
+		while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) {
+			i++;
+		}
+		return NumberStartsAt(s, i) ? i : std::string_view::npos;
+	}
+	
+	// Reads the number that starts at s[i] and moves i past it.
+	inline Number ReadNumber(std::string_view s, size_t& i) {
+		Number n;
+		if (s[i] == '-') {
+			n.negative = true;
+			i++;
+		}
+
+		size_t start = i;
+		while (i < s.size() && IsDigit(s[i])) {
+			i++;
+		}
+		n.whole = s.substr(start, i - start);
+		while (!n.whole.empty() && n.whole.front() == '0') {
+			n.whole.remove_prefix(1);
+		}
+
+		// A '.' only belongs to the number if a digit follows it ("1.5" yes, "1." or "1.x" no).
+		if (i + 1 < s.size() && s[i] == '.' && IsDigit(s[i + 1])) {
+			i++;
+			start = i;
+			while (i < s.size() && IsDigit(s[i])) {
+				i++;
+			}
+			n.fraction = s.substr(start, i - start);
+			while (!n.fraction.empty() && n.fraction.back() == '0') {
+				n.fraction.remove_suffix(1);
+			}
+		}
+		return n;
+	}
+
+	// <0, 0, >0 like strcmp, comparing size only (ignores the sign).
+	inline int CompareNumberMagnitudes(const Number& a, const Number& b) {
+		if (a.whole.size() != b.whole.size()) {
+			return a.whole.size() < b.whole.size() ? -1 : 1;
+		}
+		if (int c = a.whole.compare(b.whole); c != 0) {
+			return c < 0 ? -1 : 1;
+		}
+		if (int c = a.fraction.compare(b.fraction); c != 0) {   // works because trailing zeros were removed
+			return c < 0 ? -1 : 1;
+		}
+		return 0;
+	}
+
+	inline int CompareNumbers(const Number& a, const Number& b) {
+		bool aZero = a.whole.empty() && a.fraction.empty();
+		bool bZero = b.whole.empty() && b.fraction.empty();
+		bool aNeg = a.negative && !aZero;   // -0 is the same as 0
+		bool bNeg = b.negative && !bZero;
+		if (aNeg != bNeg) {
+			return aNeg ? -1 : 1;
+		}
+		int c = CompareNumberMagnitudes(a, b);
+		return aNeg ? -c : c;
+	}
+
+	// <0 if a comes first, 0 if equal, >0 if b comes first.
+	inline int CompareStringViews(std::string_view a, std::string_view b) {
+		size_t i = 0;
+		size_t j = 0;
+		while (i < a.size() && j < b.size()) {
+			// Whitespace before a number is ignored, so "text1", "text 2" and "text\t3" sort as 1, 2, 3.
+			size_t numA = FindNumberStart(a, i);
+			size_t numB = numA != std::string_view::npos ? FindNumberStart(b, j) : std::string_view::npos;
+			if (numA != std::string_view::npos && numB != std::string_view::npos) {
+				i = numA;
+				j = numB;
+				Number na = ReadNumber(a, i);
+				Number nb = ReadNumber(b, j);
+				if (int c = CompareNumbers(na, nb); c != 0) {
+					return c;
+				}
+				continue;
+			}
+			int ca = LowerChar(a[i]);
+			int cb = LowerChar(b[j]);
+			if (ca != cb) {
+				return ca < cb ? -1 : 1;
+			}
+			i++;
+			j++;
+		}
+		if (i < a.size() || j < b.size()) {
+			return i < a.size() ? 1 : -1;   // the shorter one comes first
+		}
+
+		// Same by value ("01" and "1", "A" and "a"): fall back to a plain comparison so the order is always the same.
+		int c = a.compare(b);
+		return c < 0 ? -1 : (c > 0 ? 1 : 0);
+	}
+
+	inline bool IsStringLessThan(const std::string& a, const std::string& b) { return CompareStringViews(a, b) < 0; }
+
+	//sort string array, where int and float string numbers are treated as actual number. "10" = 10 "12.1" = 12.1 ect
+	std::vector<std::string> SortStringArray(std::vector<std::string> strings, bool descending) {
+		if (descending) {
+			std::sort(strings.begin(), strings.end(), [](const std::string& a, const std::string& b) { return CompareStringViews(a, b) > 0; });
+		}
+		else {
+			std::sort(strings.begin(), strings.end(), IsStringLessThan);
+		}
+		
+		return strings;
+	}
+	
     void ConvertToLowerCase(std::string& s) {
 		std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
 			return static_cast<char>(std::tolower(c));

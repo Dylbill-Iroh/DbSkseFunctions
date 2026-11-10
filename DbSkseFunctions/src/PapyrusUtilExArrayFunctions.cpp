@@ -3,6 +3,7 @@
 #include "FormTypeTable.h"
 #include "GeneralFunctions.h"
 #include "RE/B/BSFixedString.h"
+#include "RE/F/FormTypes.h"
 #include "SharedVariables.h"
 #include "FileSystem.h"
 #include "RE/B/BGSKeyword.h"
@@ -10,6 +11,7 @@
 #include "RE/T/TESForm.h"
 #include "RE/T/TypeTraits.h"
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -87,6 +89,8 @@ namespace papyrusUtilExArrayFunctions {
 			vm->RegisterFunction("RemoveIndexes", scriptName, RemoveIndexes<CLASS>);                            \
 			vm->RegisterFunction("GetSortIndexes", scriptName, GetSortIndexes<CLASS>);                          \
 			vm->RegisterFunction("SortByIndexes", scriptName, SortByIndexes<CLASS>);                            \
+			vm->RegisterFunction("GetChangedIndexes", scriptName, GetChangedArrayIndexes<CLASS>);               \
+			vm->RegisterFunction("ChangeByIndexes", scriptName, ChangeArrayByIndexes<CLASS>);                   \
             logger::info("scriptName[{}] type[{}]", scriptName, static_cast<int>(type));                        \
             return true;
             DB_MASTER_TYPE_LIST
@@ -215,6 +219,8 @@ namespace papyrusUtilExArrayFunctions {
 		vm->RegisterFunction("RemoveIndexes", scriptName, RemoveIndexes_p<T>);                                 
 		vm->RegisterFunction("GetSortIndexes", scriptName, GetSortIndexes_p<T>);                                 
 		vm->RegisterFunction("SortByIndexes", scriptName, SortByIndexes_p<T>);                                 
+		vm->RegisterFunction("GetChangedIndexes", scriptName, GetChangedArrayIndexes_p<T>);                                 
+		vm->RegisterFunction("ChangeByIndexes", scriptName, ChangeArrayByIndexes_p<T>);                           
 	}
 	
 	bool RegisterSksePrimitiveArrayScript(RE::BSScript::Internal::VirtualMachine* vm, std::string scriptName, std::string propertyType){
@@ -336,6 +342,8 @@ namespace papyrusUtilExArrayFunctions {
 		return count;
 	}
 	
+	//==========================================================================================================================================================================================
+	
 	int RegisterDbSkseArrayScripts() {
 		int count = 0;
 		
@@ -349,7 +357,6 @@ namespace papyrusUtilExArrayFunctions {
 		auto scriptFiles = fs::GetAllFilesInDirectory(folderPath, ".psc");
 		
 		RE::BSScript::Internal::VirtualMachine* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-		
 		for (auto& scriptPath : scriptFiles) {
 			if (std::filesystem::exists(scriptPath)) {
 				std::string scriptName = scriptPath.stem().string();

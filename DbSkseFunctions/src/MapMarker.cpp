@@ -20,6 +20,7 @@
 #include "magic_enum/magic_enum_all.hpp"
 #include <cstddef>
 #include <format>
+#include <json/json.h>
 
 bool IsMapMarker(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     logger::trace("function called");
@@ -939,6 +940,601 @@ int GetMapMarkerIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     return static_cast<int>(mapMarkerData->mapData->type.get());
 } 
 
+// ---------------------------------------------------------------------------------------------------------------------
+// MapMarkerFramework support
+// MMF (by Parapets, MIT) sends its interface to plugins listening for "MapMarkerFramework" at kDataLoaded.
+// The layout below matches its include/MMF/Stubs.h, interface version 1.
+// Needs JsonCpp (the same parser MMF uses, so both read the files the same way). 
+
+namespace mmf {
+	struct MarkerInfo {
+		const char*  SourcePath;
+		const char*  ExportName;
+		const char*  ExportNameUndiscovered;
+		std::int32_t VanillaMarker;
+		float        IconScale;
+		bool         HideFromHUD;
+	};
+	static_assert(sizeof(MarkerInfo) == 0x28);
+
+	struct Interface {
+		std::uint32_t interfaceVersion;
+		std::uint16_t (*GetVanillaMarkerType)(RE::TESObjectREFR*);   // MMF leaves this null -- never call it
+		const char*   (*GetCustomMarkerName)(RE::TESObjectREFR*);
+		void          (*GetMapMarkerInfo)(RE::TESObjectREFR*, MarkerInfo*);
+		void          (*GetLocalMarkerInfo)(RE::BGSLocation*, MarkerInfo*);
+	};
+	static_assert(sizeof(Interface) == 0x28);
+
+	constexpr std::uint32_t kInterfaceMessage = 0;      // MMF::kMapMarkerInterface
+	constexpr int kFirstPossibleCustomIcon = 67;         // MMF asserts the HUD has at least 67 built-in icons
+
+	std::atomic<const Interface*> intfc{ nullptr };
+
+	void OnMessage(SKSE::MessagingInterface::Message* a_msg) {
+		if (!a_msg || a_msg->type != kInterfaceMessage || !a_msg->data) {
+			return;
+		}
+		auto* received = static_cast<const Interface*>(a_msg->data);
+		if (received->interfaceVersion < 1) {
+			return;
+		}
+		intfc.store(received);
+		logger::info("MapMarkerFramework interface v{} received", received->interfaceVersion);
+	}
+
+	// The icon name MMF's config assigns to this ref, or "".
+	std::string GetConfigIconName(RE::TESObjectREFR* ref) {
+		auto* i = intfc.load();
+		if (!i || !i->GetCustomMarkerName || !ref) {
+			return "";
+		}
+		return gfuncs::SafeString(i->GetCustomMarkerName(ref));
+	}
+
+	// ---------------------------------------------------------------------------------------------------------
+	// Icon catalog
+	//
+	// MMF reads Data\MapMarkers\<plugin name>.json for every loaded plugin, in load order. Each entry in a file's
+	// "iconDefinitions" that has a "name" and a "source" object becomes a custom icon, numbered 0, 1, 2... across
+	// all the files. When the HUD loads, MMF adds those icons after the HUD's built-in ones, so
+	// icon type = base + number, where base is the number of built-in icons (67+, more with modded HUDs).
+	//
+	// So: read the same files in the same order to get the names and numbers, then find base.
+	// ---------------------------------------------------------------------------------------------------------
+
+	struct IconDef {
+		std::string name;
+		std::string configFile;   // e.g. "MapMarkers\\Skyrim.json"
+	};
+
+	struct IconTable {
+		std::unordered_map<std::string, int> typeByLowerName;
+		std::unordered_map<int, std::string> nameByType;
+		std::vector<std::string>             names;      // in icon type order, no duplicates
+		int                                  base = 0;
+	};
+
+	std::mutex           tableMutex;
+	IconTable            table;
+	bool                 tableBuilt = false;
+	std::vector<IconDef> iconDefs;
+	bool                 iconDefsLoaded = false;
+
+	// Reads a file through the game's file system, so loose files and BSA contents both work.
+	std::string ReadGameFile(const std::string& path) {
+		RE::BSResourceNiBinaryStream stream(path);
+		if (!stream.good() || !stream.stream) {
+			return "";
+		}
+		std::uint32_t size = stream.stream->totalSize;
+		if (size == 0 || size > 16 * 1024 * 1024) {
+			return "";
+		}
+		std::string text(size, '\0');
+		if (!stream.read(text.data(), size)) {
+			return "";
+		}
+		return text;
+	}
+
+	// The custom icons MMF imports, in MMF's numbering order.
+	std::vector<IconDef> LoadIconDefs() {
+		std::vector<IconDef> defs;
+
+		auto* dataHandler = RE::TESDataHandler::GetSingleton();
+		if (!dataHandler) {
+			return defs;
+		}
+
+		for (auto* file : dataHandler->files) {
+			if (!file) {
+				continue;
+			}
+			std::string pluginName{ file->GetFilename() };
+			if (pluginName.empty()) {
+				continue;
+			}
+			// "Skyrim.esm" -> "MapMarkers\Skyrim.json" (same as MMF's path::replace_extension)
+			auto dot = pluginName.rfind('.');
+			std::string configFile = "MapMarkers\\" + (dot == std::string::npos ? pluginName : pluginName.substr(0, dot)) + ".json";
+
+			std::string text = ReadGameFile(configFile);
+			if (text.empty()) {
+				continue;
+			}
+
+			// Default JsonCpp settings, like MMF: comments and trailing commas are allowed.
+			Json::CharReaderBuilder builder;
+			std::unique_ptr<Json::CharReader> reader{ builder.newCharReader() };
+			Json::Value root;
+			std::string errors;
+			if (!reader->parse(text.data(), text.data() + text.size(), &root, &errors)) {
+				logger::warn("MMF icon catalog: couldn't parse {}: {}", configFile, errors);
+				continue;
+			}
+			if (!root.isObject()) {
+				continue;
+			}
+
+			const Json::Value& iconDefinitions = root["iconDefinitions"];
+			if (!iconDefinitions.isArray()) {
+				continue;
+			}
+
+			for (const auto& def : iconDefinitions) {
+				if (!def.isObject()) {
+					continue;
+				}
+				// MMF only counts entries with a name and a source object. Entries with just an "index"
+				// change a vanilla icon and don't add a new one.
+				const Json::Value& name = def["name"];
+				const Json::Value& source = def["source"];
+				if (!name.isString() || !source.isObject()) {
+					continue;
+				}
+				std::string nameStr = name.asString();
+				if (nameStr.empty()) {
+					continue;
+				}
+				defs.push_back({ nameStr, configFile });
+			}
+		}
+
+		logger::info("MMF icon catalog: {} custom icons defined in Data\\MapMarkers", defs.size());
+		return defs;
+	}
+
+	// Base from map marker refs that an MMF config assigned an icon to: their type minus their icon's number.
+	// Uses the most common answer, in case a script has changed some markers since.
+	int GetBaseFromRefs(const std::unordered_map<std::string, int>& indexByName) {
+		std::unordered_map<int, int> votes;   // base -> count
+		{
+			const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+			RE::BSReadLockGuard readLock(lock);
+
+			for (auto& [id, form] : *allForms) {
+				if (!gfuncs::IsFormValid(form, false, false)) {
+					continue;
+				}
+				auto* ref = form->AsReference();
+				if (!ref) {
+					continue;
+				}
+				auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+				if (!marker || !marker->mapData) {
+					continue;
+				}
+				std::string name = GetConfigIconName(ref);
+				if (name.empty()) {
+					continue;
+				}
+				auto it = indexByName.find(name);
+				if (it == indexByName.end()) {
+					continue;
+				}
+				int type = static_cast<int>(marker->mapData->type.underlying());
+				int base = type - it->second;
+				if (base >= kFirstPossibleCustomIcon) {   // otherwise MMF hasn't set this marker's icon yet
+					votes[base]++;
+				}
+			}
+		}
+
+		int best = 0;
+		int bestCount = 0;
+		for (auto& [base, count] : votes) {
+			if (count > bestCount) {
+				best = base;
+				bestCount = count;
+			}
+		}
+		return best;
+	}
+
+	// Base from the HUD's compass marker timeline, which MMF added the icon frames to.
+	// Built-in icons + custom icons = frames from "LocationMarkers" to the last used frame before "UndiscoveredMarkers".
+	int GetBaseFromHud(int customIconCount) {
+		auto* ui = RE::UI::GetSingleton();
+		if (!ui) {
+			return 0;
+		}
+		auto hud = ui->GetMenu<RE::HUDMenu>();
+		if (!hud || !hud->uiMovie) {
+			return 0;
+		}
+		auto* movieDef = hud->uiMovie->GetMovieDef();
+		if (!movieDef) {
+			return 0;
+		}
+		auto* resource = movieDef->GetResource("Compass Marker");
+		if (!resource || resource->GetResourceType() != RE::GFxResource::ResourceType::kSpriteDef) {
+			return 0;
+		}
+		auto* sprite = static_cast<RE::GFxSpriteDef*>(resource);
+
+		std::int32_t first = 0;
+		std::int32_t undiscovered = 0;
+		if (!sprite->GetLabeledFrame("LocationMarkers", first, false) ||
+			!sprite->GetLabeledFrame("UndiscoveredMarkers", undiscovered, false) ||
+			undiscovered <= first) {
+			return 0;
+		}
+
+		// Modded HUDs can leave empty frames before "UndiscoveredMarkers"; skip back over them like MMF does.
+		std::int32_t last = undiscovered - 1;
+		while (last > first + 66 && last < sprite->frameCount && !sprite->frames[last].data) {
+			last--;
+		}
+
+		int total = last - first + 1;
+		int base = total - customIconCount;
+		return base >= kFirstPossibleCustomIcon ? base : 0;
+	}
+
+	bool BuildIconTable(IconTable& out) {
+		if (!iconDefsLoaded) {
+			iconDefs = LoadIconDefs();
+			iconDefsLoaded = true;
+		}
+		if (iconDefs.empty()) {
+			return true;   // nothing to find
+		}
+
+		// MMF keeps the last definition's number for a duplicate name.
+		std::unordered_map<std::string, int> indexByName;
+		for (int i = 0; i < static_cast<int>(iconDefs.size()); i++) {
+			indexByName[iconDefs[i].name] = i;
+		}
+
+		int refBase = GetBaseFromRefs(indexByName);
+		int hudBase = GetBaseFromHud(static_cast<int>(iconDefs.size()));
+		if (refBase && hudBase && refBase != hudBase) {
+			logger::warn("MMF icon catalog: base icon type from map markers ({}) and from the HUD ({}) differ, using {}",
+				refBase, hudBase, refBase);
+		}
+		int base = refBase ? refBase : hudBase;
+		if (!base) {
+			return false;   // MMF hasn't added its icons yet (it does when the HUD loads). Try again next time.
+		}
+
+		out.base = base;
+		for (int i = 0; i < static_cast<int>(iconDefs.size()); i++) {
+			out.nameByType[base + i] = iconDefs[i].name;
+		}
+		for (auto& [name, index] : indexByName) {
+			std::string lower = name;
+			gfuncs::ConvertToLowerCase(lower);
+			out.typeByLowerName[lower] = base + index;   // if two names differ only by case, the later one wins
+		}
+		for (int i = 0; i < static_cast<int>(iconDefs.size()); i++) {
+			std::string lower = iconDefs[i].name;
+			gfuncs::ConvertToLowerCase(lower);
+			if (out.typeByLowerName[lower] == base + i) {
+				out.names.push_back(iconDefs[i].name);
+			}
+		}
+
+		logger::info("MMF icon catalog: {} icons, types {} to {} (base from {})", out.names.size(), base,
+			base + static_cast<int>(iconDefs.size()) - 1, refBase ? "map markers" : "HUD");
+		return true;
+	}
+
+	// A copy of the icon table, built on first use once MMF has added its icons.
+	IconTable GetIconTable() {
+		IconTable result;
+		if (!intfc.load()) {
+			return result;
+		}
+
+		tableMutex.lock();
+		if (!tableBuilt) {
+			IconTable built;
+			if (BuildIconTable(built)) {
+				table = std::move(built);
+				tableBuilt = true;
+			}
+		}
+		result = table;
+		tableMutex.unlock();
+		return result;
+	}
+
+	int GetIconType(std::string iconName) {
+		gfuncs::ConvertToLowerCase(iconName);
+		auto icons = GetIconTable();
+		auto it = icons.typeByLowerName.find(iconName);
+		return it != icons.typeByLowerName.end() ? it->second : -1;
+	}
+
+	std::string GetIconName(int iconType) {
+		if (iconType < kFirstPossibleCustomIcon) {
+			return "";
+		}
+		auto icons = GetIconTable();
+		auto it = icons.nameByType.find(iconType);
+		return it != icons.nameByType.end() ? it->second : "";
+	}
+}
+
+bool IsMapMarkerFrameworkInstalled(RE::StaticFunctionTag*) {
+	return mmf::intfc.load() != nullptr;
+}
+
+std::string GetMapMarkerFrameworkIconTypeName(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
+	int type = GetMapMarkerIconType(nullptr, mapMarker);
+	return type < 0 ? "" : mmf::GetIconName(type);
+}
+
+std::vector<std::string> GetMapMarkerFrameworkIconTypeNames(RE::StaticFunctionTag*) {
+	return mmf::GetIconTable().names;
+}
+
+int GetMapMarkerFrameworkIconType(RE::StaticFunctionTag*, std::string iconName) {
+	return iconName.empty() ? -1 : mmf::GetIconType(iconName);
+}
+
+bool SetMapMarkerFrameworkIconType(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker, std::string iconName) {
+	if (!mmf::intfc.load()) {
+		logger::warn("MapMarkerFramework isn't installed");
+		return false;
+	}
+	int type = mmf::GetIconType(iconName);
+	if (type < 0) {
+		logger::warn("MMF icon [{}] not found", iconName);
+		return false;
+	}
+	return SetMapMarkerIconType(nullptr, mapMarker, type);
+}
+
+//get all map markers added by MapMarkerFramework 
+ std::vector<RE::TESObjectREFR*> GetAllMapMarkerFrameworkRefs(RE::StaticFunctionTag*, int visibleFilter, int canTravelToFilter) {
+	std::vector<RE::TESObjectREFR*> allMapMarkers;
+
+	auto icons = mmf::GetIconTable();   // build / copy once, outside the forms lock
+	if (icons.nameByType.empty()) {
+		return allMapMarkers;
+	}
+	auto isMmfIcon = [&](RE::MapMarkerData* data) {
+		return icons.nameByType.contains(static_cast<int>(data->type.get()));
+	};
+
+    if (visibleFilter == 1 && canTravelToFilter == 1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false, false)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == true && !ref->IsDisabled()) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == true) {
+									//int type = static_cast<int>(marker->mapData->type.get());
+									if (isMmfIcon(marker->mapData)){
+                                    	allMapMarkers.push_back(ref);
+									}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 1 && canTravelToFilter == 0) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false, false)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == true && !ref->IsDisabled()) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == false) {
+                                    //int type = static_cast<int>(marker->mapData->type.get());
+									if (isMmfIcon(marker->mapData)){
+                                    	allMapMarkers.push_back(ref);
+									}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 0 && canTravelToFilter == 1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false, false)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == false || ref->IsDisabled()) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == true) {
+                                    //int type = static_cast<int>(marker->mapData->type.get());
+									if (isMmfIcon(marker->mapData)){
+                                    	allMapMarkers.push_back(ref);
+									}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 0 && canTravelToFilter == 0) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false, false)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == false || ref->IsDisabled()) {
+                                if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == false) {
+                                    //int type = static_cast<int>(marker->mapData->type.get());
+									if (isMmfIcon(marker->mapData)){
+                                    	allMapMarkers.push_back(ref);
+									}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (canTravelToFilter == 1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false, false)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == true) {
+                                //int type = static_cast<int>(marker->mapData->type.get());
+								if (isMmfIcon(marker->mapData)){
+									allMapMarkers.push_back(ref);
+								}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (canTravelToFilter == 0) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false, false)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kCanTravelTo) == false) {
+                                //int type = static_cast<int>(marker->mapData->type.get());
+								if (isMmfIcon(marker->mapData)){
+									allMapMarkers.push_back(ref);
+								}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 1) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false, false)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == true && !ref->IsDisabled()) {
+                                //int type = static_cast<int>(marker->mapData->type.get());
+								if (isMmfIcon(marker->mapData)){
+									allMapMarkers.push_back(ref);
+								}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else if (visibleFilter == 0) {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false, false)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            if (marker->mapData->flags.any(RE::MapMarkerData::Flag::kVisible) == false || ref->IsDisabled()) {
+                                //int type = static_cast<int>(marker->mapData->type.get());
+								if (isMmfIcon(marker->mapData)){
+									allMapMarkers.push_back(ref);
+								}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else {
+        const auto& [allForms, lock] = RE::TESForm::GetAllForms();
+		RE::BSReadLockGuard readLock(lock); 
+		
+        for (auto& [id, form] : *allForms) {
+            if (gfuncs::IsFormValid(form, false, false)) {
+                auto* ref = form->AsReference();
+                if (gfuncs::IsFormValid(ref)) {
+                    auto* marker = ref->extraList.GetByType<RE::ExtraMapMarker>();
+                    if (marker) {
+                        if (marker->mapData) {
+                            //int type = static_cast<int>(marker->mapData->type.get());
+							if (isMmfIcon(marker->mapData)){
+								allMapMarkers.push_back(ref);
+							}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return allMapMarkers;
+}
+
 std::string GetMapMarkerIconTypeString(RE::StaticFunctionTag*, RE::TESObjectREFR* mapMarker) {
     logger::trace("Getting Map Marker Type");
     if (!gfuncs::IsFormValid(mapMarker)) {
@@ -958,7 +1554,9 @@ std::string GetMapMarkerIconTypeString(RE::StaticFunctionTag*, RE::TESObjectREFR
         return "";
     }
 
-    return static_cast<std::string>(magic_enum::enum_name(mapMarkerData->mapData->type.get()));
+	auto type = mapMarkerData->mapData->type.get();
+	std::string s = static_cast<std::string>(magic_enum::enum_name(type));
+	return !s.empty() ? s : mmf::GetIconName(static_cast<int>(type));   // MMF custom icon
 } 
 
 struct MapMarkerSortEntry {
@@ -1425,6 +2023,12 @@ void LogMapMarkerRefs(RE::StaticFunctionTag*, std::vector<RE::TESObjectREFR*> ma
 }
 
 namespace MapMarker {
+	void RegisterMapMarkerFrameworkListener() { //called from kPostLoad in plugin.cpp 
+		if (SKSE::GetMessagingInterface()->RegisterListener("MapMarkerFramework", mmf::OnMessage)) {
+			logger::info("listening for MapMarkerFramework");
+		}
+	}
+	
 	bool BindPapyrusFunctions(RE::BSScript::IVirtualMachine* vm) {
     	vm->RegisterFunction("IsMapMarker", "DbSkseFunctions", IsMapMarker);
     	vm->RegisterFunction("IsRefVisibleOnLocalMap", "DbSkseFunctions", IsRefVisibleOnLocalMap);
@@ -1452,6 +2056,13 @@ namespace MapMarker {
 		vm->RegisterFunction("GetMapMarkerNames", "DbSkseFunctions", GetMapMarkerNames);
 		vm->RegisterFunction("GetMapMarkerIconTypes", "DbSkseFunctions", GetMapMarkerIconTypes);
 		vm->RegisterFunction("LogMapMarkerRefs", "DbSkseFunctions", LogMapMarkerRefs);
+		
+		vm->RegisterFunction("IsMapMarkerFrameworkInstalled", "DbSkseFunctions", IsMapMarkerFrameworkInstalled);
+		vm->RegisterFunction("GetMapMarkerFrameworkIconTypeName", "DbSkseFunctions", GetMapMarkerFrameworkIconTypeName);
+		vm->RegisterFunction("GetMapMarkerFrameworkIconTypeNames", "DbSkseFunctions", GetMapMarkerFrameworkIconTypeNames);
+		vm->RegisterFunction("GetMapMarkerFrameworkIconType", "DbSkseFunctions", GetMapMarkerFrameworkIconType);
+		vm->RegisterFunction("SetMapMarkerFrameworkIconType", "DbSkseFunctions", SetMapMarkerFrameworkIconType);
+		vm->RegisterFunction("GetAllMapMarkerFrameworkRefs", "DbSkseFunctions", GetAllMapMarkerFrameworkRefs);
         return true;
     }
 } 

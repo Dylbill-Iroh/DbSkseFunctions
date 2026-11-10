@@ -1765,7 +1765,9 @@ std::string RemoveWhiteSpaces(RE::StaticFunctionTag*, std::string s){
 	return gfuncs::RemoveWhiteSpace(s);
 }
 
-// string Function JoinStrings(String[] arr, string delim)
+std::vector<std::string> SortStringArray(RE::StaticFunctionTag*, std::vector<std::string> strings, bool descending){
+	return gfuncs::SortStringArray(strings, descending); 
+}
 
 std::string JoinStrings(RE::StaticFunctionTag*, std::vector<std::string> arr, std::string delim){
 	return gfuncs::JoinStrings(arr, delim);
@@ -3223,6 +3225,7 @@ namespace Utility {
         vm->RegisterFunction("IsWhiteSpace", "DbSkseFunctions", IsWhiteSpace);
         vm->RegisterFunction("CountWhiteSpaces", "DbSkseFunctions", CountWhiteSpaces);
         vm->RegisterFunction("RemoveWhiteSpaces", "DbSkseFunctions", RemoveWhiteSpaces);
+        vm->RegisterFunction("SortStringArray", "DbSkseFunctions", SortStringArray);
         vm->RegisterFunction("JoinStrings", "DbSkseFunctions", JoinStrings);
         vm->RegisterFunction("CombineStringElements", "DbSkseFunctions", CombineStringElements);
 		

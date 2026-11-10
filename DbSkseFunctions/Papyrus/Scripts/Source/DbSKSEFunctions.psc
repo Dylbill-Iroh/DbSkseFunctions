@@ -34,6 +34,12 @@ Bool Function IsWhiteSpace(String c) Global Native
 int Function CountWhiteSpaces(String s) Global Native
 String Function RemoveWhiteSpaces(String s) Global Native
 
+;Return a new string array that is the passed in arr, sorted.
+;int or float type numbers present in strings are compared as actual numbers when sorting, if their position in a string matches. 
+;E.G, if you have ["string 10", "string 9", "string 8"], sorted ascending returns ["string 8", "string 9", "string 10"]
+;Leading whitespace for number positions is ignored. So this: ["string 10", "string9", "string	8"], sorted ascending returns ["string	8", string9, string 10]
+string[] Function SortStringArray(string[] arr, bool descending = false) Global Native
+
 ;join the strings in the arr seperated by delim into a single string
 string Function JoinStrings(String[] arr, string delim) Global Native
 
@@ -1325,6 +1331,39 @@ ObjectReference[] function FilterMapMarkersByOrigin(ObjectReference[] mapMarkers
 
 ; Log map maker name, icon string, formid and cell or worldspace origin for all map markers in the passed in array to DbSkseFunctions.Log
 function LogMapMarkerRefs(ObjectReference[] mapMarkers) Global Native
+
+; Map Marker Framework (MMF) support functions (https://github.com/Exit-9B/MapMarkerFramework) ==============================================================================================================================================================================
+; MMF markers are normal map marker ObjectReferences; MMF only gives them custom icons, so all the map marker functions above work on them. 
+; MMF icon types are numbered after the HUD's built-in icons, so the numbers depend on the user's HUD and load order.
+; Use icon names with SetMapMarkerFrameworkIconType or GetMapMarkerFrameworkIconType for MMF markers 
+; because GetMapMarkerIconType could return something different if the users load order changed.
+; To determine if a map marker uses a custom MMF icon, use GetMapMarkerFrameworkIconTypeName. It will return "" if it's not a MMF icon type.
+; Or if GetMapMarkerIconType returns 66 or less, it's definitely a vanilla icon type.
+; coMAP is the go to mod that uses MMF. >1.6 (https://www.nexusmods.com/skyrimspecialedition/mods/56123?tab=description) backported 1.5.97 (https://www.nexusmods.com/skyrimspecialedition/mods/101421?tab=description)
+
+bool function IsMapMarkerFrameworkInstalled() Global Native
+
+; The Map Marker Framework icon name of the marker's current icon, or "" if it's not an MMF icon.
+string function GetMapMarkerFrameworkIconTypeName(ObjectReference mapMarker) Global Native
+
+; All Map Marker Framework icon names in use, sorted.
+string[] function GetMapMarkerFrameworkIconTypeNames() Global Native
+
+; The icon type for an Map Marker Framework icon name (not case sensitive), or -1 if not found. Pass it to SetMapMarkerIconType.
+int function GetMapMarkerFrameworkIconType(string iconName) Global Native
+
+; Give any map marker a Map Marker Framework icon, including markers made with CreateMapMarker.
+; To go back to a vanilla icon, use SetMapMarkerIconType.
+bool function SetMapMarkerFrameworkIconType(ObjectReference mapMarker, string iconName) Global Native
+
+; Get all map marker refs in game that have a custom icon added by Map Marker Framework
+; for the filter params:
+; -1 = filter is ignored 
+;  0 = (false) only get markers that are not visible or can't be fast traveled to 
+;  1 = (true)  only get markers that are visible or that can be fast traveled to
+ObjectReference[] function GetAllMapMarkerFrameworkRefs(int visibleFilter = -1, int canTravelToFilter = -1) Global Native
+
+;==========================================================================================================================================================================================================
 
 ;This function isn't working yet. Technically it's being set successfully internally but can't get it to display in game. 
 ;At least with VisualEffect.play(). I'm working on a fix for this.

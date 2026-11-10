@@ -80,6 +80,8 @@ namespace gfuncs {
 	
     void LogAndMessage(std::string message, int logLevel = 0, int debugLevel = 0);
 
+	std::vector<std::string> SortStringArray(std::vector<std::string> strings, bool descending);
+	
     void ConvertToLowerCase(std::string& s);
 
 	std::vector<std::string> SplitString(std::string s, std::string delim);

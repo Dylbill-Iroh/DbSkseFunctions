@@ -4,7 +4,9 @@
 #include "FileSystem.h"
 #include "GeneralFunctions.h"
 #include "RE/B/BGSBaseAlias.h"
+#include "RE/B/BGSKeyword.h"
 #include "RE/B/BSFixedString.h"
+#include "RE/F/FormTypes.h"
 #include "RE/T/TypeTraits.h"
 #include "Utility.h"
 #include "RE/RTTI.h"
@@ -917,6 +919,63 @@ namespace papyrusUtilExArrayFunctions {
 		return returnValues;
 	}
 	
+	// Positions in preChangeArr of each postChangeArr element, in postChangeArr order. preChangeArr is an array before
+	// it was changed (sorted, shortened, filtered or reordered in any way) and postChangeArr is the same array after.
+	// Duplicate values are matched in order. Elements of postChangeArr not found in preChangeArr are skipped.
+	// Pass the result to ChangeArrayByIndexes to apply the same change to other arrays.
+	template <class T>
+		requires PapyrusObject<T>
+	std::vector<std::int32_t> GetChangedArrayIndexes(RE::StaticFunctionTag*, std::vector<T*> preChangeArr, std::vector<T*> postChangeArr) {
+		struct Positions {
+			std::vector<std::int32_t> indexes;
+			std::int32_t currentValueIndex = 0;
+		};
+
+		std::unordered_map<T*, Positions> positionsByValue;
+		positionsByValue.reserve(preChangeArr.size());
+		for (std::int32_t i = 0; i < preChangeArr.size(); i++) {
+			positionsByValue[preChangeArr[i]].indexes.push_back(i); //save all preChangeArr values and their array position indexes
+		}
+
+		std::vector<std::int32_t> result;
+		result.reserve(postChangeArr.size());
+
+		for (T* value : postChangeArr) {
+			auto it = positionsByValue.find(value);
+			if (it == positionsByValue.end()) {
+				continue;   //value not in preChangeArr
+			}
+
+			auto& positions = it->second;
+			if (positions.currentValueIndex >= positions.indexes.size()) {
+				continue;   // more copies of value in postChangeArr than in preChangeArr
+			}
+
+			result.push_back(positions.indexes[positions.currentValueIndex]);
+			positions.currentValueIndex++;
+		}
+
+		return result;
+	}
+
+	// The elements of arr at the given indexes, in that order. Unlike SortByIndexes, the result can be shorter than
+	// arr (for indexes from a shortened or filtered array). Indexes out of range are skipped.
+	template <class T>
+		requires PapyrusObject<T>
+	std::vector<T*> ChangeArrayByIndexes(RE::StaticFunctionTag*, std::vector<T*> arr, std::vector<std::int32_t> indexes) {
+		std::vector<T*> result;
+		result.reserve(indexes.size());
+		std::int32_t arrSize = arr.size();
+		
+		for (std::int32_t index : indexes) {
+			if (index >= 0 && index < arrSize) {
+				result.push_back(arr[index]);
+			}
+		}
+
+		return result;
+	}
+	
 // ===============================================================================================================================================================
 
 	
@@ -1352,6 +1411,10 @@ namespace papyrusUtilExArrayFunctions {
 	template <class T>
         requires PapyrusPrimitive<T>
 	std::vector<T> SortArray_p(RE::StaticFunctionTag* functionTag, std::vector<T> arr, int sortOption) {
+		if constexpr (std::same_as<T, std::string>) {
+			return gfuncs::SortStringArray(arr, (sortOption == 2 || sortOption == 4 || sortOption == 6));
+		}
+		
 		if (arr.size() < 2) {
 			return arr;
 		}
@@ -1564,6 +1627,64 @@ namespace papyrusUtilExArrayFunctions {
 			v.push_back(arr[index]);
 		}
 		return v;
+	}
+	
+	
+	// Positions in preChangeArr of each postChangeArr element, in postChangeArr order. preChangeArr is an array before
+	// it was changed (sorted, shortened, filtered or reordered in any way) and postChangeArr is the same array after.
+	// Duplicate values are matched in order. Elements of postChangeArr not found in preChangeArr are skipped.
+	// Pass the result to ChangeArrayByIndexes to apply the same change to other arrays.
+	template <class T>
+		requires PapyrusPrimitive<T>
+	std::vector<std::int32_t> GetChangedArrayIndexes_p(RE::StaticFunctionTag*, std::vector<T> preChangeArr, std::vector<T> postChangeArr) {
+		struct Positions {
+			std::vector<std::int32_t> indexes;
+			std::int32_t currentValueIndex = 0;
+		};
+
+		std::unordered_map<T, Positions> positionsByValue;
+		positionsByValue.reserve(preChangeArr.size());
+		for (std::int32_t i = 0; i < preChangeArr.size(); i++) {
+			positionsByValue[preChangeArr[i]].indexes.push_back(i); //save all preChangeArr values and their array position indexes
+		}
+
+		std::vector<std::int32_t> result;
+		result.reserve(postChangeArr.size());
+
+		for (T value : postChangeArr) {
+			auto it = positionsByValue.find(value);
+			if (it == positionsByValue.end()) {
+				continue;   //value not in preChangeArr
+			}
+
+			auto& positions = it->second;
+			if (positions.currentValueIndex >= positions.indexes.size()) {
+				continue;   // more copies of value in postChangeArr than in preChangeArr
+			}
+
+			result.push_back(positions.indexes[positions.currentValueIndex]);
+			positions.currentValueIndex++;
+		}
+
+		return result;
+	}
+
+	// The elements of arr at the given indexes, in that order. Unlike SortByIndexes, the result can be shorter than
+	// arr (for indexes from a shortened or filtered array). Indexes out of range are skipped.
+	template <class T>
+		requires PapyrusPrimitive<T>
+	std::vector<T> ChangeArrayByIndexes_p(RE::StaticFunctionTag*, std::vector<T> arr, std::vector<std::int32_t> indexes) {
+		std::vector<T> result;
+		result.reserve(indexes.size());
+		std::int32_t arrSize = arr.size();
+		
+		for (std::int32_t index : indexes) {
+			if (index >= 0 && index < arrSize) {
+				result.push_back(arr[index]);
+			}
+		}
+
+		return result;
 	}
 	
 	

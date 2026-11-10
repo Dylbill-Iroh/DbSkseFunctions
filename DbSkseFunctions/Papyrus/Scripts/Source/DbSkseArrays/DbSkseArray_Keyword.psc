@@ -2,7 +2,7 @@ scriptname DbSkseArray_Keyword hidden
 ; To create these array functions for different papyrus types, duplicate this script, 
 ; rename it and and replace all of Keyword with a new type you want these array functions for, E.G TextureSet
 ; Compile the script and copy the source .psc file to Data/Scripts/Source/DbSkseArrays/ 
-; IMPORTANT!!! You can change the type or add ArrayAs functions, but don't change the formatting because 
+; IMPORTANT!!! You can change the type or add ArrayAs functions, but don't change the Keywordatting because 
 ; the plugin gets papyrus types by reading this source .psc file. Specifically, no spaces between the function name and first left parentheses "("
 ; That is how the DbSkseFunctions.dll knows to register the functions and what type to register functions as.
 ; In your mod's download, include the .pex files for these scripts in Data/Scripts folder like you would a normal script. 
@@ -10,7 +10,7 @@ scriptname DbSkseArray_Keyword hidden
 ; You can only have one array type per script. If you need more types, duplicate more of these scripts in the same manner.
 ; The exception is that you can add as many ArrayAs functions as you like, as long as the types are compatible. More details below.
 ; Custom user made types are not supported. Only vanilla types are supported, E.G types found in
-; FormType.psc as well as Alias, ReferenceAlias, LocationAlias and ActiveMagicEffect
+; KeywordType.psc as well as Alias, ReferenceAlias, LocationAlias and ActiveMagicEffect
 
 ; Create a new array of size, filled with optional filler.
 Keyword[] Function Create(int size, Keyword filler = none) Global Native 
@@ -25,13 +25,13 @@ Keyword[] Function Merge(Keyword[] arr_A, Keyword[] arr_B) Global Native
 ; The default argument "int endIndex = -1" clamps the to the end of the array. Equivalent of setting EndIndex = (ArrayValues.Length - 1)
 Keyword[] function Slice(Keyword[] ArrayValues, int startIndex, int endIndex = -1) global native
 
-; Add the toPush form to the end of the arr, increasing its size.
+; Add the toPush Keyword to the end of the arr, increasing its size.
 Keyword[] Function Push(Keyword[] arr, Keyword toPush) Global Native 
 
-; insert the toInsert form into the array, increasing its size. If the index is out of bound, puts the form at the end of the array.
+; insert the toInsert Keyword into the array, increasing its size. If the index is out of bound, puts the Keyword at the end of the array.
 Keyword[] Function Insert(Keyword[] arr, Keyword toInsert, int index) global native
 
-; Remove the toRemove form from the array, decreasing its size. If all is true, remove all instances, otherwise, remove the first found instance.
+; Remove the toRemove Keyword from the array, decreasing its size. If all is true, remove all instances, otherwise, remove the first found instance.
 Keyword[] Function Remove(Keyword[] arr, Keyword toRemove, bool all = true) global native
 
 ; remove the element at the index in the array, decreasing its size. If the index is out of bounds, removes the last element in the array.
@@ -40,20 +40,20 @@ Keyword[] Function RemoveAt(Keyword[] arr, int index) Global Native
 ; remove all duplicates from the arr, making each element in the arr unique, and return the new array.
 Keyword[] Function RemoveDuplicates(Keyword[] arr) Global Native 
 
-; returns new array that contains the forms of the passed in akForms array, but sorted. 
+; returns new array that contains the Keywords of the passed in akKeywords array, but sorted. 
 ; Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
-; 1 = by form name ascending, 
-; 2 = by form name descending, 
-; 3 = by form editor Id name ascending,
-; 4 = by form editor Id name descending,
-; 5 = by form Id ascending, 
-; 6 = by form Id descending
+; 1 = by Keyword name ascending, 
+; 2 = by Keyword name descending, 
+; 3 = by Keyword editor Id name ascending,
+; 4 = by Keyword editor Id name descending,
+; 5 = by Keyword Id ascending, 
+; 6 = by Keyword Id descending
 Keyword[] Function Sort(Keyword[] arr, int sortOption) Global Native 
 
 ; Get the strings for the passed in array. mode options are:
-; 1 = form names
+; 1 = Keyword names
 ; 2 = editor names 
-; 3 = IDs as hexidecimal (formId or KeywordId)
+; 3 = IDs as hexidecimal (KeywordId or KeywordId)
 ; SortOptions are: 
 ; 1 = not sorted 
 ; 2 = sorted ascending 
@@ -84,25 +84,30 @@ Keyword[] Function RemoveIndexes(Keyword[] arr, int[] indexes) Global Native
 ; for linking arrays, get new sorted index for the arr. 
 ; See the DbSkseMap_Alias_Keyword.psc script for example usage.
 ;  Sort options are as follows. Note, to sort by editor Id reliably, po3 tweaks must be installed.
-;  1 = by form name ascending, 
-;  2 = by form name descending, 
-;  3 = by form editor Id name ascending,
-;  4 = by form editor Id name descending,
-;  5 = by form Id ascending, 
-;  6 = by form Id descending
+;  1 = by Keyword name ascending, 
+;  2 = by Keyword name descending, 
+;  3 = by Keyword editor Id name ascending,
+;  4 = by Keyword editor Id name descending,
+;  5 = by Keyword Id ascending, 
+;  6 = by Keyword Id descending
 int[] Function GetSortIndexes(Keyword[] arr, int sortOption) Global Native 
 
 ; See the DbSkseMap_Alias_Keyword.psc script for example usage.
 Keyword[] Function SortByIndexes(Keyword[] arr, int[] indexes) Global Native 
 
+; Get the indexes of the postChangedArr in the original preChangedArr. Allows to alter another array the exact same way the preChangedArr was altered.
+; See DbSkseArray_Form.GetChangedIndexes for an example.
+int[] Function GetChangedIndexes(Keyword[] preChangedArr, Keyword[] posChangedArr) Global Native 
+
+; Filter arr by indexes and return new array. See DbSkseArray_Form.GetChangedIndexes for more info.
+Keyword[] Function ChangeByIndexes(Keyword[] arr, int[] indexes) Global Native 
+
 ;  ArrayAs functions, returns a new array where each element of the passed in array is cast as the return type. 
 ;  If removeNoneArrElements, any none entry in the passed in array is removed from the return array. 
 ;  If removeFailedToConvertElements, any valid entry in the passed in array that fails to convert to the return type is removed from the return array.
-;  You can add as many ArrayAs functions here as you want, converting from any compatible type.
+;  You can add as many ArrayAs functions here as you want, converting from any compatible type. 
+;  Only vanilla types are supported. Any type found in KeywordType.psc plus bool, int, float, string, Keyword, Alias and ActiveMagicEffect.
 ;  Make sure the new function names contain ArrayAs.
 
 ;  Cast all Keyword array elements to Form and return new array.
-Keyword[] Function ArrayAsForm(Keyword[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native
-
-;  Cast all Form array elements to Keyword and return new array.
-Keyword[] Function ArrayAsKeyword(Keyword[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native
+Form[] Function ArrayAsForm(Keyword[] arr, bool removeNoneArrElements = true, bool removeFailedToConvertElements = true) Global Native
